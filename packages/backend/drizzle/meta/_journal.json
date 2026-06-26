@@ -1,0 +1,48 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1781805814187,
+      "tag": "0000_outstanding_miek",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1782442138187,
+      "tag": "0001_fase3_planificacion",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1782445287530,
+      "tag": "0002_entendimiento_cliente",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1782445845423,
+      "tag": "0003_fase4_ejecucion",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1782446281558,
+      "tag": "0004_tareas",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1782446781968,
+      "tag": "0005_fase5_informes",
+      "breakpoints": true
+    }
+  ]
+}
