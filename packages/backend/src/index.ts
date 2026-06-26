@@ -21,8 +21,11 @@ app.use(
   cors({
     origin: (origin) => {
       const allowed = process.env.FRONTEND_URL ?? 'http://localhost:5173'
-      // En desarrollo acepta cualquier puerto de localhost
+      // Acepta localhost en desarrollo
       if (origin && /^http:\/\/localhost:\d+$/.test(origin)) return origin
+      // Acepta el dominio con y sin www
+      const base = allowed.replace(/^https?:\/\/(www\.)?/, '')
+      if (origin && new RegExp(`^https?://(www\\.)?${base.replace('.', '\\.')}$`).test(origin)) return origin
       return allowed
     },
     credentials: true,
