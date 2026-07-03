@@ -7,10 +7,16 @@ import { db } from '../db/client'
 import { firmas, usuarios } from '../db/schema'
 import { signToken } from '../lib/jwt'
 import { authMiddleware } from '../middleware/auth'
+import { excedeLimite, limpiarLimite } from '../lib/rate-limit'
 
 const app = new Hono()
 
-const COOKIE_OPTS = 'HttpOnly; Path=/; SameSite=Lax; Max-Age=604800'
+// En producción el frontend puede vivir en otro dominio: la cookie necesita
+// Secure y SameSite=None para viajar en peticiones cross-site con credentials.
+const esProd = process.env.NODE_ENV === 'production'
+const COOKIE_OPTS = esProd
+  ? 'HttpOnly; Path=/; SameSite=None; Secure; Max-Age=604800'
+  : 'HttpOnly; Path=/; SameSite=Lax; Max-Age=604800'
 
 // POST /auth/registro
 app.post(
@@ -73,6 +79,16 @@ app.post(
   async (c) => {
     const { email, password } = c.req.valid('json')
 
+    // Rate limit por IP+email para frenar fuerza bruta.
+    const ip = c.req.header('x-forwarded-for')?.split(',')[0]?.trim() ?? 'local'
+    const claveLimite = `login:${ip}:${email.toLowerCase()}`
+    if (excedeLimite(claveLimite)) {
+      return c.json(
+        { error: { code: 'DEMASIADOS_INTENTOS', message: 'Demasiados intentos. Espera unos minutos e inténtalo de nuevo.' } },
+        429,
+      )
+    }
+
     const [usuario] = await db.select().from(usuarios).where(eq(usuarios.email, email))
     if (!usuario) {
       return c.json({ error: { code: 'CREDENCIALES_INVALIDAS', message: 'Email o contraseña incorrectos' } }, 401)
@@ -82,6 +98,7 @@ app.post(
     if (!ok) {
       return c.json({ error: { code: 'CREDENCIALES_INVALIDAS', message: 'Email o contraseña incorrectos' } }, 401)
     }
+    limpiarLimite(claveLimite)
 
     const [firma] = await db.select().from(firmas).where(eq(firmas.id, usuario.firmaId))
 
@@ -95,7 +112,12 @@ app.post(
 
 // POST /auth/logout
 app.post('/logout', (c) => {
-  c.header('Set-Cookie', 'token=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0')
+  c.header(
+    'Set-Cookie',
+    esProd
+      ? 'token=; HttpOnly; Path=/; SameSite=None; Secure; Max-Age=0'
+      : 'token=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0',
+  )
   return c.json({ data: null })
 })
 

@@ -105,7 +105,7 @@ export function EmpresaDashboard() {
   const encargoRechazado = empresa.estadoEncargo === 'rechazado'
 
   return (
-    <div className="p-8 space-y-7 max-w-4xl">
+    <div className="p-8 space-y-7 max-w-6xl">
       {/* Header */}
       <div>
         <p className="text-xs font-medium text-indigo-500 uppercase tracking-wide mb-1">
@@ -224,7 +224,7 @@ export function EmpresaDashboard() {
       {empresa.estadoEncargo === 'aceptado' && (
         <div className="flex items-center gap-2 text-sm text-emerald-600 bg-emerald-50 border border-emerald-100 rounded-xl px-4 py-3">
           <CheckCircle size={15} />
-          <span>Encargo aceptado — la firma puede realizar auditorías a esta empresa.</span>
+          <span>Encargo aceptado — la firma puede realizar auditorías a este cliente.</span>
         </div>
       )}
     </div>

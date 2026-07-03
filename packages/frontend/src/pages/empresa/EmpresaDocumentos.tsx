@@ -8,11 +8,11 @@ const DOCUMENTOS_DUMMY = [
 
 export function EmpresaDocumentos() {
   return (
-    <div className="p-8 max-w-3xl space-y-6">
+    <div className="p-8 max-w-5xl space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Documentos</h1>
-          <p className="text-sm text-gray-500 mt-1">Archivos y evidencias de la empresa.</p>
+          <p className="text-sm text-gray-500 mt-1">Archivos y evidencias del cliente.</p>
         </div>
         <Button size="sm" className="gap-2">
           <Upload size={14} /> Subir documento

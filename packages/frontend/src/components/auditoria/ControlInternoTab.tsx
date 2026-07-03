@@ -67,14 +67,7 @@ export function ControlInternoTab({
   const byId = (id: Componente) => controles.find((c) => c.componente === id)
 
   return (
-    <div className="space-y-5 max-w-3xl">
-      <div className="bg-indigo-50 border border-indigo-100 rounded-xl px-5 py-4">
-        <p className="text-sm font-medium text-indigo-800">Control interno — Modelo COSO</p>
-        <p className="text-xs text-indigo-500 mt-1">
-          Evalúa los cinco componentes del control interno. El resultado orienta cuánto puedes confiar
-          en los controles de la entidad y, por tanto, el alcance de las pruebas sustantivas.
-        </p>
-      </div>
+    <div className="space-y-5">
 
       <p className="text-sm text-gray-500">{evaluados} de 5 componentes evaluados</p>
 

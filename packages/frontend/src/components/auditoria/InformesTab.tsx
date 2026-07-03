@@ -12,7 +12,7 @@ import { Textarea } from '../ui/Textarea'
 import { api } from '../../lib/api'
 import { useAuthStore } from '../../store/auth.store'
 import { cn } from '../../lib/cn'
-import { construirHtmlInforme, imprimirInforme, descargarWord } from '../../lib/informe-export'
+import { construirHtmlInforme, imprimirInforme, descargarDocx } from '../../lib/informe-export'
 
 type EstadoInforme = 'borrador' | 'aprobado'
 type Informe = {
@@ -61,14 +61,7 @@ export function InformesTab({
   const porTipo = (t: TipoInforme) => informes.find((i) => i.tipo === t)
 
   return (
-    <div className="space-y-5 max-w-3xl">
-      <div className="bg-indigo-50 border border-indigo-100 rounded-xl px-5 py-4">
-        <p className="text-sm font-medium text-indigo-800">Informes — NIA 700 / 265 / 580</p>
-        <p className="text-xs text-indigo-500 mt-1">
-          Genera un borrador a partir del trabajo realizado, edítalo y apruébalo (solo el socio).
-          Exporta a PDF (imprimir) o Word.
-        </p>
-      </div>
+    <div className="space-y-5">
 
       {isLoading ? (
         <div className="flex justify-center py-16">
@@ -136,7 +129,7 @@ function InformeEditor({
   onClose: () => void
 }) {
   const queryClient = useQueryClient()
-  const { user } = useAuthStore()
+  const { user, firma } = useAuthStore()
   const esSocio = user?.rol === 'socio'
   const secciones = SECCIONES_INFORME[tipo]
 
@@ -177,13 +170,14 @@ function InformeEditor({
 
   const aprobado = informe?.estado === 'aprobado'
 
-  function exportarHtml() {
-    return construirHtmlInforme({
+  function exportOpts() {
+    return {
       titulo: TIPO_INFORME_LABEL[tipo],
       empresaNombre,
       periodo,
+      firma,
       secciones: secciones.map((s) => ({ label: s.label, contenido: contenido[s.key] ?? '' })),
-    })
+    }
   }
 
   const nombreArchivo = `${TIPO_INFORME_LABEL[tipo].replace(/[^\w]+/g, '_')}_${empresaNombre.replace(/[^\w]+/g, '_')}`
@@ -267,10 +261,10 @@ function InformeEditor({
                   Guardar
                 </Button>
               )}
-              <Button size="sm" variant="secondary" className="gap-1.5" onClick={() => imprimirInforme(exportarHtml())}>
+              <Button size="sm" variant="secondary" className="gap-1.5" onClick={() => imprimirInforme(construirHtmlInforme(exportOpts()))}>
                 <Printer size={13} /> Imprimir / PDF
               </Button>
-              <Button size="sm" variant="secondary" className="gap-1.5" onClick={() => descargarWord(nombreArchivo, exportarHtml())}>
+              <Button size="sm" variant="secondary" className="gap-1.5" onClick={() => descargarDocx(nombreArchivo, exportOpts())}>
                 <FileDown size={13} /> Word
               </Button>
 

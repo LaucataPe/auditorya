@@ -10,6 +10,7 @@ export type Tarea = {
   descripcion: string | null
   asignadoA: string
   estado: EstadoTarea
+  fechaInicio: string | null
   vencimiento: string | null
   createdAt: string
 }

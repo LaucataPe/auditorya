@@ -1,10 +1,12 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Sparkles, Trash2, ShieldAlert } from 'lucide-react'
+import { PROGRAMA_AUDITORIA, TIPO_PRUEBA_LABEL } from '@auditorya/types'
+import { Plus, Sparkles, Trash2, ShieldAlert, TableProperties, ArrowRightCircle, FileText, ListTodo, CheckCircle } from 'lucide-react'
 import { Button } from '../ui/Button'
 import { Modal } from '../ui/Modal'
 import { Input } from '../ui/Input'
 import { Select } from '../ui/Select'
+import { SugerenciasIAModal } from './SugerenciasIAModal'
 import { api } from '../../lib/api'
 import { cn } from '../../lib/cn'
 
@@ -21,7 +23,17 @@ type Riesgo = {
   riesgoControl: Nivel
   riesgoCombinado: Nivel
   respuestaPlaneada: string | null
-  origen: 'manual' | 'sugerido'
+  origen: 'manual' | 'sugerido' | 'analitico'
+}
+
+type Candidato = {
+  codigo: string
+  cuentaNombre: string | null
+  area: Area
+  descripcion: string
+  riesgoInherente: Nivel
+  respuestaPlaneada: string
+  motivo: 'significativa' | 'anomalia' | 'ambas'
 }
 
 const AREA_LABEL: Record<Area, string> = {
@@ -59,21 +71,38 @@ function NivelChip({ nivel }: { nivel: Nivel }) {
   )
 }
 
-export function RiesgosTab({ auditoriaId, sector }: { auditoriaId: string; sector?: string }) {
+type RespuestasMap = Record<string, { tareas: number; papeles: number }>
+type Usuario = { id: string; nombre: string; rol: string }
+
+export function RiesgosTab({
+  auditoriaId, sector, materialidadAprobada = false,
+}: {
+  auditoriaId: string
+  sector?: string
+  materialidadAprobada?: boolean
+}) {
   const queryClient = useQueryClient()
   const [modalOpen, setModalOpen] = useState(false)
+  const [balanceOpen, setBalanceOpen] = useState(false)
+  const [iaOpen, setIaOpen] = useState(false)
+  const [responder, setResponder] = useState<Riesgo | null>(null)
 
   const { data: riesgos = [], isLoading } = useQuery<Riesgo[]>({
     queryKey: ['riesgos', auditoriaId],
     queryFn: () => api.get<Riesgo[]>(`/auditorias/${auditoriaId}/riesgos`),
   })
 
-  const invalidate = () => queryClient.invalidateQueries({ queryKey: ['riesgos', auditoriaId] })
-
-  const sugerirMutation = useMutation({
-    mutationFn: () => api.post(`/auditorias/${auditoriaId}/riesgos/sugerir`, {}),
-    onSuccess: invalidate,
+  const { data: respuestas = {} } = useQuery<RespuestasMap>({
+    queryKey: ['riesgos-respuestas', auditoriaId],
+    queryFn: () => api.get<RespuestasMap>(`/auditorias/${auditoriaId}/riesgos-respuestas`),
   })
+
+  const { data: usuarios = [] } = useQuery<Usuario[]>({
+    queryKey: ['usuarios'],
+    queryFn: () => api.get<Usuario[]>(`/firmas/mia/usuarios`),
+  })
+
+  const invalidate = () => queryClient.invalidateQueries({ queryKey: ['riesgos', auditoriaId] })
 
   const createMutation = useMutation({
     mutationFn: (body: {
@@ -94,16 +123,8 @@ export function RiesgosTab({ auditoriaId, sector }: { auditoriaId: string; secto
   })
 
   return (
-    <div className="space-y-5 max-w-3xl">
+    <div className="space-y-5">
       {/* Marco normativo */}
-      <div className="bg-indigo-50 border border-indigo-100 rounded-xl px-5 py-4">
-        <p className="text-sm font-medium text-indigo-800">Identificación de riesgos — NIA 315</p>
-        <p className="text-xs text-indigo-500 mt-1">
-          Identifica los riesgos de error material por área. El riesgo combinado se calcula a partir del
-          riesgo inherente y el de control, y orienta el alcance de las pruebas en la ejecución.
-        </p>
-      </div>
-
       {/* Acciones */}
       <div className="flex items-center justify-between">
         <p className="text-sm text-gray-500">
@@ -114,8 +135,15 @@ export function RiesgosTab({ auditoriaId, sector }: { auditoriaId: string; secto
             size="sm"
             variant="secondary"
             className="gap-1.5"
-            loading={sugerirMutation.isPending}
-            onClick={() => sugerirMutation.mutate()}
+            onClick={() => setBalanceOpen(true)}
+          >
+            <TableProperties size={14} /> Desde el balance
+          </Button>
+          <Button
+            size="sm"
+            variant="secondary"
+            className="gap-1.5"
+            onClick={() => setIaOpen(true)}
           >
             <Sparkles size={14} /> Sugerir riesgos (IA)
           </Button>
@@ -124,12 +152,6 @@ export function RiesgosTab({ auditoriaId, sector }: { auditoriaId: string; secto
           </Button>
         </div>
       </div>
-
-      {sugerirMutation.isError && (
-        <p className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">
-          {sugerirMutation.error instanceof Error ? sugerirMutation.error.message : 'Error al sugerir riesgos'}
-        </p>
-      )}
 
       {/* Lista */}
       {isLoading ? (
@@ -155,6 +177,11 @@ export function RiesgosTab({ auditoriaId, sector }: { auditoriaId: string; secto
                     {r.origen === 'sugerido' && (
                       <span className="text-xs text-violet-600 bg-violet-50 px-2 py-0.5 rounded-full flex items-center gap-1">
                         <Sparkles size={10} /> IA
+                      </span>
+                    )}
+                    {r.origen === 'analitico' && (
+                      <span className="text-xs text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full flex items-center gap-1">
+                        <TableProperties size={10} /> Balance
                       </span>
                     )}
                   </div>
@@ -201,6 +228,27 @@ export function RiesgosTab({ auditoriaId, sector }: { auditoriaId: string; secto
                   <NivelChip nivel={r.riesgoCombinado} />
                 </div>
               </div>
+
+              {/* Respuesta al riesgo */}
+              <div className="flex items-center justify-between mt-3 pt-3 border-t border-gray-50">
+                <p className="text-xs text-gray-500">
+                  {respuestas[r.id]
+                    ? `Respuestas: ${respuestas[r.id].tareas} tarea(s) · ${respuestas[r.id].papeles} papel(es)`
+                    : 'Aún sin respuesta planeada'}
+                </p>
+                <div className="flex flex-col items-end">
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    className="gap-1.5"
+                    disabled={!materialidadAprobada}
+                    onClick={() => setResponder(r)}
+                  >
+                    <ArrowRightCircle size={13} /> Responder
+                  </Button>
+                  {!materialidadAprobada && <span className="text-xs text-gray-400 mt-0.5">Requiere materialidad aprobada</span>}
+                </div>
+              </div>
             </div>
           ))}
         </div>
@@ -213,7 +261,347 @@ export function RiesgosTab({ auditoriaId, sector }: { auditoriaId: string; secto
         error={createMutation.error instanceof Error ? createMutation.error.message : null}
         onCreate={(body) => createMutation.mutate(body)}
       />
+
+      {balanceOpen && (
+        <CandidatosModal
+          auditoriaId={auditoriaId}
+          onClose={() => setBalanceOpen(false)}
+          onAgregados={() => { invalidate(); setBalanceOpen(false) }}
+        />
+      )}
+
+      {iaOpen && (
+        <SugerenciasIAModal
+          auditoriaId={auditoriaId}
+          onClose={() => setIaOpen(false)}
+          onAgregados={() => { invalidate(); setIaOpen(false) }}
+        />
+      )}
+
+      {responder && (
+        <ResponderRiesgoModal
+          auditoriaId={auditoriaId}
+          riesgo={responder}
+          usuarios={usuarios}
+          onClose={() => setResponder(null)}
+          onCambio={() => {
+            queryClient.invalidateQueries({ queryKey: ['riesgos-respuestas', auditoriaId] })
+            queryClient.invalidateQueries({ queryKey: ['tareas', auditoriaId] })
+            queryClient.invalidateQueries({ queryKey: ['papeles', auditoriaId] })
+          }}
+        />
+      )}
     </div>
+  )
+}
+
+function ResponderRiesgoModal({
+  auditoriaId, riesgo, usuarios, onClose, onCambio,
+}: {
+  auditoriaId: string
+  riesgo: Riesgo
+  usuarios: Usuario[]
+  onClose: () => void
+  onCambio: () => void
+}) {
+  const queryClient = useQueryClient()
+  const socios = usuarios.filter((u) => u.rol === 'socio')
+  const opcUsuarios = (socios.length > 0 ? usuarios : usuarios).map((u) => ({ value: u.id, label: u.nombre }))
+
+  const [titulo, setTitulo] = useState(`Respuesta al riesgo de ${AREA_LABEL[riesgo.area]}`)
+  const [asignadoA, setAsignadoA] = useState(usuarios[0]?.id ?? '')
+  const pruebas = PROGRAMA_AUDITORIA[riesgo.area] ?? []
+  const [selPruebas, setSelPruebas] = useState<Set<number>>(new Set())
+  const togglePrueba = (i: number) =>
+    setSelPruebas((prev) => {
+      const n = new Set(prev)
+      if (n.has(i)) n.delete(i)
+      else n.add(i)
+      return n
+    })
+
+  const { data: resp, isLoading } = useQuery<{ tareas: { id: string; titulo: string; estado: string }[]; papeles: { id: string; titulo: string; estado: string }[] }>({
+    queryKey: ['riesgo-respuestas', riesgo.id],
+    queryFn: () => api.get(`/riesgos/${riesgo.id}/respuestas`),
+  })
+
+  const refetch = () => {
+    queryClient.invalidateQueries({ queryKey: ['riesgo-respuestas', riesgo.id] })
+    onCambio()
+  }
+
+  const crearPapel = useMutation({
+    mutationFn: () =>
+      api.post(`/auditorias/${auditoriaId}/papeles`, {
+        area: riesgo.area,
+        titulo,
+        procedimiento: riesgo.respuestaPlaneada ?? undefined,
+        riesgoId: riesgo.id,
+      }),
+    onSuccess: refetch,
+  })
+  const crearTarea = useMutation({
+    mutationFn: () =>
+      api.post(`/auditorias/${auditoriaId}/tareas`, {
+        area: riesgo.area,
+        titulo,
+        descripcion: riesgo.respuestaPlaneada ?? undefined,
+        asignadoA,
+        riesgoId: riesgo.id,
+      }),
+    onSuccess: refetch,
+  })
+
+  const crearPruebas = useMutation({
+    mutationFn: async () => {
+      for (const i of selPruebas) {
+        const p = pruebas[i]
+        const guiaTexto = p.guia.length > 0 ? `\n\nPasos:\n${p.guia.map((g) => `• ${g}`).join('\n')}` : ''
+        await api.post(`/auditorias/${auditoriaId}/papeles`, {
+          area: riesgo.area,
+          titulo: p.titulo,
+          procedimiento: `Aserción(es): ${p.aserciones.join(', ')}.\n\n${p.procedimiento}${guiaTexto}`,
+          riesgoId: riesgo.id,
+          documentosRequeridos: p.documentosRequeridos,
+        })
+      }
+    },
+    onSuccess: () => { setSelPruebas(new Set()); refetch() },
+  })
+
+  const err = crearPapel.error || crearTarea.error || crearPruebas.error
+
+  return (
+    <Modal open onClose={onClose} title="Responder al riesgo" size="lg">
+      <div className="space-y-4 max-h-[70vh] overflow-y-auto pr-1">
+        <div className="rounded-xl bg-gray-50 border border-gray-100 px-4 py-3">
+          <p className="text-xs text-gray-400 mb-0.5">{AREA_LABEL[riesgo.area]}</p>
+          <p className="text-sm text-gray-700">{riesgo.descripcion}</p>
+          {riesgo.respuestaPlaneada && (
+            <p className="text-xs text-gray-500 mt-1"><span className="font-medium text-gray-600">Respuesta planeada:</span> {riesgo.respuestaPlaneada}</p>
+          )}
+        </div>
+
+        {/* Respuestas existentes */}
+        {isLoading ? (
+          <div className="flex justify-center py-4"><div className="h-5 w-5 animate-spin rounded-full border-2 border-indigo-600 border-t-transparent" /></div>
+        ) : (resp && (resp.tareas.length > 0 || resp.papeles.length > 0)) ? (
+          <div className="space-y-1.5">
+            <p className="text-xs text-gray-500">Respuestas creadas</p>
+            {resp.papeles.map((p) => (
+              <div key={p.id} className="flex items-center gap-2 text-sm text-gray-700 rounded-lg border border-gray-100 px-3 py-1.5">
+                <FileText size={13} className="text-indigo-500" /> {p.titulo}
+                <span className="ml-auto text-xs text-gray-400 capitalize">{p.estado}</span>
+              </div>
+            ))}
+            {resp.tareas.map((t) => (
+              <div key={t.id} className="flex items-center gap-2 text-sm text-gray-700 rounded-lg border border-gray-100 px-3 py-1.5">
+                <ListTodo size={13} className="text-amber-500" /> {t.titulo}
+                <span className="ml-auto text-xs text-gray-400 capitalize">{t.estado.replace('_', ' ')}</span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-xs text-gray-400">Aún no has creado tareas ni papeles para este riesgo.</p>
+        )}
+
+        {/* Programa de auditoría — pruebas estándar del área */}
+        {pruebas.length > 0 && (
+          <div className="border-t border-gray-100 pt-4">
+            <p className="text-xs text-gray-500 mb-2">
+              Programa de {AREA_LABEL[riesgo.area]} — selecciona las pruebas que aplican. Se creará un
+              papel por prueba (con su guía) y se generará la lista de documentos a solicitar al cliente.
+            </p>
+            <div className="space-y-1.5">
+              {pruebas.map((p, i) => (
+                <label
+                  key={i}
+                  className={cn(
+                    'flex items-start gap-2.5 rounded-lg border px-3 py-2 cursor-pointer transition-colors',
+                    selPruebas.has(i) ? 'border-indigo-300 bg-indigo-50/40' : 'border-gray-200 hover:border-gray-300',
+                  )}
+                >
+                  <input
+                    type="checkbox"
+                    checked={selPruebas.has(i)}
+                    onChange={() => togglePrueba(i)}
+                    className="h-4 w-4 mt-0.5 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                  />
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm font-medium text-gray-900">{p.titulo}</span>
+                      <span className="text-xs text-gray-400">{TIPO_PRUEBA_LABEL[p.tipo]}</span>
+                    </div>
+                    <p className="text-xs text-gray-500">{p.procedimiento}</p>
+                    <p className="text-xs text-indigo-500 mt-0.5">Aserciones: {p.aserciones.join(', ')}</p>
+                    {p.documentosRequeridos.length > 0 && (
+                      <p className="text-xs text-gray-500 mt-1">
+                        <span className="font-medium text-gray-600">Documentos:</span> {p.documentosRequeridos.join(' · ')}
+                      </p>
+                    )}
+                  </div>
+                </label>
+              ))}
+            </div>
+            <Button
+              size="sm"
+              className="gap-1.5 mt-2"
+              loading={crearPruebas.isPending}
+              disabled={selPruebas.size === 0}
+              onClick={() => crearPruebas.mutate()}
+            >
+              <FileText size={13} /> Crear papeles de las pruebas {selPruebas.size > 0 ? `(${selPruebas.size})` : ''}
+            </Button>
+          </div>
+        )}
+
+        {/* Respuesta a la medida */}
+        <div className="border-t border-gray-100 pt-4 space-y-3">
+          <p className="text-xs text-gray-500">Otra respuesta a la medida</p>
+          <Input id="resp-titulo" label="Título de la respuesta" value={titulo} onChange={(e) => setTitulo(e.target.value)} />
+          <Select
+            id="resp-asignado"
+            label="Responsable (para la tarea)"
+            value={asignadoA}
+            onChange={(e) => setAsignadoA(e.target.value)}
+            options={opcUsuarios.length > 0 ? opcUsuarios : [{ value: '', label: 'Sin usuarios' }]}
+          />
+          {err && (
+            <p className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">
+              {err instanceof Error ? err.message : 'Error al crear la respuesta'}
+            </p>
+          )}
+          <div className="flex gap-2">
+            <Button size="sm" className="gap-1.5" loading={crearPapel.isPending} disabled={titulo.trim().length < 3}
+              onClick={() => crearPapel.mutate()}>
+              <FileText size={13} /> Crear papel de trabajo
+            </Button>
+            <Button size="sm" variant="secondary" className="gap-1.5" loading={crearTarea.isPending}
+              disabled={titulo.trim().length < 3 || !asignadoA} onClick={() => crearTarea.mutate()}>
+              <ListTodo size={13} /> Crear tarea
+            </Button>
+          </div>
+          {(crearPapel.isSuccess || crearTarea.isSuccess) && (
+            <p className="text-xs text-emerald-600 flex items-center gap-1"><CheckCircle size={12} /> Respuesta creada y enlazada al riesgo.</p>
+          )}
+        </div>
+
+        <div className="flex justify-end">
+          <Button variant="secondary" onClick={onClose}>Cerrar</Button>
+        </div>
+      </div>
+    </Modal>
+  )
+}
+
+function CandidatosModal({
+  auditoriaId, onClose, onAgregados,
+}: {
+  auditoriaId: string
+  onClose: () => void
+  onAgregados: () => void
+}) {
+  const { data: candidatos = [], isLoading } = useQuery<Candidato[]>({
+    queryKey: ['riesgos-candidatos', auditoriaId],
+    queryFn: () => api.get<Candidato[]>(`/auditorias/${auditoriaId}/riesgos/candidatos`),
+  })
+
+  const [sel, setSel] = useState<Set<number>>(new Set())
+  const todos = candidatos.length > 0 && sel.size === candidatos.length
+
+  function toggle(i: number) {
+    setSel((prev) => {
+      const n = new Set(prev)
+      if (n.has(i)) n.delete(i)
+      else n.add(i)
+      return n
+    })
+  }
+
+  const agregar = useMutation({
+    mutationFn: () =>
+      api.post(`/auditorias/${auditoriaId}/riesgos/agregar-candidatos`, {
+        candidatos: [...sel].map((i) => ({
+          area: candidatos[i].area,
+          descripcion: candidatos[i].descripcion,
+          riesgoInherente: candidatos[i].riesgoInherente,
+          respuestaPlaneada: candidatos[i].respuestaPlaneada,
+        })),
+      }),
+    onSuccess: onAgregados,
+  })
+
+  const MOTIVO_LABEL: Record<Candidato['motivo'], string> = {
+    significativa: 'Significativa', anomalia: 'Variación inusual', ambas: 'Significativa + inusual',
+  }
+
+  return (
+    <Modal open onClose={onClose} title="Riesgos candidatos desde el balance" size="lg">
+      <div className="space-y-4 max-h-[70vh] overflow-y-auto pr-1">
+        <p className="text-xs text-gray-500">
+          A partir de las cuentas significativas y las variaciones inusuales del balance. Selecciona los
+          que apliquen; entrarán como riesgos para que ajustes el nivel de control y la respuesta.
+        </p>
+
+        {isLoading ? (
+          <div className="flex justify-center py-10">
+            <div className="h-6 w-6 animate-spin rounded-full border-2 border-indigo-600 border-t-transparent" />
+          </div>
+        ) : candidatos.length === 0 ? (
+          <div className="text-center py-8 text-sm text-gray-400">
+            No se encontraron cuentas significativas ni variaciones inusuales. Carga el balance y calcula la materialidad para activar esta sugerencia.
+          </div>
+        ) : (
+          <>
+            <button
+              onClick={() => setSel(todos ? new Set() : new Set(candidatos.map((_, i) => i)))}
+              className="text-xs text-indigo-600 hover:underline"
+            >
+              {todos ? 'Quitar selección' : 'Seleccionar todos'}
+            </button>
+            <div className="space-y-2">
+              {candidatos.map((c, i) => (
+                <label
+                  key={i}
+                  className={cn(
+                    'flex items-start gap-3 rounded-lg border px-3 py-2.5 cursor-pointer transition-colors',
+                    sel.has(i) ? 'border-indigo-300 bg-indigo-50/40' : 'border-gray-200 hover:border-gray-300',
+                  )}
+                >
+                  <input
+                    type="checkbox"
+                    checked={sel.has(i)}
+                    onChange={() => toggle(i)}
+                    className="h-4 w-4 mt-0.5 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                  />
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 mb-0.5">
+                      <span className="text-xs font-medium text-gray-900">{AREA_LABEL[c.area]}</span>
+                      <span className="text-xs text-gray-400">{MOTIVO_LABEL[c.motivo]}</span>
+                      <NivelChip nivel={c.riesgoInherente} />
+                    </div>
+                    <p className="text-sm text-gray-700">{c.descripcion}</p>
+                  </div>
+                </label>
+              ))}
+            </div>
+
+            {agregar.isError && (
+              <p className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">
+                {agregar.error instanceof Error ? agregar.error.message : 'Error al agregar'}
+              </p>
+            )}
+
+            <div className="flex justify-end gap-3 pt-1">
+              <Button variant="secondary" onClick={onClose}>Cancelar</Button>
+              <Button loading={agregar.isPending} disabled={sel.size === 0} onClick={() => agregar.mutate()}>
+                Agregar {sel.size > 0 ? `(${sel.size})` : ''}
+              </Button>
+            </div>
+          </>
+        )}
+      </div>
+    </Modal>
   )
 }
 

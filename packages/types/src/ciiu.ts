@@ -67,6 +67,18 @@ export const SECTOR_LABEL: Record<SectorCiiu, string> = {
   servicios: 'Servicios',
 }
 
+/** Lista cerrada de sectores para el select del cliente (coincide con el catálogo de riesgos). */
+export const SECTORES: string[] = [
+  'Comercio',
+  'Construcción',
+  'Manufactura',
+  'Agropecuario',
+  'Transporte',
+  'Minería',
+  'Servicios',
+  'Otro',
+]
+
 /** Extrae la división (2 primeros dígitos) de un código CIIU. */
 function division(codigo: string): number | null {
   const digitos = codigo.replace(/\D/g, '')

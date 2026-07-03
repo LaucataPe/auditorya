@@ -11,6 +11,11 @@ import empresasRoutes from './routes/empresas'
 import auditoriasRoutes from './routes/auditorias'
 import ejecucionRoutes from './routes/ejecucion'
 import informesRoutes from './routes/informes'
+import auditoriaInternaRoutes from './routes/auditoria-interna'
+import pbcRoutes from './routes/pbc'
+import cierreRoutes from './routes/cierre'
+import archivosRoutes from './routes/archivos'
+import iaRoutes from './routes/ia'
 import superadminRoutes from './routes/superadmin'
 
 const app = new Hono()
@@ -44,6 +49,16 @@ app.route('/', auditoriasRoutes)
 app.route('/', ejecucionRoutes)
 // informesRoutes define rutas absolutas (/auditorias/:id/informes, /informes/...)
 app.route('/', informesRoutes)
+// auditoriaInternaRoutes define rutas absolutas (/auditorias/:id/ai/...)
+app.route('/', auditoriaInternaRoutes)
+// pbcRoutes define rutas absolutas (/auditorias/:id/pbc, /pbc/...)
+app.route('/', pbcRoutes)
+// cierreRoutes define rutas absolutas (/auditorias/:id/cierre, /papeles/:id/notas-revision, /notas-revision/...)
+app.route('/', cierreRoutes)
+// Descarga de archivos con URL firmada (sin cookie de sesión)
+app.route('/', archivosRoutes)
+// Funciones de IA (Claude) — /auditorias/:id/ia/..., /papeles/:id/ia/...
+app.route('/', iaRoutes)
 app.route('/superadmin', superadminRoutes)
 
 const port = Number(process.env.PORT ?? 3001)

@@ -5,6 +5,7 @@ import { and, desc, eq } from 'drizzle-orm'
 import { db } from '../db/client'
 import { empresas, evaluacionesAceptacion } from '../db/schema'
 import { authMiddleware } from '../middleware/auth'
+import { registrarEvento } from '../lib/eventos'
 import { sectorDesdeCiiu, SECTOR_LABEL } from '@auditorya/types'
 import type { JwtPayload } from '../lib/jwt'
 
@@ -66,8 +67,8 @@ app.post(
       return c.json({ error: { code: 'NIT_DUPLICADO', message: 'Ya existe una empresa con ese NIT' } }, 409)
     }
 
-    // El CIIU manda sobre el sector escrito; si no hay CIIU válido, se usa el sector indicado.
-    const sectorFinal = sectorPorCiiu(body.ciiu) ?? body.sector!
+    // El sector (select controlado) manda; si no viene, se deriva del CIIU.
+    const sectorFinal = body.sector ?? sectorPorCiiu(body.ciiu)!
 
     const [empresa] = await db
       .insert(empresas)
@@ -100,6 +101,11 @@ app.put(
       ciiu: z.string().optional(),
       actividadEconomica: z.string().optional(),
       ciudad: z.string().optional(),
+      modeloNegocio: z.string().optional(),
+      estructura: z.string().optional(),
+      personasClave: z.string().optional(),
+      entornoRegulatorio: z.string().optional(),
+      sistemaContable: z.string().optional(),
       marcoContable: z.enum(['NIIF', 'NIIF_PYMES', 'PCGA']).optional(),
     }),
   ),
@@ -130,15 +136,19 @@ app.put(
     if (body.marcoContable) updates.marcoContable = body.marcoContable
     if (body.actividadEconomica !== undefined) updates.actividadEconomica = body.actividadEconomica || null
     if (body.ciudad !== undefined) updates.ciudad = body.ciudad || null
+    // Archivo permanente (capa global)
+    if (body.modeloNegocio !== undefined) updates.modeloNegocio = body.modeloNegocio || null
+    if (body.estructura !== undefined) updates.estructura = body.estructura || null
+    if (body.personasClave !== undefined) updates.personasClave = body.personasClave || null
+    if (body.entornoRegulatorio !== undefined) updates.entornoRegulatorio = body.entornoRegulatorio || null
+    if (body.sistemaContable !== undefined) updates.sistemaContable = body.sistemaContable || null
 
-    // El CIIU (si cambia) redefine el sector derivado; si no, respeta el sector indicado.
-    if (body.ciiu !== undefined) {
-      updates.ciiu = body.ciiu || null
+    // El sector (select controlado) manda; si no viene, se deriva del CIIU.
+    if (body.ciiu !== undefined) updates.ciiu = body.ciiu || null
+    if (body.sector) updates.sector = body.sector
+    else if (body.ciiu) {
       const derivado = sectorPorCiiu(body.ciiu)
       if (derivado) updates.sector = derivado
-      else if (body.sector) updates.sector = body.sector
-    } else if (body.sector) {
-      updates.sector = body.sector
     }
 
     if (Object.keys(updates).length === 0) {
@@ -236,6 +246,14 @@ app.post(
       .set({ estadoEncargo: decision })
       .where(eq(empresas.id, id))
       .returning()
+
+    registrarEvento(c.get('user'), {
+      accion: `encargo.${decision}`,
+      entidad: 'evaluacion_aceptacion',
+      entidadId: evaluacion.id,
+      empresaId: id,
+      detalle: { hayAmenazas, decision },
+    })
 
     return c.json({ data: { evaluacion, empresa: empresaActualizada } }, 201)
   },

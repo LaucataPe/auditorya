@@ -1,3 +1,5 @@
+export type TipoServicio = 'revisoria_fiscal' | 'auditoria_interna'
+
 export type TipoAuditoria = 'financiera' | 'integral' | 'especial'
 
 export type EstadoAuditoria =
@@ -11,8 +13,14 @@ export type Auditoria = {
   empresaId: string
   socioId: string
   periodo: string
-  tipo: TipoAuditoria
+  tipoServicio: TipoServicio
+  tipo: TipoAuditoria | null
   estado: EstadoAuditoria
   materialidadAprobada: boolean
   createdAt: string
+}
+
+export const TIPO_SERVICIO_LABEL: Record<TipoServicio, string> = {
+  revisoria_fiscal: 'Revisoría Fiscal',
+  auditoria_interna: 'Auditoría Interna',
 }

@@ -11,6 +11,7 @@ import { cn } from '../../lib/cn'
 
 type FaseAuditoria = 'planificacion' | 'ejecucion' | 'revision' | 'finalizada'
 type TipoAuditoria = 'financiera' | 'integral' | 'especial'
+type TipoServicio = 'revisoria_fiscal' | 'auditoria_interna'
 
 type Empresa = { id: string; nombre: string; estadoEncargo: string }
 
@@ -19,10 +20,21 @@ type Auditoria = {
   empresaId: string
   socioId: string
   periodo: string
-  tipo: TipoAuditoria
+  tipoServicio: TipoServicio
+  tipo: TipoAuditoria | null
   estado: FaseAuditoria
   materialidadAprobada: boolean
   createdAt: string
+}
+
+const SERVICIO_LABEL: Record<TipoServicio, string> = {
+  revisoria_fiscal: 'Revisoría Fiscal',
+  auditoria_interna: 'Auditoría Interna',
+}
+
+const SERVICIO_BADGE: Record<TipoServicio, string> = {
+  revisoria_fiscal: 'bg-blue-50 text-blue-700',
+  auditoria_interna: 'bg-purple-50 text-purple-700',
 }
 
 type Usuario = { id: string; nombre: string; rol: string }
@@ -87,7 +99,7 @@ export function EmpresaEncargos() {
   const nombrePorId = (uid: string) => usuarios.find((u) => u.id === uid)?.nombre ?? '—'
 
   const createMutation = useMutation({
-    mutationFn: (body: { periodo: string; tipo: TipoAuditoria; socioId: string }) =>
+    mutationFn: (body: { periodo: string; tipoServicio: TipoServicio; tipo?: TipoAuditoria; socioId: string }) =>
       api.post(`/empresas/${id}/auditorias`, body),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['auditorias', id] })
@@ -99,7 +111,7 @@ export function EmpresaEncargos() {
   const bloqueado = empresa?.estadoEncargo !== 'aceptado'
 
   return (
-    <div className="p-8 space-y-6 max-w-4xl">
+    <div className="p-8 space-y-6 max-w-6xl">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Encargos</h1>
@@ -174,8 +186,13 @@ export function EmpresaEncargos() {
                       <span className={cn('text-xs font-medium px-2 py-0.5 rounded-full', FASE_BADGE[auditoria.estado])}>
                         {FASE_LABEL[auditoria.estado]}
                       </span>
+                      <span className={cn('text-xs font-medium px-2 py-0.5 rounded-full', SERVICIO_BADGE[auditoria.tipoServicio ?? 'revisoria_fiscal'])}>
+                        {SERVICIO_LABEL[auditoria.tipoServicio ?? 'revisoria_fiscal']}
+                      </span>
                     </div>
-                    <p className="font-semibold text-gray-900">{TIPO_LABEL[auditoria.tipo]}</p>
+                    <p className="font-semibold text-gray-900">
+                      {auditoria.tipo ? TIPO_LABEL[auditoria.tipo] : SERVICIO_LABEL[auditoria.tipoServicio ?? 'revisoria_fiscal']}
+                    </p>
                     <p className="text-xs text-gray-500 mt-0.5">Socio responsable: {nombrePorId(auditoria.socioId)}</p>
                   </div>
                   <ChevronRight size={15} className="text-gray-300 group-hover:text-indigo-500 transition-colors mt-1" />
@@ -204,6 +221,7 @@ export function EmpresaEncargos() {
         error={createMutation.error instanceof Error ? createMutation.error.message : null}
         onCreate={(body) => createMutation.mutate(body)}
       />
+
     </div>
   )
 }
@@ -216,23 +234,31 @@ function NuevoEncargoModal({
   usuarios: Usuario[]
   loading: boolean
   error: string | null
-  onCreate: (e: { periodo: string; tipo: TipoAuditoria; socioId: string }) => void
+  onCreate: (e: { periodo: string; tipoServicio: TipoServicio; tipo?: TipoAuditoria; socioId: string }) => void
 }) {
   const socios = usuarios.filter((u) => u.rol === 'socio')
   const opcionesSocio = (socios.length > 0 ? socios : usuarios).map((u) => ({ value: u.id, label: u.nombre }))
 
   const [form, setForm] = useState({
     periodo: (new Date().getFullYear() - 1).toString(),
+    tipoServicio: 'revisoria_fiscal' as TipoServicio,
     tipo: 'financiera' as TipoAuditoria,
     socioId: '',
   })
 
   const socioId = form.socioId || opcionesSocio[0]?.value || ''
+  const esRevFiscal = form.tipoServicio === 'revisoria_fiscal'
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (!socioId) return
-    onCreate({ periodo: form.periodo, tipo: form.tipo, socioId })
+    const body: { periodo: string; tipoServicio: TipoServicio; tipo?: TipoAuditoria; socioId: string } = {
+      periodo: form.periodo,
+      tipoServicio: form.tipoServicio,
+      socioId,
+    }
+    if (esRevFiscal) body.tipo = form.tipo
+    onCreate(body)
   }
 
   return (
@@ -246,16 +272,28 @@ function NuevoEncargoModal({
           onChange={(e) => setForm({ ...form, periodo: e.target.value })}
         />
         <Select
-          id="enc-tipo"
-          label="Tipo de auditoría"
-          value={form.tipo}
-          onChange={(e) => setForm({ ...form, tipo: e.target.value as TipoAuditoria })}
+          id="enc-servicio"
+          label="Tipo de servicio"
+          value={form.tipoServicio}
+          onChange={(e) => setForm({ ...form, tipoServicio: e.target.value as TipoServicio })}
           options={[
-            { value: 'financiera', label: 'Auditoría financiera' },
-            { value: 'integral', label: 'Auditoría integral' },
-            { value: 'especial', label: 'Auditoría especial' },
+            { value: 'revisoria_fiscal', label: 'Revisoría Fiscal' },
+            { value: 'auditoria_interna', label: 'Auditoría Interna (IIA IPPF)' },
           ]}
         />
+        {esRevFiscal && (
+          <Select
+            id="enc-tipo"
+            label="Modalidad"
+            value={form.tipo}
+            onChange={(e) => setForm({ ...form, tipo: e.target.value as TipoAuditoria })}
+            options={[
+              { value: 'financiera', label: 'Auditoría financiera' },
+              { value: 'integral', label: 'Auditoría integral' },
+              { value: 'especial', label: 'Auditoría especial' },
+            ]}
+          />
+        )}
         <Select
           id="enc-socio"
           label="Socio responsable"

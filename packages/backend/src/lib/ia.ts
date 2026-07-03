@@ -161,6 +161,27 @@ const CATALOGO_POR_SECTOR: Record<string, RiesgoSugerido[]> = {
       respuestaPlaneada: 'Circularización y análisis de antigüedad.',
     },
   ],
+  mineria: [
+    {
+      area: 'propiedad_planta_equipo',
+      descripcion:
+        'Maquinaria pesada y costos de desarrollo/exploración capitalizados con depreciación o agotamiento incorrecto.',
+      riesgoInherente: 'alto',
+      respuestaPlaneada: 'Inspección de activos y revisión del cálculo de depreciación/agotamiento.',
+    },
+    {
+      area: 'inventarios',
+      descripcion: 'Inventarios de mineral extraído valuados de forma incorrecta o con mermas no reconocidas.',
+      riesgoInherente: 'alto',
+      respuestaPlaneada: 'Pruebas de costos de producción y observación de la medición de existencias.',
+    },
+    {
+      area: 'impuestos',
+      descripcion: 'Regalías y obligaciones tributarias del sector minero mal estimadas.',
+      riesgoInherente: 'medio',
+      respuestaPlaneada: 'Recálculo de regalías e impuestos y conciliación con las liquidaciones.',
+    },
+  ],
 }
 
 /**

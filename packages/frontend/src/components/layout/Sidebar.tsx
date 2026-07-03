@@ -1,24 +1,30 @@
 import { NavLink, useNavigate } from 'react-router-dom'
-import {
-  Building2,
-  ClipboardList,
-  FileSearch,
-  FileText,
-  LayoutDashboard,
-  LogOut,
-  Users,
-} from 'lucide-react'
+import { Building2, LayoutDashboard, LogOut, Users } from 'lucide-react'
 import { cn } from '../../lib/cn'
 import { useAuthStore } from '../../store/auth.store'
 
-const phases = [
-  { label: 'Inicio', icon: LayoutDashboard, to: '/dashboard', enabled: true },
-  { label: 'Firma', icon: Building2, to: '/firma', enabled: true },
-  { label: 'Empresas', icon: Users, to: '/empresas', enabled: true },
-  { label: 'Planificación', icon: ClipboardList, to: '/planificacion', enabled: false },
-  { label: 'Ejecución', icon: FileSearch, to: '/ejecucion', enabled: false },
-  { label: 'Informes', icon: FileText, to: '/informes', enabled: false },
+const nav = [
+  { label: 'Inicio', icon: LayoutDashboard, to: '/dashboard' },
+  { label: 'Clientes', icon: Users, to: '/empresas' },
+  { label: 'Mi firma', icon: Building2, to: '/firma' },
 ]
+
+const ROL_LABEL: Record<string, string> = {
+  socio: 'Socio',
+  gerente: 'Gerente',
+  senior: 'Senior',
+  asistente: 'Asistente',
+}
+
+function iniciales(nombre?: string) {
+  if (!nombre) return '?'
+  return nombre
+    .split(' ')
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((p) => p[0]!.toUpperCase())
+    .join('')
+}
 
 export function Sidebar() {
   const { user, firma, logout } = useAuthStore()
@@ -30,60 +36,62 @@ export function Sidebar() {
   }
 
   return (
-    <aside className="flex h-screen w-56 flex-col bg-gray-900 text-white">
+    <aside className="flex h-screen w-60 flex-col bg-slate-950 text-white">
       {/* Logo */}
-      <div className="flex items-center gap-2 px-5 py-5 border-b border-gray-700">
-        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-500 text-sm font-bold">
+      <div className="flex items-center gap-2.5 px-5 py-5">
+        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-500 text-sm font-bold shadow-[0_0_16px_rgba(99,102,241,0.4)]">
           A
         </div>
-        <span className="text-lg font-semibold tracking-tight">AuditorYa</span>
+        <div className="min-w-0">
+          <span className="block text-[15px] font-semibold tracking-tight leading-tight">AuditorYa</span>
+          <span className="block text-[11px] text-slate-500 truncate">{firma?.nombre}</span>
+        </div>
       </div>
 
       {/* Nav */}
-      <nav className="flex-1 space-y-0.5 px-3 py-4">
-        {phases.map(({ label, icon: Icon, to, enabled }) =>
-          enabled ? (
-            <NavLink
-              key={to}
-              to={to}
-              className={({ isActive }) =>
-                cn(
-                  'flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition-colors',
-                  isActive
-                    ? 'bg-indigo-600 text-white'
-                    : 'text-gray-400 hover:bg-gray-800 hover:text-white',
-                )
-              }
-            >
-              <Icon size={16} />
-              {label}
-            </NavLink>
-          ) : (
-            <div
-              key={to}
-              className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm text-gray-600 cursor-not-allowed select-none"
-              title="Completa los pasos anteriores para desbloquear"
-            >
-              <Icon size={16} />
-              {label}
-              <span className="ml-auto text-xs">🔒</span>
-            </div>
-          ),
-        )}
+      <nav className="flex-1 space-y-0.5 px-3 pt-2">
+        <p className="px-3 pb-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-600">
+          Espacio de trabajo
+        </p>
+        {nav.map(({ label, icon: Icon, to }) => (
+          <NavLink
+            key={to}
+            to={to}
+            className={({ isActive }) =>
+              cn(
+                'flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors',
+                isActive
+                  ? 'bg-white/10 text-white font-medium'
+                  : 'text-slate-400 hover:bg-white/5 hover:text-slate-200',
+              )
+            }
+          >
+            <Icon size={16} strokeWidth={1.8} />
+            {label}
+          </NavLink>
+        ))}
       </nav>
 
       {/* User */}
-      <div className="border-t border-gray-700 px-4 py-4">
-        <p className="text-xs text-gray-500 truncate mb-0.5">{firma?.nombre}</p>
-        <p className="text-xs font-medium text-white truncate">{user?.nombre}</p>
-        <p className="text-xs text-gray-500 truncate">{user?.email}</p>
-        <button
-          onClick={handleLogout}
-          className="mt-3 flex items-center gap-2 text-xs text-gray-500 hover:text-red-400 transition-colors"
-        >
-          <LogOut size={13} />
-          Cerrar sesión
-        </button>
+      <div className="border-t border-white/10 px-4 py-4">
+        <div className="flex items-center gap-2.5">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-800 text-xs font-semibold text-slate-300">
+            {iniciales(user?.nombre)}
+          </div>
+          <div className="min-w-0">
+            <p className="text-xs font-medium text-white truncate">{user?.nombre}</p>
+            <p className="text-[11px] text-slate-500 truncate">
+              {ROL_LABEL[user?.rol ?? ''] ?? user?.rol}
+            </p>
+          </div>
+          <button
+            onClick={handleLogout}
+            title="Cerrar sesión"
+            className="ml-auto rounded-lg p-1.5 text-slate-500 hover:bg-white/5 hover:text-red-400 transition-colors"
+          >
+            <LogOut size={14} />
+          </button>
+        </div>
       </div>
     </aside>
   )

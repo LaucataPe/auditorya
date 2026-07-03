@@ -30,6 +30,9 @@ export type PapelTrabajo = {
   hallazgos: string | null
   conclusion: string | null
   estado: EstadoPapel
+  fechaInicio: string | null
+  fechaFin: string | null
+  asignadoA: string | null
   preparadoPor: string
   aprobadoPor: string | null
   aprobadoAt: string | null

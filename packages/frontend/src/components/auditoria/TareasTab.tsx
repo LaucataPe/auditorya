@@ -77,7 +77,7 @@ export function TareasTab({
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['tareas', auditoriaId] })
 
   const createMutation = useMutation({
-    mutationFn: (body: { area: Area; titulo: string; descripcion?: string; asignadoA: string; vencimiento?: string }) =>
+    mutationFn: (body: { area: Area; titulo: string; descripcion?: string; asignadoA: string; fechaInicio?: string; vencimiento?: string }) =>
       api.post(`/auditorias/${auditoriaId}/tareas`, body),
     onSuccess: () => { invalidate(); setNuevoOpen(false) },
   })
@@ -114,14 +114,7 @@ export function TareasTab({
   }
 
   return (
-    <div className="space-y-5 max-w-3xl">
-      <div className="bg-indigo-50 border border-indigo-100 rounded-xl px-5 py-4">
-        <p className="text-sm font-medium text-indigo-800">Tareas por área</p>
-        <p className="text-xs text-indigo-500 mt-1">
-          Asigna el trabajo del encargo al equipo por área o ciclo, con responsable y fecha límite, y
-          sigue su avance hasta completarlo.
-        </p>
-      </div>
+    <div className="space-y-5">
 
       <div className="flex items-center justify-between">
         <div className="flex gap-2">
@@ -234,13 +227,14 @@ function NuevaTareaModal({
   usuarios: Usuario[]
   loading: boolean
   error: string | null
-  onCreate: (b: { area: Area; titulo: string; descripcion?: string; asignadoA: string; vencimiento?: string }) => void
+  onCreate: (b: { area: Area; titulo: string; descripcion?: string; asignadoA: string; fechaInicio?: string; vencimiento?: string }) => void
 }) {
   const [form, setForm] = useState({
     area: 'efectivo' as Area,
     titulo: '',
     descripcion: '',
     asignadoA: '',
+    fechaInicio: '',
     vencimiento: '',
   })
 
@@ -255,6 +249,7 @@ function NuevaTareaModal({
       descripcion: form.descripcion || undefined,
       asignadoA,
       // input type=date da 'YYYY-MM-DD'; lo pasamos a ISO datetime
+      fechaInicio: form.fechaInicio ? new Date(form.fechaInicio).toISOString() : undefined,
       vencimiento: form.vencimiento ? new Date(form.vencimiento).toISOString() : undefined,
     })
   }
@@ -292,13 +287,22 @@ function NuevaTareaModal({
           value={form.descripcion}
           onChange={(e) => setForm({ ...form, descripcion: e.target.value })}
         />
-        <Input
-          id="nt-vence"
-          label="Fecha límite (opcional)"
-          type="date"
-          value={form.vencimiento}
-          onChange={(e) => setForm({ ...form, vencimiento: e.target.value })}
-        />
+        <div className="grid grid-cols-2 gap-3">
+          <Input
+            id="nt-inicio"
+            label="Fecha de inicio (opcional)"
+            type="date"
+            value={form.fechaInicio}
+            onChange={(e) => setForm({ ...form, fechaInicio: e.target.value })}
+          />
+          <Input
+            id="nt-vence"
+            label="Fecha límite (opcional)"
+            type="date"
+            value={form.vencimiento}
+            onChange={(e) => setForm({ ...form, vencimiento: e.target.value })}
+          />
+        </div>
 
         {error && (
           <p className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{error}</p>

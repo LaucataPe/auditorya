@@ -1,33 +1,49 @@
-import { useState } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useState, useEffect } from 'react'
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, ArrowRight, Calculator, ShieldAlert, Lock, FileText, ClipboardCheck, ListTodo, FileCheck2 } from 'lucide-react'
+import { ArrowRight, Lock, History, PartyPopper } from 'lucide-react'
 import { Button } from '../../components/ui/Button'
+import { EntendimientoTab } from '../../components/auditoria/EntendimientoTab'
+import { BalanceTab } from '../../components/auditoria/BalanceTab'
 import { MaterialidadTab } from '../../components/auditoria/MaterialidadTab'
 import { RiesgosTab } from '../../components/auditoria/RiesgosTab'
 import { TareasTab } from '../../components/auditoria/TareasTab'
 import { PapelesTab } from '../../components/auditoria/PapelesTab'
+import { PbcTab } from '../../components/auditoria/PbcTab'
+import { CronogramaTab } from '../../components/auditoria/CronogramaTab'
+import { MemoPlaneacionTab } from '../../components/auditoria/MemoPlaneacionTab'
+import { CartaEncargoTab } from '../../components/auditoria/CartaEncargoTab'
 import { ControlInternoTab } from '../../components/auditoria/ControlInternoTab'
 import { InformesTab } from '../../components/auditoria/InformesTab'
+import { CierreTab } from '../../components/auditoria/CierreTab'
+import { ResumenTab } from '../../components/auditoria/ResumenTab'
+import { AlcanceTab } from '../../components/auditoria/ai/AlcanceTab'
+import { ProgramasTab } from '../../components/auditoria/ai/ProgramasTab'
+import { HallazgosTab } from '../../components/auditoria/ai/HallazgosTab'
+import { InformeAITab } from '../../components/auditoria/ai/InformeAITab'
+import { PanelDerecho } from '../../components/auditoria/PanelDerecho'
+import { AsistenteIA } from '../../components/auditoria/AsistenteIA'
+import { ActividadModal } from '../../components/auditoria/ActividadModal'
+import {
+  tabsPorServicio, FASE_ID, TIPO_LABEL, SERVICIO_LABEL,
+  type SubTab, type FaseNombre,
+} from '../../lib/etapas-encargo'
+import { construirGuia, type SignalsProgreso } from '@auditorya/types'
 import { api } from '../../lib/api'
 import { cn } from '../../lib/cn'
 
 type FaseAuditoria = 'planificacion' | 'ejecucion' | 'revision' | 'finalizada'
 type TipoAuditoria = 'financiera' | 'integral' | 'especial'
+type TipoServicio = 'revisoria_fiscal' | 'auditoria_interna'
 
 type Auditoria = {
   id: string
   periodo: string
-  tipo: TipoAuditoria
+  tipoServicio: TipoServicio
+  tipo: TipoAuditoria | null
   estado: FaseAuditoria
   materialidadAprobada: boolean
   empresa: { id: string; nombre: string; sector: string }
-}
-
-const TIPO_LABEL: Record<TipoAuditoria, string> = {
-  financiera: 'Auditoría financiera',
-  integral: 'Auditoría integral',
-  especial: 'Auditoría especial',
 }
 
 const FASE_LABEL: Record<FaseAuditoria, string> = {
@@ -44,13 +60,13 @@ const FASE_BADGE: Record<FaseAuditoria, string> = {
   finalizada: 'bg-emerald-50 text-emerald-700',
 }
 
-type SubTab = 'materialidad' | 'riesgos' | 'tareas' | 'papeles' | 'control_interno' | 'informes'
-
 export function EmpresaAuditoria() {
   const { id, auditoriaId } = useParams<{ id: string; auditoriaId: string }>()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
-  const [tab, setTab] = useState<SubTab>('materialidad')
+  const [searchParams, setSearchParams] = useSearchParams()
+  const pasoParam = searchParams.get('paso')
+  const [actividadOpen, setActividadOpen] = useState(false)
 
   const { data: auditoria, isLoading, isError } = useQuery<Auditoria>({
     queryKey: ['auditoria', auditoriaId],
@@ -59,13 +75,25 @@ export function EmpresaAuditoria() {
     retry: false,
   })
 
+  const { data: signals } = useQuery<SignalsProgreso>({
+    queryKey: ['progreso', auditoriaId],
+    queryFn: () => api.get<SignalsProgreso>(`/auditorias/${auditoriaId}/progreso`),
+    enabled: !!auditoriaId,
+  })
+
   const avanzarMutation = useMutation({
     mutationFn: () => api.put(`/auditorias/${auditoriaId}`, { estado: 'ejecucion' }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['auditoria', auditoriaId] })
       queryClient.invalidateQueries({ queryKey: ['auditorias', id] })
+      queryClient.invalidateQueries({ queryKey: ['progreso', auditoriaId] })
     },
   })
+
+  // Refresca el progreso (sidebar + panel) al cambiar de paso, tras trabajar en uno.
+  useEffect(() => {
+    queryClient.invalidateQueries({ queryKey: ['progreso', auditoriaId] })
+  }, [pasoParam, queryClient, auditoriaId])
 
   if (isLoading) {
     return (
@@ -86,19 +114,48 @@ export function EmpresaAuditoria() {
     )
   }
 
+  const esAI = auditoria.tipoServicio === 'auditoria_interna'
+  const tabs = tabsPorServicio(auditoria.tipoServicio)
   const enPlanificacion = auditoria.estado === 'planificacion'
+  const puedeAvanzar = esAI ? true : auditoria.materialidadAprobada
+
+  // El paso activo vive en la URL (?paso=). Por defecto (o si es inválido) → 'resumen' (dashboard).
+  const tabActivo: SubTab = pasoParam === 'resumen'
+    ? 'resumen'
+    : tabs.find((t) => t.id === pasoParam) ? (pasoParam as SubTab) : 'resumen'
+  const setTab = (t: SubTab) => {
+    const next = new URLSearchParams(searchParams)
+    next.set('paso', t)
+    setSearchParams(next, { replace: true })
+  }
+
+  const guia = signals ? construirGuia(signals) : null
+  const siguiente = guia?.siguientePaso ?? null
+
+  const pasoActual = tabs.find((t) => t.id === tabActivo)
+  const PasoIcon = pasoActual?.icon
+  const pasoLabel = pasoActual?.label ?? ''
+  const faseActiva: FaseNombre = pasoActual?.grupo ?? 'Planificación'
+  const faseItems = guia?.fases.find((f) => f.id === FASE_ID[faseActiva])?.items ?? []
+
+  const titulo = auditoria.tipo
+    ? TIPO_LABEL[auditoria.tipo]
+    : SERVICIO_LABEL[auditoria.tipoServicio ?? 'revisoria_fiscal']
 
   return (
-    <div className="p-8 max-w-3xl space-y-6">
-      {/* Volver */}
-      <button
-        onClick={() => navigate(`/empresas/${id}/encargos`)}
-        className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-700 transition-colors"
-      >
-        <ArrowLeft size={15} /> Encargos
-      </button>
+    <div className="p-8 max-w-7xl space-y-6">
+      {/* Actividad (pista de auditoría) */}
+      <div className="flex items-center justify-end">
+        <button
+          onClick={() => setActividadOpen(true)}
+          className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-colors"
+          title="Pista de auditoría del encargo"
+        >
+          <History size={13} /> Actividad
+        </button>
+      </div>
 
-      {/* Encabezado */}
+      {/* Encabezado del encargo */}
       <div className="flex items-start justify-between">
         <div>
           <div className="flex items-center gap-2 mb-1">
@@ -107,24 +164,23 @@ export function EmpresaAuditoria() {
               {FASE_LABEL[auditoria.estado]}
             </span>
           </div>
-          <h1 className="text-2xl font-bold text-gray-900">{TIPO_LABEL[auditoria.tipo]}</h1>
+          <h1 className="text-2xl font-bold text-gray-900">{titulo}</h1>
           <p className="text-sm text-gray-500 mt-0.5">{auditoria.empresa.nombre}</p>
         </div>
 
-        {/* Avanzar a ejecución (Fase 4) — solo si la materialidad está aprobada */}
         {enPlanificacion && (
           <div className="flex flex-col items-end gap-1">
             <Button
               size="sm"
               className="gap-1.5"
-              disabled={!auditoria.materialidadAprobada || avanzarMutation.isPending}
+              disabled={!puedeAvanzar || avanzarMutation.isPending}
               loading={avanzarMutation.isPending}
               onClick={() => avanzarMutation.mutate()}
             >
-              {auditoria.materialidadAprobada ? <ArrowRight size={14} /> : <Lock size={14} />}
+              {puedeAvanzar ? <ArrowRight size={14} /> : <Lock size={14} />}
               Pasar a ejecución
             </Button>
-            {!auditoria.materialidadAprobada && (
+            {!puedeAvanzar && (
               <p className="text-xs text-gray-400">Requiere materialidad aprobada</p>
             )}
           </div>
@@ -137,57 +193,125 @@ export function EmpresaAuditoria() {
         </p>
       )}
 
-      {/* Sub-tabs: planificación + ejecución */}
-      <div className="border-b border-gray-200">
-        <nav className="flex gap-1 flex-wrap">
-          {([
-            { id: 'materialidad', label: 'Materialidad', icon: Calculator, grupo: 'Planificación' },
-            { id: 'riesgos', label: 'Riesgos', icon: ShieldAlert, grupo: 'Planificación' },
-            { id: 'tareas', label: 'Tareas', icon: ListTodo, grupo: 'Ejecución' },
-            { id: 'papeles', label: 'Papeles de trabajo', icon: FileText, grupo: 'Ejecución' },
-            { id: 'control_interno', label: 'Control interno', icon: ClipboardCheck, grupo: 'Ejecución' },
-            { id: 'informes', label: 'Informes', icon: FileCheck2, grupo: 'Informes' },
-          ] as const).map((t) => {
-            const Icon = t.icon
-            const bloqueado = t.grupo !== 'Planificación' && !auditoria.materialidadAprobada
-            return (
-              <button
-                key={t.id}
-                onClick={() => setTab(t.id)}
-                className={cn(
-                  'flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors',
-                  tab === t.id
-                    ? 'border-indigo-600 text-indigo-600'
-                    : 'border-transparent text-gray-500 hover:text-gray-700',
-                )}
-              >
-                {bloqueado ? <Lock size={13} /> : <Icon size={14} />}
-                {t.label}
-              </button>
-            )
-          })}
-        </nav>
-      </div>
+      {/* Vista de inicio (dashboard) o el paso activo */}
+      {tabActivo === 'resumen' ? (
+        <ResumenTab auditoriaId={auditoria.id} tipoServicio={auditoria.tipoServicio} onIr={setTab} />
+      ) : (
+      /* Workspace: contenido (centro) + panel de apoyo (derecha) */
+      <div className="flex gap-6 items-start">
+        <div className="min-w-0 flex-1 space-y-5">
+          {/* Siguiente paso sugerido por la guía */}
+          {siguiente ? (
+            <button
+              onClick={() => setTab(siguiente.tab as SubTab)}
+              className="w-full flex items-center justify-between gap-3 rounded-xl bg-indigo-600 px-4 py-3 text-left hover:bg-indigo-700 transition-colors"
+            >
+              <div className="flex items-center gap-3 min-w-0">
+                <ArrowRight size={20} className="text-indigo-200 shrink-0" />
+                <div className="min-w-0">
+                  <p className="text-xs text-indigo-200">Tu siguiente paso</p>
+                  <p className="text-sm font-semibold text-white truncate">{siguiente.label}</p>
+                </div>
+              </div>
+              <span className="text-xs font-medium px-3 py-1.5 rounded-lg bg-white/15 text-white shrink-0">Ir ahora</span>
+            </button>
+          ) : guia ? (
+            <div className="flex items-center gap-3 rounded-xl bg-emerald-50 border border-emerald-200 px-4 py-3">
+              <PartyPopper size={18} className="text-emerald-500 shrink-0" />
+              <p className="text-sm font-medium text-emerald-800">
+                Completaste todos los pasos requeridos. El encargo está listo.
+              </p>
+            </div>
+          ) : null}
 
-      {tab === 'materialidad' && <MaterialidadTab auditoriaId={auditoria.id} />}
-      {tab === 'riesgos' && <RiesgosTab auditoriaId={auditoria.id} sector={auditoria.empresa.sector} />}
-      {tab === 'tareas' && (
-        <TareasTab auditoriaId={auditoria.id} materialidadAprobada={auditoria.materialidadAprobada} />
+          {/* Título del paso activo */}
+          <div className="flex items-center gap-2.5">
+            {PasoIcon && <PasoIcon size={18} className="text-indigo-500 shrink-0" />}
+            <h2 className="text-lg font-semibold text-gray-900">{pasoLabel}</h2>
+          </div>
+
+          {/* Contenido RF */}
+          {!esAI && tabActivo === 'carta_encargo' && (
+            <CartaEncargoTab
+              auditoriaId={auditoria.id}
+              empresaNombre={auditoria.empresa.nombre}
+              periodo={auditoria.periodo}
+            />
+          )}
+          {!esAI && tabActivo === 'entendimiento' && (
+            <EntendimientoTab auditoriaId={auditoria.id} empresaId={auditoria.empresa.id} />
+          )}
+          {!esAI && tabActivo === 'balance' && <BalanceTab auditoriaId={auditoria.id} />}
+          {!esAI && tabActivo === 'materialidad' && <MaterialidadTab auditoriaId={auditoria.id} />}
+          {!esAI && tabActivo === 'riesgos' && (
+            <RiesgosTab auditoriaId={auditoria.id} sector={auditoria.empresa.sector} materialidadAprobada={auditoria.materialidadAprobada} />
+          )}
+          {!esAI && tabActivo === 'tareas' && (
+            <TareasTab auditoriaId={auditoria.id} materialidadAprobada={auditoria.materialidadAprobada} />
+          )}
+          {!esAI && tabActivo === 'papeles' && (
+            <PapelesTab auditoriaId={auditoria.id} materialidadAprobada={auditoria.materialidadAprobada} />
+          )}
+          {!esAI && tabActivo === 'pbc' && (
+            <PbcTab auditoriaId={auditoria.id} materialidadAprobada={auditoria.materialidadAprobada} />
+          )}
+          {!esAI && tabActivo === 'cronograma' && (
+            <CronogramaTab auditoriaId={auditoria.id} materialidadAprobada={auditoria.materialidadAprobada} />
+          )}
+          {!esAI && tabActivo === 'memo' && (
+            <MemoPlaneacionTab
+              auditoriaId={auditoria.id}
+              empresaNombre={auditoria.empresa.nombre}
+              periodo={auditoria.periodo}
+            />
+          )}
+          {!esAI && tabActivo === 'control_interno' && (
+            <ControlInternoTab auditoriaId={auditoria.id} materialidadAprobada={auditoria.materialidadAprobada} />
+          )}
+          {!esAI && tabActivo === 'informes' && (
+            <InformesTab
+              auditoriaId={auditoria.id}
+              materialidadAprobada={auditoria.materialidadAprobada}
+              empresaNombre={auditoria.empresa.nombre}
+              periodo={auditoria.periodo}
+            />
+          )}
+          {!esAI && tabActivo === 'cierre' && (
+            <CierreTab auditoriaId={auditoria.id} />
+          )}
+
+          {/* Contenido AI */}
+          {esAI && tabActivo === 'alcance' && <AlcanceTab auditoriaId={auditoria.id} />}
+          {esAI && tabActivo === 'programas' && <ProgramasTab auditoriaId={auditoria.id} />}
+          {esAI && tabActivo === 'hallazgos' && <HallazgosTab auditoriaId={auditoria.id} />}
+          {esAI && tabActivo === 'informe_ai' && (
+            <InformeAITab
+              auditoriaId={auditoria.id}
+              empresaNombre={auditoria.empresa.nombre}
+              periodo={auditoria.periodo}
+            />
+          )}
+        </div>
+
+        {/* Panel de apoyo: checklist de la etapa + normativa/tips (derecha) */}
+        <div className="sticky top-8">
+          <PanelDerecho
+            faseLabel={faseActiva}
+            items={faseItems}
+            onIr={(t) => setTab(t as SubTab)}
+            pasoActivo={tabActivo}
+            pasoLabel={pasoLabel}
+          />
+        </div>
+      </div>
       )}
-      {tab === 'papeles' && (
-        <PapelesTab auditoriaId={auditoria.id} materialidadAprobada={auditoria.materialidadAprobada} />
+
+      {actividadOpen && (
+        <ActividadModal auditoriaId={auditoria.id} onClose={() => setActividadOpen(false)} />
       )}
-      {tab === 'control_interno' && (
-        <ControlInternoTab auditoriaId={auditoria.id} materialidadAprobada={auditoria.materialidadAprobada} />
-      )}
-      {tab === 'informes' && (
-        <InformesTab
-          auditoriaId={auditoria.id}
-          materialidadAprobada={auditoria.materialidadAprobada}
-          empresaNombre={auditoria.empresa.nombre}
-          periodo={auditoria.periodo}
-        />
-      )}
+
+      {/* Asistente NIA flotante (solo si la IA está disponible) */}
+      <AsistenteIA auditoriaId={auditoria.id} />
     </div>
   )
 }

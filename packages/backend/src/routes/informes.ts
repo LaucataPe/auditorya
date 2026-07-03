@@ -10,8 +10,16 @@ import {
   informes,
   controlesCoso,
   papelesTrabajo,
+  hallazgosAI,
+  entendimientoPeriodo,
+  materialidades,
+  riesgos,
+  tareas,
+  usuarios,
 } from '../db/schema'
 import { authMiddleware } from '../middleware/auth'
+import { esSocioResponsable, ERROR_NO_SOCIO_RESPONSABLE } from '../lib/permisos'
+import { registrarEvento } from '../lib/eventos'
 import { generarContenido } from '../lib/plantillas-informe'
 import type { JwtPayload } from '../lib/jwt'
 
@@ -19,7 +27,12 @@ const app = new Hono<{ Variables: { user: JwtPayload } }>()
 
 app.use('*', authMiddleware)
 
-const TIPOS = ['dictamen', 'carta_control_interno', 'carta_representaciones'] as const
+const TIPOS_RF = ['dictamen', 'carta_control_interno', 'carta_representaciones'] as const
+const TIPOS_AI = ['informe_ai'] as const
+const TIPOS_PLANEACION = ['memo_planeacion', 'carta_encargo'] as const
+const TIPOS = [...TIPOS_RF, ...TIPOS_AI, ...TIPOS_PLANEACION] as const
+// Documentos de planeación exentos del gate de materialidad
+const TIPOS_SIN_GATE = new Set<string>(['memo_planeacion', 'carta_encargo'])
 
 const COMPONENTE_LABEL: Record<string, string> = {
   ambiente_control: 'Ambiente de control',
@@ -86,14 +99,20 @@ app.post(
     const tipo = c.req.param('tipo') as (typeof TIPOS)[number]
     const { tipoOpinion } = c.req.valid('json')
 
-    if (!TIPOS.includes(tipo)) {
+    if (!TIPOS.includes(tipo as (typeof TIPOS)[number])) {
       return c.json({ error: { code: 'TIPO_INVALIDO', message: 'Tipo de informe no válido' } }, 400)
     }
 
     const row = await cargarAuditoria(id, firmaId)
     if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Auditoría no encontrada' } }, 404)
 
-    if (!row.auditoria.materialidadAprobada) {
+    // La gate de materialidad solo aplica a Revisoría Fiscal; los documentos de planeación
+    // (carta de encargo, memo) se eximen porque se generan antes de aprobar la materialidad.
+    if (
+      row.auditoria.tipoServicio === 'revisoria_fiscal' &&
+      !TIPOS_SIN_GATE.has(tipo) &&
+      !row.auditoria.materialidadAprobada
+    ) {
       return c.json(
         {
           error: {
@@ -119,9 +138,20 @@ app.post(
 
     const [firma] = await db.select().from(firmas).where(eq(firmas.id, firmaId))
 
-    // Contexto para la carta de control interno: deficiencias COSO + hallazgos
     let deficienciasCoso: { titulo: string; calificacion: string; observaciones: string | null }[] = []
     let hallazgos: { area: string; titulo: string; hallazgos: string | null }[] = []
+    let hallazgosAIData: { titulo: string; nivelRiesgo: string; condicion: string; criterio: string; causa: string; efecto: string; recomendacion: string }[] = []
+
+    // Datos de planeación para el memo (NIA 300)
+    let memoData: {
+      socioNombre?: string
+      entendimiento?: { cambiosSignificativos: string | null; eventosSignificativos: string | null; notas: string | null; sinCambios: boolean } | null
+      materialidad?: { baseCalculo: string; montoBase: string; porcentaje: string; materialidad: string; porcentajeDesempeno: string; materialidadDesempeno: string; justificacion: string | null; aprobada: boolean } | null
+      riesgosResumen?: { area: string; descripcion: string; combinado: string; respuesta: string | null }[]
+      cosoResumen?: { titulo: string; calificacion: string; observaciones: string | null }[]
+      cronogramaResumen?: { total: number; agendados: number; desde: string | null; hasta: string | null } | null
+    } = {}
+
     if (tipo === 'carta_control_interno') {
       const coso = await db
         .select()
@@ -147,7 +177,71 @@ app.post(
         .map((p) => ({ area: AREA_LABEL[p.area] ?? p.area, titulo: p.titulo, hallazgos: p.hallazgos }))
     }
 
-    const contenido = generarContenido(tipo, {
+    if (tipo === 'informe_ai') {
+      const hAI = await db.select().from(hallazgosAI).where(eq(hallazgosAI.auditoriaId, id))
+      hallazgosAIData = hAI.map((h) => ({
+        titulo: h.titulo,
+        nivelRiesgo: h.nivelRiesgo,
+        condicion: h.condicion,
+        criterio: h.criterio,
+        causa: h.causa,
+        efecto: h.efecto,
+        recomendacion: h.recomendacion,
+      }))
+    }
+
+    if (tipo === 'memo_planeacion') {
+      const ORDEN: Record<string, number> = { alto: 0, medio: 1, bajo: 2 }
+      const [ent, mat, rs, coso, ts, ps, socio] = await Promise.all([
+        db.select().from(entendimientoPeriodo).where(eq(entendimientoPeriodo.auditoriaId, id)),
+        db.select().from(materialidades).where(eq(materialidades.auditoriaId, id)),
+        db.select().from(riesgos).where(eq(riesgos.auditoriaId, id)),
+        db.select().from(controlesCoso).where(eq(controlesCoso.auditoriaId, id)),
+        db.select().from(tareas).where(eq(tareas.auditoriaId, id)),
+        db.select().from(papelesTrabajo).where(eq(papelesTrabajo.auditoriaId, id)),
+        db.select().from(usuarios).where(eq(usuarios.id, row.auditoria.socioId)),
+      ])
+
+      const inicios = [
+        ...ts.map((t) => t.fechaInicio),
+        ...ps.map((p) => p.fechaInicio),
+      ].filter((d): d is Date => !!d).map((d) => d.getTime())
+      const fines = [
+        ...ts.map((t) => t.vencimiento),
+        ...ps.map((p) => p.fechaFin),
+      ].filter((d): d is Date => !!d).map((d) => d.getTime())
+      const agendados =
+        ts.filter((t) => t.fechaInicio && t.vencimiento).length +
+        ps.filter((p) => p.fechaInicio && p.fechaFin).length
+
+      memoData = {
+        socioNombre: socio[0]?.nombre,
+        entendimiento: ent[0]
+          ? { cambiosSignificativos: ent[0].cambiosSignificativos, eventosSignificativos: ent[0].eventosSignificativos, notas: ent[0].notas, sinCambios: ent[0].sinCambios }
+          : null,
+        materialidad: mat[0]
+          ? { baseCalculo: mat[0].baseCalculo, montoBase: mat[0].montoBase, porcentaje: mat[0].porcentaje, materialidad: mat[0].materialidad, porcentajeDesempeno: mat[0].porcentajeDesempeno, materialidadDesempeno: mat[0].materialidadDesempeno, justificacion: mat[0].justificacion, aprobada: mat[0].aprobada }
+          : null,
+        riesgosResumen: rs
+          .slice()
+          .sort((a, b) => (ORDEN[a.riesgoCombinado] ?? 3) - (ORDEN[b.riesgoCombinado] ?? 3))
+          .map((r) => ({ area: AREA_LABEL[r.area] ?? r.area, descripcion: r.descripcion, combinado: r.riesgoCombinado, respuesta: r.respuestaPlaneada })),
+        cosoResumen: coso.map((x) => ({ titulo: COMPONENTE_LABEL[x.componente] ?? x.componente, calificacion: x.calificacion, observaciones: x.observaciones })),
+        cronogramaResumen: {
+          total: ts.length + ps.length,
+          agendados,
+          desde: inicios.length ? new Date(Math.min(...inicios)).toISOString() : null,
+          hasta: fines.length ? new Date(Math.max(...fines)).toISOString() : null,
+        },
+      }
+    }
+
+    if (tipo === 'carta_encargo') {
+      const [socio] = await db.select().from(usuarios).where(eq(usuarios.id, row.auditoria.socioId))
+      memoData = { socioNombre: socio?.nombre }
+    }
+
+    const contenido = generarContenido(tipo as (typeof TIPOS)[number], {
       firmaNombre: firma?.nombre ?? '',
       firmaCiudad: firma?.ciudad ?? '',
       empresaNombre: row.empresa.nombre,
@@ -157,6 +251,8 @@ app.post(
       tipoOpinion: tipo === 'dictamen' ? tipoOpinion ?? 'limpia' : null,
       deficienciasCoso,
       hallazgos,
+      hallazgosAI: hallazgosAIData,
+      ...memoData,
     })
 
     const valores = {
@@ -228,17 +324,15 @@ app.put(
 
 // POST /informes/:informeId/aprobar — Regla: solo el socio responsable
 app.post('/informes/:informeId/aprobar', async (c) => {
-  const { firmaId, sub, rol } = c.get('user')
+  const user = c.get('user')
+  const { firmaId, sub } = user
   const informeId = c.req.param('informeId')
 
   const row = await cargarInforme(informeId, firmaId)
   if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Informe no encontrado' } }, 404)
 
-  if (rol !== 'socio') {
-    return c.json(
-      { error: { code: 'FORBIDDEN', message: 'Solo el socio responsable puede aprobar el informe' } },
-      403,
-    )
+  if (!esSocioResponsable(user, row.auditoria)) {
+    return c.json({ error: ERROR_NO_SOCIO_RESPONSABLE }, 403)
   }
 
   const [aprobado] = await db
@@ -247,22 +341,28 @@ app.post('/informes/:informeId/aprobar', async (c) => {
     .where(eq(informes.id, informeId))
     .returning()
 
+  registrarEvento(user, {
+    accion: 'informe.aprobar',
+    entidad: 'informe',
+    entidadId: informeId,
+    auditoriaId: row.informe.auditoriaId,
+    detalle: { tipo: row.informe.tipo, tipoOpinion: row.informe.tipoOpinion },
+  })
+
   return c.json({ data: aprobado })
 })
 
 // POST /informes/:informeId/reabrir — vuelve a borrador (solo socio)
 app.post('/informes/:informeId/reabrir', async (c) => {
-  const { firmaId, rol } = c.get('user')
+  const user = c.get('user')
+  const { firmaId } = user
   const informeId = c.req.param('informeId')
 
   const row = await cargarInforme(informeId, firmaId)
   if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Informe no encontrado' } }, 404)
 
-  if (rol !== 'socio') {
-    return c.json(
-      { error: { code: 'FORBIDDEN', message: 'Solo el socio responsable puede reabrir el informe' } },
-      403,
-    )
+  if (!esSocioResponsable(user, row.auditoria)) {
+    return c.json({ error: ERROR_NO_SOCIO_RESPONSABLE }, 403)
   }
 
   const [reabierto] = await db
@@ -270,6 +370,14 @@ app.post('/informes/:informeId/reabrir', async (c) => {
     .set({ estado: 'borrador', aprobadoPor: null, aprobadoAt: null })
     .where(eq(informes.id, informeId))
     .returning()
+
+  registrarEvento(user, {
+    accion: 'informe.reabrir',
+    entidad: 'informe',
+    entidadId: informeId,
+    auditoriaId: row.informe.auditoriaId,
+    detalle: { tipo: row.informe.tipo },
+  })
 
   return c.json({ data: reabierto })
 })

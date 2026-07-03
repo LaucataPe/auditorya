@@ -1,4 +1,4 @@
-import { pgTable, text, timestamp, boolean, uuid, jsonb, numeric, uniqueIndex } from 'drizzle-orm/pg-core'
+import { pgTable, text, timestamp, boolean, uuid, jsonb, numeric, integer, uniqueIndex } from 'drizzle-orm/pg-core'
 
 export const firmas = pgTable('firmas', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -24,10 +24,16 @@ export const empresas = pgTable('empresas', {
   nombre: text('nombre').notNull(),
   nit: text('nit').notNull().unique(),
   sector: text('sector').notNull(),
-  // Entendimiento del cliente (NIA 315)
+  // Entendimiento del cliente — identidad (NIA 315)
   ciiu: text('ciiu'),
   actividadEconomica: text('actividad_economica'),
   ciudad: text('ciudad'),
+  // Archivo permanente — conocimiento estable del negocio (capa global)
+  modeloNegocio: text('modelo_negocio'),
+  estructura: text('estructura'),
+  personasClave: text('personas_clave'),
+  entornoRegulatorio: text('entorno_regulatorio'),
+  sistemaContable: text('sistema_contable'),
   marcoContable: text('marco_contable', { enum: ['NIIF', 'NIIF_PYMES', 'PCGA'] }).notNull(),
   estadoEncargo: text('estado_encargo', { enum: ['pendiente', 'aceptado', 'rechazado'] })
     .default('pendiente')
@@ -40,13 +46,76 @@ export const auditorias = pgTable('auditorias', {
   empresaId: uuid('empresa_id').notNull().references(() => empresas.id),
   socioId: uuid('socio_id').notNull().references(() => usuarios.id),
   periodo: text('periodo').notNull(),
-  tipo: text('tipo', { enum: ['financiera', 'integral', 'especial'] }).notNull(),
+  tipoServicio: text('tipo_servicio', {
+    enum: ['revisoria_fiscal', 'auditoria_interna'],
+  })
+    .default('revisoria_fiscal')
+    .notNull(),
+  tipo: text('tipo', { enum: ['financiera', 'integral', 'especial'] }),
   estado: text('estado', {
     enum: ['planificacion', 'ejecucion', 'revision', 'finalizada'],
   })
     .default('planificacion')
     .notNull(),
   materialidadAprobada: boolean('materialidad_aprobada').default(false).notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Balance de prueba comparativo (insumo de los procedimientos analíticos, NIA 315/520).
+// Una fila por cuenta. Se reemplaza por completo al reimportar.
+// ─────────────────────────────────────────────────────────────────────────────
+export const cuentasBalance = pgTable('cuentas_balance', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  auditoriaId: uuid('auditoria_id')
+    .notNull()
+    .references(() => auditorias.id),
+  codigo: text('codigo').notNull(),
+  nombre: text('nombre'),
+  clase: text('clase'),
+  nivel: integer('nivel').default(0).notNull(),
+  // Detalle por tercero (NIT) en cuentas auxiliares; null en cuentas de resumen.
+  tercero: text('tercero'),
+  terceroNombre: text('tercero_nombre'),
+  saldoActual: numeric('saldo_actual', { precision: 20, scale: 2 }).notNull(),
+  saldoAnterior: numeric('saldo_anterior', { precision: 20, scale: 2 }).default('0').notNull(),
+  debito: numeric('debito', { precision: 20, scale: 2 }),
+  credito: numeric('credito', { precision: 20, scale: 2 }),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+})
+
+// Archivo original del balance, conservado como evidencia inmutable del soporte entregado.
+export const balanceArchivos = pgTable('balance_archivos', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  auditoriaId: uuid('auditoria_id')
+    .notNull()
+    .references(() => auditorias.id)
+    .unique(),
+  nombre: text('nombre').notNull(),
+  tamano: integer('tamano').notNull(),
+  hash: text('hash').notNull(),
+  contenido: text('contenido').notNull(), // base64
+  subidoPor: uuid('subido_por')
+    .notNull()
+    .references(() => usuarios.id),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Entendimiento del período (NIA 315) — capa por encargo.
+// Refresca/actualiza el entendimiento del negocio para esta auditoría. Una por auditoría.
+// ─────────────────────────────────────────────────────────────────────────────
+export const entendimientoPeriodo = pgTable('entendimiento_periodo', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  auditoriaId: uuid('auditoria_id')
+    .notNull()
+    .references(() => auditorias.id)
+    .unique(),
+  cambiosSignificativos: text('cambios_significativos'),
+  eventosSignificativos: text('eventos_significativos'),
+  notas: text('notas'),
+  sinCambios: boolean('sin_cambios').default(false).notNull(),
+  confirmado: boolean('confirmado').default(false).notNull(),
   createdAt: timestamp('created_at').defaultNow().notNull(),
 })
 
@@ -124,7 +193,7 @@ export const riesgos = pgTable('riesgos', {
   riesgoControl: text('riesgo_control', { enum: ['bajo', 'medio', 'alto'] }).notNull(),
   riesgoCombinado: text('riesgo_combinado', { enum: ['bajo', 'medio', 'alto'] }).notNull(),
   respuestaPlaneada: text('respuesta_planeada'),
-  origen: text('origen', { enum: ['manual', 'sugerido'] }).default('manual').notNull(),
+  origen: text('origen', { enum: ['manual', 'sugerido', 'analitico'] }).default('manual').notNull(),
   createdAt: timestamp('created_at').defaultNow().notNull(),
 })
 
@@ -153,6 +222,8 @@ export const papelesTrabajo = pgTable('papeles_trabajo', {
     ],
   }).notNull(),
   titulo: text('titulo').notNull(),
+  // Riesgo (NIA 315) que este papel atiende, si aplica.
+  riesgoId: uuid('riesgo_id').references(() => riesgos.id),
   procedimiento: text('procedimiento'),
   alcance: text('alcance'),
   hallazgos: text('hallazgos'),
@@ -160,6 +231,10 @@ export const papelesTrabajo = pgTable('papeles_trabajo', {
   estado: text('estado', { enum: ['borrador', 'en_revision', 'aprobado'] })
     .default('borrador')
     .notNull(),
+  // Cronograma (NIA 300 — oportunidad): fechas planeadas y responsable de la prueba.
+  fechaInicio: timestamp('fecha_inicio'),
+  fechaFin: timestamp('fecha_fin'),
+  asignadoA: uuid('asignado_a').references(() => usuarios.id),
   preparadoPor: uuid('preparado_por')
     .notNull()
     .references(() => usuarios.id),
@@ -168,7 +243,8 @@ export const papelesTrabajo = pgTable('papeles_trabajo', {
   createdAt: timestamp('created_at').defaultNow().notNull(),
 })
 
-// Evidencia ligada a un papel de trabajo (metadata; sin archivo en este MVP).
+// Evidencia ligada a un papel de trabajo. Puede llevar archivo adjunto
+// (guardado vía lib/storage, servido con URL firmada de corta duración).
 export const evidencias = pgTable('evidencias', {
   id: uuid('id').primaryKey().defaultRandom(),
   papelTrabajoId: uuid('papel_trabajo_id')
@@ -182,6 +258,13 @@ export const evidencias = pgTable('evidencias', {
     .default('documento')
     .notNull(),
   enlaceExterno: text('enlace_externo'),
+  // Archivo adjunto (opcional)
+  archivoKey: text('archivo_key'),
+  archivoNombre: text('archivo_nombre'),
+  archivoMime: text('archivo_mime'),
+  archivoTamano: integer('archivo_tamano'),
+  archivoHash: text('archivo_hash'),
+  subidoPor: uuid('subido_por').references(() => usuarios.id),
   createdAt: timestamp('created_at').defaultNow().notNull(),
 })
 
@@ -244,12 +327,16 @@ export const tareas = pgTable('tareas', {
   }).notNull(),
   titulo: text('titulo').notNull(),
   descripcion: text('descripcion'),
+  // Riesgo (NIA 315) que esta tarea atiende, si aplica.
+  riesgoId: uuid('riesgo_id').references(() => riesgos.id),
   asignadoA: uuid('asignado_a')
     .notNull()
     .references(() => usuarios.id),
   estado: text('estado', { enum: ['pendiente', 'en_progreso', 'completada'] })
     .default('pendiente')
     .notNull(),
+  // Cronograma: fecha de inicio planeada (la fecha fin es `vencimiento`).
+  fechaInicio: timestamp('fecha_inicio'),
   vencimiento: timestamp('vencimiento'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
 })
@@ -267,7 +354,7 @@ export const informes = pgTable(
       .notNull()
       .references(() => auditorias.id),
     tipo: text('tipo', {
-      enum: ['dictamen', 'carta_control_interno', 'carta_representaciones'],
+      enum: ['dictamen', 'carta_control_interno', 'carta_representaciones', 'informe_ai', 'memo_planeacion', 'carta_encargo'],
     }).notNull(),
     tipoOpinion: text('tipo_opinion', {
       enum: ['limpia', 'con_salvedades', 'negativa', 'abstencion'],
@@ -282,3 +369,124 @@ export const informes = pgTable(
     tipoUnico: uniqueIndex('informes_auditoria_tipo_uq').on(t.auditoriaId, t.tipo),
   }),
 )
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pista de auditoría (audit trail). Registro inmutable de acciones relevantes:
+// quién hizo qué, sobre qué entidad y cuándo. Nunca se actualiza ni borra.
+// ─────────────────────────────────────────────────────────────────────────────
+export const eventos = pgTable('eventos', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  firmaId: uuid('firma_id').notNull().references(() => firmas.id),
+  usuarioId: uuid('usuario_id').notNull().references(() => usuarios.id),
+  auditoriaId: uuid('auditoria_id').references(() => auditorias.id),
+  empresaId: uuid('empresa_id').references(() => empresas.id),
+  accion: text('accion').notNull(), // p. ej. 'papel.aprobar', 'materialidad.aprobar'
+  entidad: text('entidad').notNull(), // 'papel_trabajo', 'informe', 'materialidad', ...
+  entidadId: uuid('entidad_id'),
+  detalle: jsonb('detalle').$type<Record<string, unknown>>(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Auditoría Interna (IIA IPPF 2024)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const programasAI = pgTable('programas_ai', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  auditoriaId: uuid('auditoria_id').notNull().references(() => auditorias.id),
+  area: text('area').notNull(),
+  objetivo: text('objetivo'),
+  alcance: text('alcance'),
+  estado: text('estado', { enum: ['no_iniciado', 'en_progreso', 'completado'] })
+    .default('no_iniciado')
+    .notNull(),
+  asignadoA: uuid('asignado_a').references(() => usuarios.id),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+})
+
+export const hallazgosAI = pgTable('hallazgos_ai', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  auditoriaId: uuid('auditoria_id').notNull().references(() => auditorias.id),
+  programaId: uuid('programa_id').references(() => programasAI.id),
+  titulo: text('titulo').notNull(),
+  condicion: text('condicion').notNull(),
+  criterio: text('criterio').notNull(),
+  causa: text('causa').notNull(),
+  efecto: text('efecto').notNull(),
+  nivelRiesgo: text('nivel_riesgo', { enum: ['alto', 'medio', 'bajo'] }).notNull(),
+  recomendacion: text('recomendacion').notNull(),
+  respuestaAdministracion: text('respuesta_administracion'),
+  responsableGestion: text('responsable_gestion'),
+  fechaCompromiso: timestamp('fecha_compromiso'),
+  estadoSeguimiento: text('estado_seguimiento', {
+    enum: ['pendiente', 'en_proceso', 'implementado', 'aceptado_riesgo'],
+  })
+    .default('pendiente')
+    .notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PBC (Prepared By Client) — documentos solicitados al cliente para ejecutar una
+// prueba/papel de trabajo. Cierra el hilo riesgo → prueba → documento → evidencia.
+// ─────────────────────────────────────────────────────────────────────────────
+export const solicitudesPbc = pgTable('solicitudes_pbc', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  auditoriaId: uuid('auditoria_id')
+    .notNull()
+    .references(() => auditorias.id),
+  papelTrabajoId: uuid('papel_trabajo_id').references(() => papelesTrabajo.id),
+  descripcion: text('descripcion').notNull(),
+  estado: text('estado', { enum: ['solicitado', 'recibido', 'no_aplica'] })
+    .default('solicitado')
+    .notNull(),
+  evidenciaId: uuid('evidencia_id').references(() => evidencias.id),
+  notas: text('notas'),
+  fechaLimite: timestamp('fecha_limite'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Notas de revisión (NIA 220 — supervisión/revisión). El revisor deja observaciones
+// sobre un papel de trabajo; el preparador las resuelve. Quedan como traza del control de calidad.
+// ─────────────────────────────────────────────────────────────────────────────
+export const notasRevision = pgTable('notas_revision', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  auditoriaId: uuid('auditoria_id')
+    .notNull()
+    .references(() => auditorias.id),
+  papelTrabajoId: uuid('papel_trabajo_id')
+    .notNull()
+    .references(() => papelesTrabajo.id),
+  texto: text('texto').notNull(),
+  estado: text('estado', { enum: ['abierta', 'resuelta'] }).default('abierta').notNull(),
+  respuesta: text('respuesta'),
+  creadoPor: uuid('creado_por')
+    .notNull()
+    .references(() => usuarios.id),
+  resueltoPor: uuid('resuelto_por').references(() => usuarios.id),
+  resueltoAt: timestamp('resuelto_at'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Cierre del encargo (NIA 560 hechos posteriores, NIA 570 negocio en marcha, NIA 220
+// revisión de calidad). Una fila por auditoría. Solo el socio cierra.
+// ─────────────────────────────────────────────────────────────────────────────
+export const cierresAuditoria = pgTable('cierres_auditoria', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  auditoriaId: uuid('auditoria_id')
+    .notNull()
+    .references(() => auditorias.id)
+    .unique(),
+  hechosPosteriores: text('hechos_posteriores'),
+  hechosPosterioresEvaluado: boolean('hechos_posteriores_evaluado').default(false).notNull(),
+  negocioMarcha: text('negocio_marcha'),
+  negocioMarchaEvaluado: boolean('negocio_marcha_evaluado').default(false).notNull(),
+  revisionCalidad: text('revision_calidad'),
+  revisionCalidadCompleta: boolean('revision_calidad_completa').default(false).notNull(),
+  cerrado: boolean('cerrado').default(false).notNull(),
+  cerradoPor: uuid('cerrado_por').references(() => usuarios.id),
+  cerradoAt: timestamp('cerrado_at'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+})

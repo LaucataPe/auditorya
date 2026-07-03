@@ -9,6 +9,9 @@ import { Button } from '../../components/ui/Button'
 import { Input } from '../../components/ui/Input'
 import { Select } from '../../components/ui/Select'
 import { Modal } from '../../components/ui/Modal'
+import { Textarea } from '../../components/ui/Textarea'
+import { ClasificacionFields } from '../../components/empresa/ClasificacionFields'
+import { cn } from '../../lib/cn'
 
 type Empresa = {
   id: string
@@ -18,6 +21,11 @@ type Empresa = {
   ciiu: string | null
   actividadEconomica: string | null
   ciudad: string | null
+  modeloNegocio: string | null
+  estructura: string | null
+  personasClave: string | null
+  entornoRegulatorio: string | null
+  sistemaContable: string | null
   marcoContable: string
   estadoEncargo: string
   createdAt: string
@@ -45,9 +53,18 @@ const ESTADO_LABEL: Record<string, string> = {
   rechazado: 'Encargo rechazado',
 }
 
+const ARCHIVO_CAMPOS: { key: keyof Empresa; label: string; placeholder: string }[] = [
+  { key: 'modeloNegocio', label: 'Modelo de negocio', placeholder: 'Cómo genera ingresos, principales productos/servicios, clientes y proveedores' },
+  { key: 'estructura', label: 'Estructura societaria y organizativa', placeholder: 'Composición accionaria, matriz/subsidiarias, organigrama' },
+  { key: 'personasClave', label: 'Personas clave', placeholder: 'Gerencia, junta directiva, contador, responsables de áreas' },
+  { key: 'entornoRegulatorio', label: 'Entorno regulatorio', placeholder: 'Superintendencias, normas sectoriales y tributarias aplicables' },
+  { key: 'sistemaContable', label: 'Sistema contable', placeholder: 'Software contable, grado de automatización, controles del sistema' },
+]
+
 export function EmpresaInformacion() {
   const { id } = useParams<{ id: string }>()
   const [editOpen, setEditOpen] = useState(false)
+  const [archivoOpen, setArchivoOpen] = useState(false)
   const { user } = useAuthStore()
   const queryClient = useQueryClient()
 
@@ -63,6 +80,14 @@ export function EmpresaInformacion() {
       queryClient.invalidateQueries({ queryKey: ['empresa', id] })
       queryClient.invalidateQueries({ queryKey: ['empresas'] })
       setEditOpen(false)
+    },
+  })
+
+  const archivoMutation = useMutation({
+    mutationFn: (body: Partial<Record<string, string>>) => api.put(`/empresas/${id}`, body),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['empresa', id] })
+      setArchivoOpen(false)
     },
   })
 
@@ -105,7 +130,7 @@ export function EmpresaInformacion() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Información</h1>
-          <p className="text-sm text-gray-500 mt-1">Datos generales de la empresa cliente.</p>
+          <p className="text-sm text-gray-500 mt-1">Datos generales del cliente.</p>
         </div>
         {canEdit && (
           <Button variant="secondary" size="sm" className="gap-1.5" onClick={() => setEditOpen(true)}>
@@ -123,6 +148,36 @@ export function EmpresaInformacion() {
         ))}
       </div>
 
+      {/* Archivo permanente — entendimiento del negocio (capa global) */}
+      <div>
+        <div className="flex items-center justify-between mb-2">
+          <div>
+            <h2 className="text-base font-semibold text-gray-900">Entendimiento del negocio</h2>
+            <p className="text-xs text-gray-500 mt-0.5">
+              Archivo permanente — conocimiento estable que heredan todos los encargos.
+            </p>
+          </div>
+          {canEdit && (
+            <Button variant="secondary" size="sm" className="gap-1.5" onClick={() => setArchivoOpen(true)}>
+              <Pencil size={13} /> Editar
+            </Button>
+          )}
+        </div>
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm divide-y divide-gray-50">
+          {ARCHIVO_CAMPOS.map((f) => {
+            const valor = (empresa[f.key] as string | null) || null
+            return (
+              <div key={f.key} className="px-5 py-4">
+                <p className="text-sm text-gray-400 mb-1">{f.label}</p>
+                <p className={cn('text-sm whitespace-pre-wrap', valor ? 'text-gray-900' : 'text-gray-400 italic')}>
+                  {valor || 'Sin registrar'}
+                </p>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+
       {editOpen && (
         <EditarEmpresaModal
           empresa={empresa}
@@ -132,7 +187,56 @@ export function EmpresaInformacion() {
           error={editMutation.error instanceof Error ? editMutation.error.message : null}
         />
       )}
+
+      {archivoOpen && (
+        <ArchivoPermanenteModal
+          empresa={empresa}
+          onClose={() => setArchivoOpen(false)}
+          onSubmit={(body) => archivoMutation.mutate(body)}
+          loading={archivoMutation.isPending}
+        />
+      )}
     </div>
+  )
+}
+
+function ArchivoPermanenteModal({
+  empresa, onClose, onSubmit, loading,
+}: {
+  empresa: Empresa
+  onClose: () => void
+  onSubmit: (body: Record<string, string>) => void
+  loading: boolean
+}) {
+  const [form, setForm] = useState<Record<string, string>>(
+    Object.fromEntries(ARCHIVO_CAMPOS.map((f) => [f.key, (empresa[f.key] as string | null) ?? ''])),
+  )
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    onSubmit(form)
+  }
+
+  return (
+    <Modal open onClose={onClose} title="Entendimiento del negocio" size="lg">
+      <form onSubmit={handleSubmit} className="space-y-4 max-h-[70vh] overflow-y-auto pr-1">
+        {ARCHIVO_CAMPOS.map((f) => (
+          <Textarea
+            key={f.key}
+            id={`arch-${f.key}`}
+            label={f.label}
+            rows={3}
+            placeholder={f.placeholder}
+            value={form[f.key]}
+            onChange={(e) => setForm({ ...form, [f.key]: e.target.value })}
+          />
+        ))}
+        <div className="flex justify-end gap-3 pt-1">
+          <Button type="button" variant="secondary" onClick={onClose}>Cancelar</Button>
+          <Button type="submit" loading={loading}>Guardar</Button>
+        </div>
+      </form>
+    </Modal>
   )
 }
 
@@ -155,22 +259,14 @@ function EditarEmpresaModal({
     marcoContable: empresa.marcoContable,
   })
 
-  const sectorDerivado = infoCiiu(form.ciiu)?.sector
-  const sectorLock = !!sectorDerivado
-  const sectorValor = sectorDerivado
-    ? sectorDerivado.charAt(0).toUpperCase() + sectorDerivado.slice(1)
-    : form.sector
-
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (!form.nombre.trim() || !form.nit.trim() || !sectorValor.trim()) return
-    onSubmit({ ...form, sector: sectorValor })
+    if (!form.nombre.trim() || !form.nit.trim() || (!form.sector && !form.ciiu)) return
+    onSubmit(form)
   }
 
-  const ciiuInfo = infoCiiu(form.ciiu)
-
   return (
-    <Modal open onClose={onClose} title="Editar empresa">
+    <Modal open onClose={onClose} title="Editar cliente">
       <form onSubmit={handleSubmit} className="space-y-4">
         <Input
           id="e-nombre"
@@ -192,51 +288,21 @@ function EditarEmpresaModal({
             onChange={(e) => setForm({ ...form, ciudad: e.target.value })}
           />
         </div>
-        <div>
-          <Input
-            id="e-ciiu"
-            label="Código CIIU"
-            placeholder="Ej: 4719"
-            value={form.ciiu}
-            onChange={(e) => setForm({ ...form, ciiu: e.target.value })}
-          />
-          {form.ciiu.trim() && (
-            ciiuInfo ? (
-              <p className="text-xs text-emerald-600 mt-1">Sección {ciiuInfo.seccion} · {ciiuInfo.descripcion}</p>
-            ) : (
-              <p className="text-xs text-amber-600 mt-1">Código CIIU no reconocido — se usará el sector indicado.</p>
-            )
-          )}
-        </div>
-        <Input
-          id="e-actividad"
-          label="Actividad económica"
-          value={form.actividadEconomica}
-          onChange={(e) => setForm({ ...form, actividadEconomica: e.target.value })}
+        <ClasificacionFields
+          value={{ ciiu: form.ciiu, actividadEconomica: form.actividadEconomica, sector: form.sector }}
+          onChange={(patch) => setForm({ ...form, ...patch })}
         />
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <Input
-              id="e-sector"
-              label="Sector económico"
-              value={sectorValor}
-              disabled={sectorLock}
-              onChange={(e) => setForm({ ...form, sector: e.target.value })}
-            />
-            {sectorLock && <p className="text-xs text-gray-400 mt-1">Derivado del CIIU</p>}
-          </div>
-          <Select
-            id="e-marco"
-            label="Marco contable"
-            value={form.marcoContable}
-            onChange={(e) => setForm({ ...form, marcoContable: e.target.value })}
-            options={[
-              { value: 'NIIF', label: 'NIIF (Grupo 1)' },
-              { value: 'NIIF_PYMES', label: 'NIIF para Pymes (Grupo 2)' },
-              { value: 'PCGA', label: 'PCGA (Grupo 3)' },
-            ]}
-          />
-        </div>
+        <Select
+          id="e-marco"
+          label="Marco contable"
+          value={form.marcoContable}
+          onChange={(e) => setForm({ ...form, marcoContable: e.target.value })}
+          options={[
+            { value: 'NIIF', label: 'NIIF (Grupo 1)' },
+            { value: 'NIIF_PYMES', label: 'NIIF para Pymes (Grupo 2)' },
+            { value: 'PCGA', label: 'PCGA (Grupo 3)' },
+          ]}
+        />
 
         {error && (
           <p className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{error}</p>

@@ -242,7 +242,7 @@ function StepEmpresa({
   return (
     <div className="space-y-5">
       <div>
-        <h2 className="text-lg font-semibold text-gray-900">Primera empresa cliente</h2>
+        <h2 className="text-lg font-semibold text-gray-900">Primer cliente</h2>
         <p className="text-sm text-gray-500 mt-0.5">Puedes agregarla ahora o hacerlo después.</p>
       </div>
 

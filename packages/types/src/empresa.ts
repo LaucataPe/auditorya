@@ -11,6 +11,11 @@ export type Empresa = {
   ciiu: string | null
   actividadEconomica: string | null
   ciudad: string | null
+  modeloNegocio: string | null
+  estructura: string | null
+  personasClave: string | null
+  entornoRegulatorio: string | null
+  sistemaContable: string | null
   marcoContable: MarcoContable
   estadoEncargo: EstadoEncargo
   createdAt: string

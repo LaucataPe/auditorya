@@ -43,6 +43,69 @@
       "when": 1782446781968,
       "tag": "0005_fase5_informes",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1782500000000,
+      "tag": "0006_multi_servicio",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1782845876581,
+      "tag": "0007_entendimiento_negocio",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1782847540549,
+      "tag": "0008_balance_prueba",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1782849771345,
+      "tag": "0009_balance_terceros",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1782866090586,
+      "tag": "0010_riesgo_respuesta",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1782950000000,
+      "tag": "0011_eventos_evidencia_archivos",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1783200000000,
+      "tag": "0012_solicitudes_pbc",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1783300000000,
+      "tag": "0013_cronograma",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1783400000000,
+      "tag": "0014_cierre_notas_revision",
+      "breakpoints": true
     }
   ]
 }

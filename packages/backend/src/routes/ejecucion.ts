@@ -11,8 +11,14 @@ import {
   controlesCoso,
   tareas,
   usuarios,
+  riesgos,
+  solicitudesPbc,
 } from '../db/schema'
 import { authMiddleware } from '../middleware/auth'
+import { esSocioResponsable, ERROR_NO_SOCIO_RESPONSABLE } from '../lib/permisos'
+import { registrarEvento } from '../lib/eventos'
+import { storage, firmarDescarga } from '../lib/storage'
+import { createHash, randomUUID } from 'node:crypto'
 import type { JwtPayload } from '../lib/jwt'
 
 const app = new Hono<{ Variables: { user: JwtPayload } }>()
@@ -91,6 +97,48 @@ app.get('/auditorias/:id/papeles', async (c) => {
   return c.json({ data: lista })
 })
 
+// GET /auditorias/:id/cronograma — tareas + pruebas (papeles) unificadas para el timeline
+app.get('/auditorias/:id/cronograma', async (c) => {
+  const { firmaId } = c.get('user')
+  const id = c.req.param('id')
+
+  const row = await cargarAuditoria(id, firmaId)
+  if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Auditoría no encontrada' } }, 404)
+
+  const [ts, ps] = await Promise.all([
+    db.select().from(tareas).where(eq(tareas.auditoriaId, id)),
+    db.select().from(papelesTrabajo).where(eq(papelesTrabajo.auditoriaId, id)),
+  ])
+
+  const estadoTarea: Record<string, string> = { pendiente: 'pendiente', en_progreso: 'en_progreso', completada: 'completado' }
+  const estadoPapel: Record<string, string> = { borrador: 'pendiente', en_revision: 'en_progreso', aprobado: 'completado' }
+
+  const items = [
+    ...ts.map((t) => ({
+      id: t.id,
+      tipo: 'tarea' as const,
+      titulo: t.titulo,
+      area: t.area,
+      responsable: t.asignadoA,
+      fechaInicio: t.fechaInicio,
+      fechaFin: t.vencimiento,
+      estado: estadoTarea[t.estado] ?? 'pendiente',
+    })),
+    ...ps.map((p) => ({
+      id: p.id,
+      tipo: 'prueba' as const,
+      titulo: p.titulo,
+      area: p.area,
+      responsable: p.asignadoA,
+      fechaInicio: p.fechaInicio,
+      fechaFin: p.fechaFin,
+      estado: estadoPapel[p.estado] ?? 'pendiente',
+    })),
+  ]
+
+  return c.json({ data: items })
+})
+
 // POST /auditorias/:id/papeles — Regla: requiere materialidad aprobada (fase ejecución)
 app.post(
   '/auditorias/:id/papeles',
@@ -103,6 +151,13 @@ app.post(
       alcance: z.string().optional(),
       hallazgos: z.string().optional(),
       conclusion: z.string().optional(),
+      riesgoId: z.string().uuid().optional(),
+      // Documentos que la prueba necesita del cliente → generan la lista PBC.
+      documentosRequeridos: z.array(z.string().min(2)).optional(),
+      // Cronograma
+      fechaInicio: z.string().datetime().optional().or(z.literal('')),
+      fechaFin: z.string().datetime().optional().or(z.literal('')),
+      asignadoA: z.string().uuid().optional(),
     }),
   ),
   async (c) => {
@@ -125,19 +180,41 @@ app.post(
       )
     }
 
+    if (body.asignadoA && !(await usuarioDeFirma(body.asignadoA, firmaId))) {
+      return c.json(
+        { error: { code: 'USUARIO_INVALIDO', message: 'El responsable no pertenece a la firma' } },
+        400,
+      )
+    }
+
     const [papel] = await db
       .insert(papelesTrabajo)
       .values({
         auditoriaId: id,
         area: body.area,
         titulo: body.titulo,
+        riesgoId: body.riesgoId ?? null,
         procedimiento: body.procedimiento ?? null,
         alcance: body.alcance ?? null,
         hallazgos: body.hallazgos ?? null,
         conclusion: body.conclusion ?? null,
+        fechaInicio: body.fechaInicio ? new Date(body.fechaInicio) : null,
+        fechaFin: body.fechaFin ? new Date(body.fechaFin) : null,
+        asignadoA: body.asignadoA ?? null,
         preparadoPor: sub,
       })
       .returning()
+
+    // Genera las solicitudes PBC de los documentos requeridos por la prueba.
+    if (body.documentosRequeridos && body.documentosRequeridos.length > 0) {
+      await db.insert(solicitudesPbc).values(
+        body.documentosRequeridos.map((descripcion) => ({
+          auditoriaId: id,
+          papelTrabajoId: papel.id,
+          descripcion,
+        })),
+      )
+    }
 
     return c.json({ data: papel }, 201)
   },
@@ -173,6 +250,9 @@ app.put(
       hallazgos: z.string().optional(),
       conclusion: z.string().optional(),
       estado: z.enum(['borrador', 'en_revision']).optional(),
+      fechaInicio: z.string().datetime().optional().or(z.literal('')),
+      fechaFin: z.string().datetime().optional().or(z.literal('')),
+      asignadoA: z.string().uuid().optional().or(z.literal('')),
     }),
   ),
   async (c) => {
@@ -195,7 +275,14 @@ app.put(
       )
     }
 
-    const updates: Record<string, string | null> = {}
+    if (body.asignadoA && !(await usuarioDeFirma(body.asignadoA, firmaId))) {
+      return c.json(
+        { error: { code: 'USUARIO_INVALIDO', message: 'El responsable no pertenece a la firma' } },
+        400,
+      )
+    }
+
+    const updates: Record<string, string | Date | null> = {}
     if (body.area) updates.area = body.area
     if (body.titulo) updates.titulo = body.titulo
     if (body.procedimiento !== undefined) updates.procedimiento = body.procedimiento || null
@@ -203,6 +290,9 @@ app.put(
     if (body.hallazgos !== undefined) updates.hallazgos = body.hallazgos || null
     if (body.conclusion !== undefined) updates.conclusion = body.conclusion || null
     if (body.estado) updates.estado = body.estado
+    if (body.fechaInicio !== undefined) updates.fechaInicio = body.fechaInicio ? new Date(body.fechaInicio) : null
+    if (body.fechaFin !== undefined) updates.fechaFin = body.fechaFin ? new Date(body.fechaFin) : null
+    if (body.asignadoA !== undefined) updates.asignadoA = body.asignadoA || null
 
     if (Object.keys(updates).length === 0) {
       return c.json({ error: { code: 'BAD_REQUEST', message: 'Sin campos para actualizar' } }, 400)
@@ -220,17 +310,15 @@ app.put(
 
 // POST /papeles/:papelId/aprobar — Regla: solo el socio responsable
 app.post('/papeles/:papelId/aprobar', async (c) => {
-  const { firmaId, sub, rol } = c.get('user')
+  const user = c.get('user')
+  const { firmaId, sub } = user
   const papelId = c.req.param('papelId')
 
   const row = await cargarPapel(papelId, firmaId)
   if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Papel de trabajo no encontrado' } }, 404)
 
-  if (rol !== 'socio') {
-    return c.json(
-      { error: { code: 'FORBIDDEN', message: 'Solo el socio responsable puede aprobar papeles de trabajo' } },
-      403,
-    )
+  if (!esSocioResponsable(user, row.auditoria)) {
+    return c.json({ error: ERROR_NO_SOCIO_RESPONSABLE }, 403)
   }
 
   const [aprobado] = await db
@@ -239,22 +327,28 @@ app.post('/papeles/:papelId/aprobar', async (c) => {
     .where(eq(papelesTrabajo.id, papelId))
     .returning()
 
+  registrarEvento(user, {
+    accion: 'papel.aprobar',
+    entidad: 'papel_trabajo',
+    entidadId: papelId,
+    auditoriaId: row.papel.auditoriaId,
+    detalle: { titulo: row.papel.titulo, area: row.papel.area },
+  })
+
   return c.json({ data: aprobado })
 })
 
 // POST /papeles/:papelId/reabrir — vuelve a borrador (solo socio)
 app.post('/papeles/:papelId/reabrir', async (c) => {
-  const { firmaId, rol } = c.get('user')
+  const user = c.get('user')
+  const { firmaId } = user
   const papelId = c.req.param('papelId')
 
   const row = await cargarPapel(papelId, firmaId)
   if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Papel de trabajo no encontrado' } }, 404)
 
-  if (rol !== 'socio') {
-    return c.json(
-      { error: { code: 'FORBIDDEN', message: 'Solo el socio responsable puede reabrir un papel aprobado' } },
-      403,
-    )
+  if (!esSocioResponsable(user, row.auditoria)) {
+    return c.json({ error: ERROR_NO_SOCIO_RESPONSABLE }, 403)
   }
 
   const [reabierto] = await db
@@ -262,6 +356,14 @@ app.post('/papeles/:papelId/reabrir', async (c) => {
     .set({ estado: 'borrador', aprobadoPor: null, aprobadoAt: null })
     .where(eq(papelesTrabajo.id, papelId))
     .returning()
+
+  registrarEvento(user, {
+    accion: 'papel.reabrir',
+    entidad: 'papel_trabajo',
+    entidadId: papelId,
+    auditoriaId: row.papel.auditoriaId,
+    detalle: { titulo: row.papel.titulo },
+  })
 
   return c.json({ data: reabierto })
 })
@@ -340,7 +442,106 @@ app.delete('/papeles/:papelId/evidencias/:evidenciaId', async (c) => {
 
   if (!eliminada) return c.json({ error: { code: 'NOT_FOUND', message: 'Evidencia no encontrada' } }, 404)
 
+  // Borra también el archivo físico, si lo había.
+  if (eliminada.archivoKey) await storage.eliminar(eliminada.archivoKey)
+
   return c.json({ data: { id: evidenciaId } })
+})
+
+// ─── Archivos de evidencia ───────────────────────────────────────────────────
+
+const MAX_ARCHIVO_BYTES = 20 * 1024 * 1024 // 20 MB
+
+/** Carga una evidencia verificando pertenencia (papel → auditoría → firma). */
+async function cargarEvidencia(evidenciaId: string, firmaId: string) {
+  const [row] = await db
+    .select({ evidencia: evidencias, papel: papelesTrabajo })
+    .from(evidencias)
+    .innerJoin(papelesTrabajo, eq(evidencias.papelTrabajoId, papelesTrabajo.id))
+    .innerJoin(auditorias, eq(papelesTrabajo.auditoriaId, auditorias.id))
+    .innerJoin(empresas, eq(auditorias.empresaId, empresas.id))
+    .where(and(eq(evidencias.id, evidenciaId), eq(empresas.firmaId, firmaId)))
+  return row ?? null
+}
+
+// POST /evidencias/:evidenciaId/archivo — sube el archivo adjunto (multipart)
+app.post('/evidencias/:evidenciaId/archivo', async (c) => {
+  const user = c.get('user')
+  const evidenciaId = c.req.param('evidenciaId')
+
+  const row = await cargarEvidencia(evidenciaId, user.firmaId)
+  if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Evidencia no encontrada' } }, 404)
+
+  if (row.papel.estado === 'aprobado') {
+    return c.json(
+      { error: { code: 'PAPEL_APROBADO', message: 'No se puede modificar la evidencia de un papel aprobado' } },
+      409,
+    )
+  }
+
+  const body = await c.req.parseBody()
+  const archivo = body['archivo']
+  if (!(archivo instanceof File)) {
+    return c.json({ error: { code: 'ARCHIVO_REQUERIDO', message: 'Adjunta el archivo en el campo "archivo"' } }, 400)
+  }
+  if (archivo.size > MAX_ARCHIVO_BYTES) {
+    return c.json({ error: { code: 'ARCHIVO_MUY_GRANDE', message: 'El archivo supera el límite de 20 MB' } }, 413)
+  }
+
+  const contenido = Buffer.from(await archivo.arrayBuffer())
+  const hash = createHash('sha256').update(contenido).digest('hex')
+  const extension = (archivo.name.split('.').pop() ?? 'bin').toLowerCase().replace(/[^a-z0-9]/g, '') || 'bin'
+  const key = `evidencias/${row.papel.auditoriaId}/${randomUUID()}.${extension}`
+
+  // Reemplaza el archivo anterior si existía.
+  if (row.evidencia.archivoKey) await storage.eliminar(row.evidencia.archivoKey)
+  await storage.guardar(key, contenido)
+
+  const [actualizada] = await db
+    .update(evidencias)
+    .set({
+      archivoKey: key,
+      archivoNombre: archivo.name,
+      archivoMime: archivo.type || 'application/octet-stream',
+      archivoTamano: archivo.size,
+      archivoHash: hash,
+      subidoPor: user.sub,
+    })
+    .where(eq(evidencias.id, evidenciaId))
+    .returning()
+
+  registrarEvento(user, {
+    accion: 'evidencia.subir_archivo',
+    entidad: 'evidencia',
+    entidadId: evidenciaId,
+    auditoriaId: row.papel.auditoriaId,
+    detalle: { nombre: archivo.name, tamano: archivo.size, hash },
+  })
+
+  return c.json({ data: actualizada }, 201)
+})
+
+// GET /evidencias/:evidenciaId/descarga — genera la URL firmada (15 min)
+app.get('/evidencias/:evidenciaId/descarga', async (c) => {
+  const { firmaId } = c.get('user')
+  const evidenciaId = c.req.param('evidenciaId')
+
+  const row = await cargarEvidencia(evidenciaId, firmaId)
+  if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Evidencia no encontrada' } }, 404)
+  if (!row.evidencia.archivoKey) {
+    return c.json({ error: { code: 'SIN_ARCHIVO', message: 'Esta evidencia no tiene archivo adjunto' } }, 404)
+  }
+
+  const { key, exp, sig } = firmarDescarga(row.evidencia.archivoKey)
+  const params = new URLSearchParams({
+    key,
+    exp: String(exp),
+    sig,
+    nombre: row.evidencia.archivoNombre ?? 'archivo',
+    mime: row.evidencia.archivoMime ?? 'application/octet-stream',
+  })
+
+  return c.json({ data: { url: `/archivos?${params.toString()}`, expiraEn: 15 * 60 } })
 })
 
 // ─── Control interno COSO (5 componentes) ────────────────────────────────────
@@ -441,7 +642,9 @@ app.post(
       titulo: z.string().min(3),
       descripcion: z.string().optional(),
       asignadoA: z.string().uuid(),
+      fechaInicio: z.string().datetime().optional().or(z.literal('')),
       vencimiento: z.string().datetime().optional().or(z.literal('')),
+      riesgoId: z.string().uuid().optional(),
     }),
   ),
   async (c) => {
@@ -478,7 +681,9 @@ app.post(
         area: body.area,
         titulo: body.titulo,
         descripcion: body.descripcion ?? null,
+        riesgoId: body.riesgoId ?? null,
         asignadoA: body.asignadoA,
+        fechaInicio: body.fechaInicio ? new Date(body.fechaInicio) : null,
         vencimiento: body.vencimiento ? new Date(body.vencimiento) : null,
       })
       .returning()
@@ -498,6 +703,7 @@ app.put(
       descripcion: z.string().optional(),
       asignadoA: z.string().uuid().optional(),
       estado: z.enum(['pendiente', 'en_progreso', 'completada']).optional(),
+      fechaInicio: z.string().datetime().optional().or(z.literal('')),
       vencimiento: z.string().datetime().optional().or(z.literal('')),
     }),
   ),
@@ -522,6 +728,9 @@ app.put(
     if (body.descripcion !== undefined) updates.descripcion = body.descripcion || null
     if (body.asignadoA) updates.asignadoA = body.asignadoA
     if (body.estado) updates.estado = body.estado
+    if (body.fechaInicio !== undefined) {
+      updates.fechaInicio = body.fechaInicio ? new Date(body.fechaInicio) : null
+    }
     if (body.vencimiento !== undefined) {
       updates.vencimiento = body.vencimiento ? new Date(body.vencimiento) : null
     }
@@ -539,6 +748,49 @@ app.put(
     return c.json({ data: actualizada })
   },
 )
+
+// ─── Respuestas al riesgo (enlace riesgo → tarea/papel) ──────────────────────
+
+// GET /auditorias/:id/riesgos-respuestas — conteo de respuestas por riesgo
+app.get('/auditorias/:id/riesgos-respuestas', async (c) => {
+  const { firmaId } = c.get('user')
+  const id = c.req.param('id')
+
+  const row = await cargarAuditoria(id, firmaId)
+  if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Auditoría no encontrada' } }, 404)
+
+  const [ts, ps] = await Promise.all([
+    db.select({ riesgoId: tareas.riesgoId }).from(tareas).where(eq(tareas.auditoriaId, id)),
+    db.select({ riesgoId: papelesTrabajo.riesgoId }).from(papelesTrabajo).where(eq(papelesTrabajo.auditoriaId, id)),
+  ])
+
+  const mapa: Record<string, { tareas: number; papeles: number }> = {}
+  for (const t of ts) if (t.riesgoId) (mapa[t.riesgoId] ??= { tareas: 0, papeles: 0 }).tareas++
+  for (const p of ps) if (p.riesgoId) (mapa[p.riesgoId] ??= { tareas: 0, papeles: 0 }).papeles++
+
+  return c.json({ data: mapa })
+})
+
+// GET /riesgos/:riesgoId/respuestas — tareas y papeles que atienden un riesgo
+app.get('/riesgos/:riesgoId/respuestas', async (c) => {
+  const { firmaId } = c.get('user')
+  const riesgoId = c.req.param('riesgoId')
+
+  const [own] = await db
+    .select({ id: riesgos.id })
+    .from(riesgos)
+    .innerJoin(auditorias, eq(riesgos.auditoriaId, auditorias.id))
+    .innerJoin(empresas, eq(auditorias.empresaId, empresas.id))
+    .where(and(eq(riesgos.id, riesgoId), eq(empresas.firmaId, firmaId)))
+  if (!own) return c.json({ error: { code: 'NOT_FOUND', message: 'Riesgo no encontrado' } }, 404)
+
+  const [ts, ps] = await Promise.all([
+    db.select().from(tareas).where(eq(tareas.riesgoId, riesgoId)).orderBy(desc(tareas.createdAt)),
+    db.select().from(papelesTrabajo).where(eq(papelesTrabajo.riesgoId, riesgoId)).orderBy(desc(papelesTrabajo.createdAt)),
+  ])
+
+  return c.json({ data: { tareas: ts, papeles: ps } })
+})
 
 // DELETE /tareas/:tareaId
 app.delete('/tareas/:tareaId', async (c) => {

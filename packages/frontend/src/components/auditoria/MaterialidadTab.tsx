@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { CheckCircle, Lock, ShieldCheck } from 'lucide-react'
+import { CheckCircle, Lock, ShieldCheck, TableProperties } from 'lucide-react'
 import { Button } from '../ui/Button'
 import { Input } from '../ui/Input'
 import { Select } from '../ui/Select'
 import { api } from '../../lib/api'
 import { useAuthStore } from '../../store/auth.store'
+import type { BasesMaterialidad } from '@auditorya/types'
 
 type BaseCalculo = 'activos' | 'ingresos' | 'utilidad_antes_impuestos' | 'patrimonio'
 
@@ -51,6 +52,11 @@ export function MaterialidadTab({ auditoriaId }: { auditoriaId: string }) {
   const { data: materialidad, isLoading } = useQuery<Materialidad | null>({
     queryKey: ['materialidad', auditoriaId],
     queryFn: () => api.get<Materialidad | null>(`/auditorias/${auditoriaId}/materialidad`),
+  })
+
+  const { data: balance } = useQuery<{ bases: BasesMaterialidad } | null>({
+    queryKey: ['balance', auditoriaId],
+    queryFn: () => api.get<{ bases: BasesMaterialidad } | null>(`/auditorias/${auditoriaId}/balance`),
   })
 
   const [form, setForm] = useState({
@@ -108,6 +114,7 @@ export function MaterialidadTab({ auditoriaId }: { auditoriaId: string }) {
 
   const bloqueado = !!materialidad?.aprobada && !editando
   const montoValido = montoBaseN > 0 && porcentajeN > 0 && desempenoN > 0
+  const montoSugerido = balance?.bases ? balance.bases[form.baseCalculo] : null
 
   if (isLoading) {
     return (
@@ -118,16 +125,8 @@ export function MaterialidadTab({ auditoriaId }: { auditoriaId: string }) {
   }
 
   return (
-    <div className="space-y-6 max-w-2xl">
+    <div className="space-y-6">
       {/* Marco normativo */}
-      <div className="bg-indigo-50 border border-indigo-100 rounded-xl px-5 py-4">
-        <p className="text-sm font-medium text-indigo-800">Materialidad — NIA 320</p>
-        <p className="text-xs text-indigo-500 mt-1">
-          Define el umbral a partir del cual un error es significativo. La materialidad de desempeño es
-          un margen de seguridad (típicamente 50%–75% de la materialidad global) para planear las pruebas.
-        </p>
-      </div>
-
       {/* Estado de aprobación */}
       {materialidad?.aprobada && (
         <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
@@ -173,6 +172,15 @@ export function MaterialidadTab({ auditoriaId }: { auditoriaId: string }) {
             onChange={(e) => setForm({ ...form, montoBase: e.target.value })}
           />
           {montoBaseN > 0 && <p className="text-xs text-gray-400 mt-1">{cop(montoBaseN)}</p>}
+          {!bloqueado && montoSugerido != null && montoSugerido > 0 && (
+            <button
+              type="button"
+              onClick={() => setForm({ ...form, montoBase: String(Math.round(montoSugerido)) })}
+              className="text-xs text-indigo-600 hover:underline mt-1 inline-flex items-center gap-1"
+            >
+              <TableProperties size={11} /> Tomar del balance: {cop(montoSugerido)}
+            </button>
+          )}
         </div>
 
         <div className="grid grid-cols-2 gap-3">

@@ -1,7 +1,8 @@
-import { Outlet, useParams, Navigate } from 'react-router-dom'
+import { Outlet, useParams, useMatch, Navigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { useAuthStore } from '../../store/auth.store'
 import { EmpresaSidebar } from './EmpresaSidebar'
+import { EmpresaSidebarEncargo } from './EmpresaSidebarEncargo'
 import { api } from '../../lib/api'
 
 type Empresa = {
@@ -17,6 +18,9 @@ type Empresa = {
 export function EmpresaLayout() {
   const { id } = useParams<{ id: string }>()
   const { isAuthenticated } = useAuthStore()
+  // Dentro de un encargo el menú lateral se transforma en las fases del encargo.
+  const encargoMatch = useMatch('/empresas/:id/encargos/:auditoriaId')
+  const auditoriaId = encargoMatch?.params.auditoriaId
 
   const { data: empresa, isLoading, isError } = useQuery<Empresa>({
     queryKey: ['empresa', id],
@@ -39,7 +43,9 @@ export function EmpresaLayout() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-gray-50">
-      <EmpresaSidebar empresa={empresa} />
+      {auditoriaId
+        ? <EmpresaSidebarEncargo empresa={empresa} auditoriaId={auditoriaId} />
+        : <EmpresaSidebar empresa={empresa} />}
       <main className="flex-1 overflow-y-auto">
         <Outlet />
       </main>
