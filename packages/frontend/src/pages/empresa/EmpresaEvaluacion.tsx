@@ -80,7 +80,7 @@ export function EmpresaEvaluacion() {
 
   if (empresa?.estadoEncargo === 'aceptado') {
     return (
-      <div className="p-8 max-w-2xl">
+      <div className="p-8">
         <h1 className="text-2xl font-bold text-gray-900 mb-6">Evaluación de aceptación</h1>
         <div className="flex flex-col items-center justify-center rounded-xl border border-emerald-200 bg-emerald-50 py-16 text-center">
           <CheckCircle size={40} className="text-emerald-500 mb-3" />
@@ -95,7 +95,7 @@ export function EmpresaEvaluacion() {
 
   if (empresa?.estadoEncargo === 'rechazado') {
     return (
-      <div className="p-8 max-w-2xl">
+      <div className="p-8">
         <h1 className="text-2xl font-bold text-gray-900 mb-6">Evaluación de aceptación</h1>
         <div className="flex flex-col items-center justify-center rounded-xl border border-red-200 bg-red-50 py-16 text-center">
           <XCircle size={40} className="text-red-400 mb-3" />
@@ -109,7 +109,7 @@ export function EmpresaEvaluacion() {
   }
 
   return (
-    <div className="p-8 max-w-2xl space-y-6">
+    <div className="p-8 space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Evaluación de aceptación</h1>
         <p className="text-sm text-gray-500 mt-1">

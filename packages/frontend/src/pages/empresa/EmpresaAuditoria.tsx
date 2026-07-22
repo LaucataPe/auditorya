@@ -143,7 +143,7 @@ export function EmpresaAuditoria() {
     : SERVICIO_LABEL[auditoria.tipoServicio ?? 'revisoria_fiscal']
 
   return (
-    <div className="p-8 max-w-7xl space-y-6">
+    <div className="p-8 space-y-6">
       {/* Actividad (pista de auditoría) */}
       <div className="flex items-center justify-end">
         <button

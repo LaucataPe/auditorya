@@ -7,7 +7,13 @@ declare global {
   interface Window {
     XLSX?: {
       read: (data: ArrayBuffer, opts: { type: string }) => { SheetNames: string[]; Sheets: Record<string, unknown> }
-      utils: { sheet_to_json: (ws: unknown, opts: { header: 1; raw?: boolean; defval?: string }) => unknown[][] }
+      utils: {
+        sheet_to_json: (ws: unknown, opts: { header: 1; raw?: boolean; defval?: string }) => unknown[][]
+        aoa_to_sheet: (data: (string | number)[][]) => unknown
+        book_new: () => unknown
+        book_append_sheet: (wb: unknown, ws: unknown, name: string) => void
+      }
+      writeFile: (wb: unknown, filename: string) => void
     }
   }
 }
@@ -27,6 +33,16 @@ function cargarSheetJs(): Promise<NonNullable<Window['XLSX']>> {
     document.head.appendChild(s)
   })
   return cargando
+}
+
+/** Descarga la plantilla oficial del balance de prueba como .xlsx. */
+export async function descargarPlantillaBalance(): Promise<void> {
+  const { PLANTILLA_BALANCE_ENCABEZADOS, PLANTILLA_BALANCE_EJEMPLO } = await import('@auditorya/types')
+  const XLSX = await cargarSheetJs()
+  const ws = XLSX.utils.aoa_to_sheet([[...PLANTILLA_BALANCE_ENCABEZADOS], ...PLANTILLA_BALANCE_EJEMPLO])
+  const wb = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(wb, ws, 'Balance de prueba')
+  XLSX.writeFile(wb, 'plantilla-balance-de-prueba.xlsx')
 }
 
 /** Lee la primera hoja de un .xlsx/.xls a una matriz de strings (igual shape que parseCsv). */

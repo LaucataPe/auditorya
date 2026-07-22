@@ -1,3 +1,5 @@
+import type { RatioFinanciero, BanderaAnalitica } from './analitica'
+
 export type ClasePuc =
   | 'activo'
   | 'pasivo'
@@ -19,7 +21,8 @@ export type CuentaBalance = {
   tercero: string | null
   terceroNombre: string | null
   saldoActual: string
-  saldoAnterior: string
+  /** Saldo al inicio del período que cubre el balance (NO es el comparativo del año anterior). */
+  saldoInicial: string
   debito: string | null
   credito: string | null
   createdAt: string
@@ -33,9 +36,30 @@ export type CuentaImport = {
   tercero: string | null
   terceroNombre: string | null
   saldoActual: number
-  saldoAnterior: number
+  saldoInicial: number
   debito: number | null
   credito: number | null
+}
+
+/** Fila del balance comparativo (mismo corte del año anterior), solo saldo. */
+export type CuentaComparativoImport = {
+  codigo: string
+  nombre: string | null
+  nivel: number
+  saldo: number
+}
+
+/** Período que cubre el balance cargado (declarado al importar). */
+export type PeriodoBalance = {
+  corteDesde: string | null
+  corteHasta: string | null
+}
+
+/** Estado del balance comparativo del encargo. */
+export type ComparativoInfo = {
+  cargado: boolean
+  nombre: string | null
+  createdAt: string | null
 }
 
 /** Metadatos + contenido del archivo original guardado como evidencia. */
@@ -53,11 +77,21 @@ export type CuentaAnalizada = {
   clase: string | null
   nivel: number
   saldoActual: number
-  saldoAnterior: number
-  variacionAbs: number
+  saldoInicial: number
+  /** Saldo del comparativo (año anterior); null si no se ha cargado comparativo. */
+  saldoComparativo: number | null
+  /**
+   * Contra qué se midió la variación: 'comparativo' (año anterior real),
+   * 'inicial' (solo cuentas de balance, cuando no hay comparativo) o null
+   * (cuentas de resultado sin comparativo: no hay base honesta de comparación).
+   */
+  baseVariacion: 'comparativo' | 'inicial' | null
+  variacionAbs: number | null
   variacionPct: number | null
   significativa: boolean
   anomalia: boolean
+  /** Hay detalle por tercero (nivel 8) debajo de esta cuenta. */
+  tieneTerceros: boolean
 }
 
 /** Montos base derivados del balance, por base de cálculo de materialidad. */
@@ -70,6 +104,8 @@ export type BasesMaterialidad = {
 
 export type AnalisisBalance = {
   cuentas: CuentaAnalizada[]
+  ratios: RatioFinanciero[]
+  banderas: BanderaAnalitica[]
   resumen: {
     totalCuentas: number
     totalFilas: number
@@ -81,6 +117,15 @@ export type AnalisisBalance = {
   }
   bases: BasesMaterialidad
   archivo: { nombre: string; tamano: number; createdAt: string } | null
+  periodo: PeriodoBalance | null
+  comparativo: ComparativoInfo
+}
+
+/** ¿La clase PUC es de balance (acumulativa)? El saldo inicial de estas cuentas
+ * sí es comparable (es el cierre del período anterior); en cuentas de resultado
+ * el saldo inicial es solo el acumulado al inicio del corte y no sirve de base. */
+export function esClaseBalance(codigo: string): boolean {
+  return ['1', '2', '3'].includes(codigo.trim()[0])
 }
 
 export const CLASE_PUC_LABEL: Record<string, string> = {

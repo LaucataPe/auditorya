@@ -18,8 +18,9 @@ type Empresa = {
 export function EmpresaLayout() {
   const { id } = useParams<{ id: string }>()
   const { isAuthenticated } = useAuthStore()
-  // Dentro de un encargo el menú lateral se transforma en las fases del encargo.
-  const encargoMatch = useMatch('/empresas/:id/encargos/:auditoriaId')
+  // Dentro de un encargo (incluidas sus subrutas, ej. papeles) el menú lateral
+  // se transforma en las fases del encargo.
+  const encargoMatch = useMatch('/empresas/:id/encargos/:auditoriaId/*')
   const auditoriaId = encargoMatch?.params.auditoriaId
 
   const { data: empresa, isLoading, isError } = useQuery<Empresa>({

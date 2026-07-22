@@ -7,12 +7,16 @@ import { logger } from 'hono/logger'
 import authRoutes from './routes/auth'
 import firmasRoutes from './routes/firmas'
 import usuariosRoutes from './routes/usuarios'
+import rolesRoutes from './routes/roles'
 import empresasRoutes from './routes/empresas'
 import auditoriasRoutes from './routes/auditorias'
 import ejecucionRoutes from './routes/ejecucion'
 import informesRoutes from './routes/informes'
 import auditoriaInternaRoutes from './routes/auditoria-interna'
 import pbcRoutes from './routes/pbc'
+import muestreoRoutes from './routes/muestreo'
+import ajustesRoutes from './routes/ajustes'
+import hallazgosRoutes from './routes/hallazgos'
 import cierreRoutes from './routes/cierre'
 import archivosRoutes from './routes/archivos'
 import iaRoutes from './routes/ia'
@@ -42,6 +46,7 @@ app.get('/health', (c) => c.json({ status: 'ok' }))
 app.route('/auth', authRoutes)
 app.route('/firmas', firmasRoutes)
 app.route('/firmas', usuariosRoutes)
+app.route('/firmas', rolesRoutes)
 app.route('/empresas', empresasRoutes)
 // auditoriasRoutes define rutas absolutas (/empresas/:id/auditorias y /auditorias/...)
 app.route('/', auditoriasRoutes)
@@ -53,6 +58,12 @@ app.route('/', informesRoutes)
 app.route('/', auditoriaInternaRoutes)
 // pbcRoutes define rutas absolutas (/auditorias/:id/pbc, /pbc/...)
 app.route('/', pbcRoutes)
+// muestreoRoutes define rutas absolutas (/papeles/:id/muestra, /muestra-items/...)
+app.route('/', muestreoRoutes)
+// ajustesRoutes define rutas absolutas (/auditorias/:id/ajustes, /ajustes/...)
+app.route('/', ajustesRoutes)
+// hallazgosRoutes define rutas absolutas (/auditorias/:id/hallazgos, /papeles/:id/hallazgos, /hallazgos/...)
+app.route('/', hallazgosRoutes)
 // cierreRoutes define rutas absolutas (/auditorias/:id/cierre, /papeles/:id/notas-revision, /notas-revision/...)
 app.route('/', cierreRoutes)
 // Descarga de archivos con URL firmada (sin cookie de sesión)

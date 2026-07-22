@@ -1,19 +1,22 @@
 import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
-import { and, desc, eq, lte, isNull, sql } from 'drizzle-orm'
+import { and, desc, eq, lte, isNull, inArray, or, sql } from 'drizzle-orm'
 import { createHash } from 'node:crypto'
 import { db } from '../db/client'
 import {
   auditorias, empresas, materialidades, riesgos,
   papelesTrabajo, controlesCoso, tareas, informes, programasAI, hallazgosAI,
-  entendimientoPeriodo, cuentasBalance, balanceArchivos, eventos, usuarios,
+  entendimientoPeriodo, cuentasBalance, balanceArchivos, perfilesBalance, cuentasBalanceComparativo, balanceMeta,
+  eventos, usuarios, evidencias, ajustes, hallazgos,
+  solicitudesPbc, notasRevision, cierresAuditoria, muestras,
 } from '../db/schema'
 import { authMiddleware } from '../middleware/auth'
 import { esSocioResponsable, ERROR_NO_SOCIO_RESPONSABLE } from '../lib/permisos'
 import { registrarEvento } from '../lib/eventos'
+import { storage } from '../lib/storage'
 import { sugerirRiesgos } from '../lib/ia'
-import { claseDesdeCodigo, nivelCombinado } from '@auditorya/types'
+import { claseDesdeCodigo, esClaseBalance, nivelCombinado, calcularRatios, detectarBanderas, evaluarCompletitud, evaluarOpinion, resumirHallazgos } from '@auditorya/types'
 import type { JwtPayload } from '../lib/jwt'
 
 const app = new Hono<{ Variables: { user: JwtPayload } }>()
@@ -43,11 +46,11 @@ app.get('/auditorias/:id/progreso', async (c) => {
   const row = await cargarAuditoria(id, firmaId)
   if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Auditoría no encontrada' } }, 404)
 
-  const [riesgosRows, materialidadRows, papelesRows, cosoRows, tareasRows, informesRows, programasRows, hallazgosRows, entendimientoRows, balanceRows] =
+  const [riesgosRows, materialidadRows, papelesRows, cosoRows, tareasRows, informesRows, programasRows, hallazgosAiRows, entendimientoRows, balanceRows, evidRows, ajustesRows, hallazgosRows] =
     await Promise.all([
-      db.select({ combinado: riesgos.riesgoCombinado, respuesta: riesgos.respuestaPlaneada }).from(riesgos).where(eq(riesgos.auditoriaId, id)),
-      db.select({ id: materialidades.id }).from(materialidades).where(eq(materialidades.auditoriaId, id)),
-      db.select({ estado: papelesTrabajo.estado }).from(papelesTrabajo).where(eq(papelesTrabajo.auditoriaId, id)),
+      db.select({ id: riesgos.id, combinado: riesgos.riesgoCombinado, respuesta: riesgos.respuestaPlaneada }).from(riesgos).where(eq(riesgos.auditoriaId, id)),
+      db.select({ id: materialidades.id, materialidad: materialidades.materialidad }).from(materialidades).where(eq(materialidades.auditoriaId, id)),
+      db.select({ id: papelesTrabajo.id, estado: papelesTrabajo.estado, riesgoId: papelesTrabajo.riesgoId }).from(papelesTrabajo).where(eq(papelesTrabajo.auditoriaId, id)),
       db.select({ componente: controlesCoso.componente }).from(controlesCoso).where(eq(controlesCoso.auditoriaId, id)),
       db.select({ estado: tareas.estado }).from(tareas).where(eq(tareas.auditoriaId, id)),
       db.select({ tipo: informes.tipo, estado: informes.estado }).from(informes).where(eq(informes.auditoriaId, id)),
@@ -55,10 +58,36 @@ app.get('/auditorias/:id/progreso', async (c) => {
       db.select({ id: hallazgosAI.id }).from(hallazgosAI).where(eq(hallazgosAI.auditoriaId, id)),
       db.select({ confirmado: entendimientoPeriodo.confirmado }).from(entendimientoPeriodo).where(eq(entendimientoPeriodo.auditoriaId, id)),
       db.select({ id: cuentasBalance.id }).from(cuentasBalance).where(eq(cuentasBalance.auditoriaId, id)).limit(1),
+      db
+        .select({ papelId: evidencias.papelTrabajoId, n: sql<number>`count(*)::int` })
+        .from(evidencias)
+        .innerJoin(papelesTrabajo, eq(evidencias.papelTrabajoId, papelesTrabajo.id))
+        .where(eq(papelesTrabajo.auditoriaId, id))
+        .groupBy(evidencias.papelTrabajoId),
+      db.select({ monto: ajustes.monto, corregido: ajustes.corregido, efecto: ajustes.efecto }).from(ajustes).where(eq(ajustes.auditoriaId, id)),
+      db.select({ estado: hallazgos.estado }).from(hallazgos).where(eq(hallazgos.auditoriaId, id)),
     ])
 
   const mapaInformes: Record<string, string> = {}
   for (const inf of informesRows) mapaInformes[inf.tipo] = inf.estado
+
+  // Completitud de ejecución: riesgos altos sin papel + papeles (revisión/aprobados) sin evidencia.
+  const riesgosConPrueba = new Set(papelesRows.map((p) => p.riesgoId).filter((x): x is string => !!x))
+  const riesgosAltosSinPrueba = riesgosRows.filter((r) => r.combinado === 'alto' && !riesgosConPrueba.has(r.id)).length
+  const evidPorPapel = new Map(evidRows.map((e) => [e.papelId, Number(e.n)]))
+  const papelesSinEvidencia = papelesRows.filter(
+    (p) => (p.estado === 'en_revision' || p.estado === 'aprobado') && (evidPorPapel.get(p.id) ?? 0) === 0,
+  ).length
+
+  // Opinión sugerida por la hoja de ajustes (NIA 450/700) frente a la materialidad.
+  const materialidadMonto = materialidadRows[0]?.materialidad ? Number(materialidadRows[0].materialidad) : null
+  const opinionSugerida = evaluarOpinion(
+    ajustesRows.map((a) => ({ monto: Number(a.monto), corregido: a.corregido, efecto: a.efecto })),
+    materialidadMonto,
+  ).opinionSugerida
+
+  // Hallazgos aún pendientes de decisión del contador (NIA 260/265).
+  const hallazgosSinResolver = resumirHallazgos(hallazgosRows).sinResolver
 
   return c.json({
     data: {
@@ -73,15 +102,50 @@ app.get('/auditorias/:id/progreso', async (c) => {
       materialidadAprobada: row.auditoria.materialidadAprobada,
       papelesTotal: papelesRows.length,
       papelesAprobados: papelesRows.filter((p) => p.estado === 'aprobado').length,
+      riesgosAltosSinPrueba,
+      papelesSinEvidencia,
+      hallazgosSinResolver,
       cosoEvaluados: cosoRows.length,
       tareasTotal: tareasRows.length,
       tareasCompletadas: tareasRows.filter((t) => t.estado === 'completada').length,
       informes: mapaInformes,
+      opinionSugerida,
       programasTotal: programasRows.length,
       programasCompletados: programasRows.filter((p) => p.estado === 'completado').length,
-      hallazgosTotal: hallazgosRows.length,
+      hallazgosTotal: hallazgosAiRows.length,
     },
   })
+})
+
+// GET /auditorias/:id/completitud — huecos de ejecución (NIA 330/500)
+app.get('/auditorias/:id/completitud', async (c) => {
+  const { firmaId } = c.get('user')
+  const id = c.req.param('id')
+
+  const row = await cargarAuditoria(id, firmaId)
+  if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Auditoría no encontrada' } }, 404)
+
+  const [riesgosRows, papelesRows, evidRows] = await Promise.all([
+    db
+      .select({ id: riesgos.id, area: riesgos.area, descripcion: riesgos.descripcion, nivelCombinado: riesgos.riesgoCombinado })
+      .from(riesgos)
+      .where(eq(riesgos.auditoriaId, id)),
+    db
+      .select({ id: papelesTrabajo.id, titulo: papelesTrabajo.titulo, area: papelesTrabajo.area, riesgoId: papelesTrabajo.riesgoId, estado: papelesTrabajo.estado })
+      .from(papelesTrabajo)
+      .where(eq(papelesTrabajo.auditoriaId, id)),
+    db
+      .select({ papelId: evidencias.papelTrabajoId, n: sql<number>`count(*)::int` })
+      .from(evidencias)
+      .innerJoin(papelesTrabajo, eq(evidencias.papelTrabajoId, papelesTrabajo.id))
+      .where(eq(papelesTrabajo.auditoriaId, id))
+      .groupBy(evidencias.papelTrabajoId),
+  ])
+
+  const evidPorPapel = new Map(evidRows.map((e) => [e.papelId, Number(e.n)]))
+  const papeles = papelesRows.map((p) => ({ ...p, numEvidencias: evidPorPapel.get(p.id) ?? 0 }))
+
+  return c.json({ data: evaluarCompletitud(riesgosRows, papeles) })
 })
 
 // ─── Pista de auditoría (audit trail) ────────────────────────────────────────
@@ -214,28 +278,68 @@ app.get('/auditorias/:id/balance', async (c) => {
   const [mat] = await db.select().from(materialidades).where(eq(materialidades.auditoriaId, id))
   const umbral = mat ? Number(mat.materialidadDesempeno || mat.materialidad) : null
 
-  const analizadas = cuentas.map((ct) => {
-    const actual = Number(ct.saldoActual)
-    const anterior = Number(ct.saldoAnterior)
-    const variacionAbs = actual - anterior
-    const variacionPct = anterior !== 0 ? (variacionAbs / Math.abs(anterior)) * 100 : null
+  // Cuentas que tienen detalle por tercero (nivel 8) debajo: se ofrece "ver terceros" solo ahí.
+  const tercerosCodigos = await db
+    .selectDistinct({ codigo: cuentasBalance.codigo })
+    .from(cuentasBalance)
+    .where(and(eq(cuentasBalance.auditoriaId, id), sql`${cuentasBalance.tercero} is not null`))
+  const conTerceros = new Set<string>()
+  for (const { codigo } of tercerosCodigos) {
+    for (let l = 1; l <= codigo.length; l++) conTerceros.add(codigo.slice(0, l))
+  }
+
+  // Comparativo (mismo corte del año anterior) y metadatos del período.
+  const comparativoRows = await db
+    .select()
+    .from(cuentasBalanceComparativo)
+    .where(eq(cuentasBalanceComparativo.auditoriaId, id))
+  const compPorCodigo = new Map(comparativoRows.map((r) => [r.codigo, Number(r.saldo)]))
+  const compCargado = comparativoRows.length > 0
+  const [meta] = await db.select().from(balanceMeta).where(eq(balanceMeta.auditoriaId, id))
+
+  // Base de comparación honesta por cuenta: el comparativo real si está cargado;
+  // sin comparativo, el saldo inicial solo sirve en cuentas de balance (1/2/3) —
+  // en cuentas de resultado el inicial es el acumulado al corte, no una base.
+  const analizar = (
+    codigo: string, nombre: string | null, clase: string | null, nivel: number,
+    actual: number, inicial: number,
+  ) => {
+    const saldoComparativo = compCargado ? (compPorCodigo.get(codigo) ?? 0) : null
+    const baseVariacion: 'comparativo' | 'inicial' | null = compCargado
+      ? 'comparativo'
+      : esClaseBalance(codigo) ? 'inicial' : null
+    const base = baseVariacion === 'comparativo' ? saldoComparativo : baseVariacion === 'inicial' ? inicial : null
+    const variacionAbs = base !== null ? actual - base : null
+    const variacionPct = base !== null && base !== 0 ? ((actual - base) / Math.abs(base)) * 100 : null
     const significativa = umbral !== null && Math.abs(actual) > umbral
     const anomalia =
-      (variacionPct !== null && Math.abs(variacionPct) >= UMBRAL_VARIACION_PCT) ||
-      (anterior === 0 && actual !== 0)
+      base !== null &&
+      ((variacionPct !== null && Math.abs(variacionPct) >= UMBRAL_VARIACION_PCT) ||
+        (base === 0 && actual !== 0))
     return {
-      codigo: ct.codigo,
-      nombre: ct.nombre,
-      clase: ct.clase,
-      nivel: ct.nivel,
+      codigo, nombre, clase, nivel,
       saldoActual: actual,
-      saldoAnterior: anterior,
+      saldoInicial: inicial,
+      saldoComparativo,
+      baseVariacion,
       variacionAbs,
       variacionPct,
       significativa,
       anomalia,
+      tieneTerceros: conTerceros.has(codigo),
     }
-  })
+  }
+
+  const codigosActual = new Set(cuentas.map((ct) => ct.codigo))
+  const analizadas = [
+    ...cuentas.map((ct) =>
+      analizar(ct.codigo, ct.nombre, ct.clase, ct.nivel, Number(ct.saldoActual), Number(ct.saldoInicial)),
+    ),
+    // Cuentas que existían el año anterior y hoy no aparecen: saldo actual 0.
+    ...comparativoRows
+      .filter((r) => r.nivel <= 6 && !codigosActual.has(r.codigo))
+      .map((r) => analizar(r.codigo, r.nombre, claseDesdeCodigo(r.codigo), r.nivel, 0, 0)),
+  ].sort((a, b) => a.codigo.localeCompare(b.codigo))
 
   const [archivo] = await db
     .select({ nombre: balanceArchivos.nombre, tamano: balanceArchivos.tamano, createdAt: balanceArchivos.createdAt })
@@ -268,9 +372,30 @@ app.get('/auditorias/:id/balance', async (c) => {
     patrimonio: saldoClase('3'),
   }
 
+  // Analítica (NIA 520): ratios y banderas. El `saldoAnterior` que consumen es
+  // la base de comparación honesta (ver EntradaAnalitica): comparativo real, o
+  // saldo inicial solo para cuentas de balance (0 en resultado → las tendencias
+  // de P&G se omiten solas cuando no hay comparativo).
+  const entradaAnalitica = analizadas.map((ct) => ({
+    codigo: ct.codigo,
+    nombre: ct.nombre,
+    saldoActual: ct.saldoActual,
+    saldoAnterior: compCargado
+      ? (ct.saldoComparativo ?? 0)
+      : esClaseBalance(ct.codigo) ? ct.saldoInicial : 0,
+  }))
+  const ratios = calcularRatios(entradaAnalitica)
+  const banderas = detectarBanderas(entradaAnalitica)
+
+  const periodo = meta && (meta.corteDesde || meta.corteHasta)
+    ? { corteDesde: meta.corteDesde, corteHasta: meta.corteHasta }
+    : null
+
   return c.json({
     data: {
       cuentas: analizadas,
+      ratios,
+      banderas,
       bases,
       resumen: {
         totalCuentas: analizadas.length,
@@ -282,6 +407,12 @@ app.get('/auditorias/:id/balance', async (c) => {
         umbralVariacionPct: UMBRAL_VARIACION_PCT,
       },
       archivo: archivo ?? null,
+      periodo,
+      comparativo: {
+        cargado: compCargado,
+        nombre: meta?.comparativoNombre ?? null,
+        createdAt: meta?.comparativoCreatedAt ?? null,
+      },
     },
   })
 })
@@ -308,6 +439,26 @@ app.get('/auditorias/:id/balance/terceros', async (c) => {
   return c.json({ data: detalle })
 })
 
+// GET /auditorias/:id/perfil-balance — mapeo de columnas guardado para la empresa del encargo
+app.get('/auditorias/:id/perfil-balance', async (c) => {
+  const { firmaId } = c.get('user')
+  const id = c.req.param('id')
+
+  const row = await cargarAuditoria(id, firmaId)
+  if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Auditoría no encontrada' } }, 404)
+
+  const [perfil] = await db
+    .select({ mapeo: perfilesBalance.mapeo, encabezados: perfilesBalance.encabezados })
+    .from(perfilesBalance)
+    .where(eq(perfilesBalance.empresaId, row.empresa.id))
+  return c.json({ data: perfil ?? null })
+})
+
+const CAMPOS_MAPEO = [
+  'codigo', 'nombreCuenta', 'nivel', 'nitTercero', 'nombreTercero',
+  'saldoInicial', 'debito', 'credito', 'saldoFinal',
+] as const
+
 // POST /auditorias/:id/balance — importa cuentas parseadas + archivo original (reemplaza)
 app.post(
   '/auditorias/:id/balance',
@@ -323,7 +474,7 @@ app.post(
             tercero: z.string().nullable(),
             terceroNombre: z.string().nullable(),
             saldoActual: z.number(),
-            saldoAnterior: z.number(),
+            saldoInicial: z.number(),
             debito: z.number().nullable(),
             credito: z.number().nullable(),
           }),
@@ -337,12 +488,22 @@ app.post(
           contenido: z.string(), // base64
         })
         .optional(),
+      // Período que cubre el balance (YYYY-MM-DD), declarado en el asistente.
+      corteDesde: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+      corteHasta: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+      // Mapeo de columnas confirmado en el asistente: se guarda por empresa para reutilizarlo.
+      perfil: z
+        .object({
+          mapeo: z.array(z.enum(CAMPOS_MAPEO).nullable()),
+          encabezados: z.array(z.string().nullable()).nullable(),
+        })
+        .optional(),
     }),
   ),
   async (c) => {
     const { firmaId, sub } = c.get('user')
     const id = c.req.param('id')
-    const { cuentas, archivo } = c.req.valid('json')
+    const { cuentas, archivo, perfil, corteDesde, corteHasta } = c.req.valid('json')
 
     const row = await cargarAuditoria(id, firmaId)
     if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Auditoría no encontrada' } }, 404)
@@ -358,13 +519,38 @@ app.post(
       tercero: ct.tercero,
       terceroNombre: ct.terceroNombre,
       saldoActual: ct.saldoActual.toFixed(2),
-      saldoAnterior: ct.saldoAnterior.toFixed(2),
+      saldoInicial: ct.saldoInicial.toFixed(2),
       debito: ct.debito != null ? ct.debito.toFixed(2) : null,
       credito: ct.credito != null ? ct.credito.toFixed(2) : null,
     }))
     // Inserta por lotes para no exceder el límite de parámetros de Postgres.
     for (let i = 0; i < valores.length; i += 1000) {
       await db.insert(cuentasBalance).values(valores.slice(i, i + 1000))
+    }
+
+    // Registra el período que cubre el balance (sin tocar el estado del comparativo).
+    await db
+      .insert(balanceMeta)
+      .values({ auditoriaId: id, corteDesde: corteDesde ?? null, corteHasta: corteHasta ?? null })
+      .onConflictDoUpdate({
+        target: balanceMeta.auditoriaId,
+        set: { corteDesde: corteDesde ?? null, corteHasta: corteHasta ?? null, updatedAt: new Date() },
+      })
+
+    // Guarda el mapeo confirmado como perfil de la empresa, para la próxima importación.
+    if (perfil) {
+      await db
+        .insert(perfilesBalance)
+        .values({
+          empresaId: row.empresa.id,
+          mapeo: perfil.mapeo,
+          encabezados: perfil.encabezados,
+          actualizadoPor: sub,
+        })
+        .onConflictDoUpdate({
+          target: perfilesBalance.empresaId,
+          set: { mapeo: perfil.mapeo, encabezados: perfil.encabezados, actualizadoPor: sub, updatedAt: new Date() },
+        })
     }
 
     // Guarda el archivo original como evidencia inmutable.
@@ -402,6 +588,83 @@ app.delete('/auditorias/:id/balance', async (c) => {
 
   await db.delete(cuentasBalance).where(eq(cuentasBalance.auditoriaId, id))
   await db.delete(balanceArchivos).where(eq(balanceArchivos.auditoriaId, id))
+  await db.delete(cuentasBalanceComparativo).where(eq(cuentasBalanceComparativo.auditoriaId, id))
+  await db.delete(balanceMeta).where(eq(balanceMeta.auditoriaId, id))
+  return c.json({ data: { ok: true } })
+})
+
+// POST /auditorias/:id/balance/comparativo — saldos del mismo corte del año anterior (reemplaza)
+app.post(
+  '/auditorias/:id/balance/comparativo',
+  zValidator(
+    'json',
+    z.object({
+      cuentas: z
+        .array(
+          z.object({
+            codigo: z.string().min(1),
+            nombre: z.string().nullable(),
+            nivel: z.number().int(),
+            saldo: z.number(),
+          }),
+        )
+        .min(1)
+        .max(100000),
+      archivoNombre: z.string().optional(),
+    }),
+  ),
+  async (c) => {
+    const { firmaId } = c.get('user')
+    const id = c.req.param('id')
+    const { cuentas, archivoNombre } = c.req.valid('json')
+
+    const row = await cargarAuditoria(id, firmaId)
+    if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Auditoría no encontrada' } }, 404)
+
+    await db.delete(cuentasBalanceComparativo).where(eq(cuentasBalanceComparativo.auditoriaId, id))
+    const valores = cuentas.map((ct) => ({
+      auditoriaId: id,
+      codigo: ct.codigo,
+      nombre: ct.nombre,
+      nivel: ct.nivel,
+      saldo: ct.saldo.toFixed(2),
+    }))
+    for (let i = 0; i < valores.length; i += 1000) {
+      await db.insert(cuentasBalanceComparativo).values(valores.slice(i, i + 1000))
+    }
+
+    await db
+      .insert(balanceMeta)
+      .values({ auditoriaId: id, comparativoNombre: archivoNombre ?? null, comparativoCreatedAt: new Date() })
+      .onConflictDoUpdate({
+        target: balanceMeta.auditoriaId,
+        set: { comparativoNombre: archivoNombre ?? null, comparativoCreatedAt: new Date(), updatedAt: new Date() },
+      })
+
+    registrarEvento(c.get('user'), {
+      accion: 'balance.comparativo_importar',
+      entidad: 'balance',
+      auditoriaId: id,
+      detalle: { filas: cuentas.length, archivo: archivoNombre ?? null },
+    })
+
+    return c.json({ data: { importadas: cuentas.length } }, 201)
+  },
+)
+
+// DELETE /auditorias/:id/balance/comparativo
+app.delete('/auditorias/:id/balance/comparativo', async (c) => {
+  const { firmaId } = c.get('user')
+  const id = c.req.param('id')
+
+  const row = await cargarAuditoria(id, firmaId)
+  if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Auditoría no encontrada' } }, 404)
+
+  await db.delete(cuentasBalanceComparativo).where(eq(cuentasBalanceComparativo.auditoriaId, id))
+  await db
+    .update(balanceMeta)
+    .set({ comparativoNombre: null, comparativoCreatedAt: null, updatedAt: new Date() })
+    .where(eq(balanceMeta.auditoriaId, id))
   return c.json({ data: { ok: true } })
 })
 
@@ -437,7 +700,8 @@ app.post(
     'json',
     z
       .object({
-        periodo: z.string().min(4),
+        fechaInicio: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Formato de fecha inválido (YYYY-MM-DD)'),
+        fechaFin: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Formato de fecha inválido (YYYY-MM-DD)'),
         tipoServicio: z.enum(['revisoria_fiscal', 'auditoria_interna']).default('revisoria_fiscal'),
         tipo: z.enum(['financiera', 'integral', 'especial']).optional(),
         socioId: z.string().uuid(),
@@ -448,6 +712,13 @@ app.post(
             code: z.ZodIssueCode.custom,
             message: 'El tipo de auditoría es obligatorio para Revisoría Fiscal',
             path: ['tipo'],
+          })
+        }
+        if (val.fechaInicio >= val.fechaFin) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: 'La fecha de fin debe ser posterior a la fecha de inicio',
+            path: ['fechaFin'],
           })
         }
       }),
@@ -483,7 +754,8 @@ app.post(
       .values({
         empresaId,
         socioId: body.socioId,
-        periodo: body.periodo,
+        fechaInicio: body.fechaInicio,
+        fechaFin: body.fechaFin,
         tipoServicio: body.tipoServicio,
         tipo: body.tipo ?? null,
       })
@@ -495,7 +767,7 @@ app.post(
       entidadId: auditoria.id,
       auditoriaId: auditoria.id,
       empresaId,
-      detalle: { periodo: body.periodo, tipoServicio: body.tipoServicio },
+      detalle: { fechaInicio: body.fechaInicio, fechaFin: body.fechaFin, tipoServicio: body.tipoServicio },
     })
 
     return c.json({ data: auditoria }, 201)
@@ -553,6 +825,164 @@ app.put(
     return c.json({ data: actualizada })
   },
 )
+
+// PATCH /auditorias/:id — editar datos del encargo. Regla: solo el socio responsable.
+// El tipo de servicio (revisoria_fiscal/auditoria_interna) NO se puede cambiar: fija el flujo.
+app.patch(
+  '/auditorias/:id',
+  zValidator(
+    'json',
+    z.object({
+      fechaInicio: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Formato de fecha inválido (YYYY-MM-DD)').optional(),
+      fechaFin: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Formato de fecha inválido (YYYY-MM-DD)').optional(),
+      tipo: z.enum(['financiera', 'integral', 'especial']).optional(),
+      socioId: z.string().uuid().optional(),
+    }),
+  ),
+  async (c) => {
+    const user = c.get('user')
+    const { firmaId } = user
+    const id = c.req.param('id')
+    const body = c.req.valid('json')
+
+    const row = await cargarAuditoria(id, firmaId)
+    if (!row) {
+      return c.json({ error: { code: 'NOT_FOUND', message: 'Auditoría no encontrada' } }, 404)
+    }
+
+    if (!esSocioResponsable(user, row.auditoria)) {
+      return c.json({ error: ERROR_NO_SOCIO_RESPONSABLE }, 403)
+    }
+
+    const fechaInicio = body.fechaInicio ?? row.auditoria.fechaInicio
+    const fechaFin = body.fechaFin ?? row.auditoria.fechaFin
+    if (fechaInicio >= fechaFin) {
+      return c.json(
+        { error: { code: 'FECHAS_INVALIDAS', message: 'La fecha de fin debe ser posterior a la fecha de inicio' } },
+        409,
+      )
+    }
+
+    // Si se reasigna el socio responsable, debe ser un usuario de la misma firma.
+    if (body.socioId && body.socioId !== row.auditoria.socioId) {
+      const [nuevoSocio] = await db
+        .select({ id: usuarios.id })
+        .from(usuarios)
+        .where(and(eq(usuarios.id, body.socioId), eq(usuarios.firmaId, firmaId)))
+      if (!nuevoSocio) {
+        return c.json({ error: { code: 'SOCIO_INVALIDO', message: 'El socio responsable no pertenece a la firma' } }, 400)
+      }
+    }
+
+    const cambios: Partial<typeof auditorias.$inferInsert> = {}
+    if (body.fechaInicio) cambios.fechaInicio = body.fechaInicio
+    if (body.fechaFin) cambios.fechaFin = body.fechaFin
+    if (body.socioId) cambios.socioId = body.socioId
+    // El tipo (modalidad) solo aplica a Revisoría Fiscal.
+    if (row.auditoria.tipoServicio === 'revisoria_fiscal' && body.tipo) cambios.tipo = body.tipo
+
+    if (Object.keys(cambios).length === 0) {
+      return c.json({ data: row.auditoria })
+    }
+
+    const [actualizada] = await db
+      .update(auditorias)
+      .set(cambios)
+      .where(eq(auditorias.id, id))
+      .returning()
+
+    registrarEvento(user, {
+      accion: 'auditoria.editar',
+      entidad: 'auditoria',
+      entidadId: id,
+      auditoriaId: id,
+      empresaId: row.empresa.id,
+      detalle: cambios,
+    })
+
+    return c.json({ data: actualizada })
+  },
+)
+
+// DELETE /auditorias/:id — elimina el encargo y TODA su información relacionada (cascada).
+// Regla: solo el socio responsable. Acción irreversible; el frontend exige confirmación escrita.
+app.delete('/auditorias/:id', async (c) => {
+  const user = c.get('user')
+  const { firmaId } = user
+  const id = c.req.param('id')
+
+  const row = await cargarAuditoria(id, firmaId)
+  if (!row) {
+    return c.json({ error: { code: 'NOT_FOUND', message: 'Auditoría no encontrada' } }, 404)
+  }
+
+  if (!esSocioResponsable(user, row.auditoria)) {
+    return c.json({ error: ERROR_NO_SOCIO_RESPONSABLE }, 403)
+  }
+
+  // Archivos físicos de la evidencia: se recogen antes para limpiarlos del storage tras el commit.
+  const papeles = await db
+    .select({ id: papelesTrabajo.id })
+    .from(papelesTrabajo)
+    .where(eq(papelesTrabajo.auditoriaId, id))
+  const papelIds = papeles.map((p) => p.id)
+  const claves = papelIds.length
+    ? (
+        await db
+          .select({ key: evidencias.archivoKey })
+          .from(evidencias)
+          .where(inArray(evidencias.papelTrabajoId, papelIds))
+      )
+        .map((e) => e.key)
+        .filter((k): k is string => !!k)
+    : []
+
+  // Borrado en cascada dentro de una transacción: hijos y referencias cruzadas primero.
+  await db.transaction(async (tx) => {
+    await tx.delete(muestras).where(eq(muestras.auditoriaId, id)) // cascada → muestra_items
+    await tx.delete(solicitudesPbc).where(eq(solicitudesPbc.auditoriaId, id)) // ref → evidencias, papeles
+    await tx.delete(notasRevision).where(eq(notasRevision.auditoriaId, id)) // ref → papeles
+    await tx.delete(tareas).where(eq(tareas.auditoriaId, id)) // ref → papeles, riesgos
+    await tx.delete(hallazgos).where(eq(hallazgos.auditoriaId, id)) // ref → papeles, ajustes
+    if (papelIds.length) {
+      await tx.delete(evidencias).where(inArray(evidencias.papelTrabajoId, papelIds)) // ref → papeles
+    }
+    await tx.delete(ajustes).where(eq(ajustes.auditoriaId, id))
+    await tx.delete(papelesTrabajo).where(eq(papelesTrabajo.auditoriaId, id)) // ref → riesgos
+    await tx.delete(riesgos).where(eq(riesgos.auditoriaId, id))
+    await tx.delete(hallazgosAI).where(eq(hallazgosAI.auditoriaId, id)) // ref → programas_ai
+    await tx.delete(programasAI).where(eq(programasAI.auditoriaId, id))
+    await tx.delete(controlesCoso).where(eq(controlesCoso.auditoriaId, id))
+    await tx.delete(materialidades).where(eq(materialidades.auditoriaId, id))
+    await tx.delete(entendimientoPeriodo).where(eq(entendimientoPeriodo.auditoriaId, id))
+    await tx.delete(cuentasBalance).where(eq(cuentasBalance.auditoriaId, id))
+    await tx.delete(balanceArchivos).where(eq(balanceArchivos.auditoriaId, id))
+    await tx.delete(cuentasBalanceComparativo).where(eq(cuentasBalanceComparativo.auditoriaId, id))
+    await tx.delete(balanceMeta).where(eq(balanceMeta.auditoriaId, id))
+    await tx.delete(informes).where(eq(informes.auditoriaId, id))
+    await tx.delete(cierresAuditoria).where(eq(cierresAuditoria.auditoriaId, id))
+    await tx.delete(eventos).where(eq(eventos.auditoriaId, id)) // pista propia del encargo
+    await tx.delete(auditorias).where(eq(auditorias.id, id))
+  })
+
+  // Limpieza best-effort de los archivos en disco/S3 (fuera de la transacción).
+  for (const key of claves) await storage.eliminar(key).catch(() => {})
+
+  // Registro permanente a nivel de empresa: sobrevive al borrado del encargo (auditoriaId = null).
+  registrarEvento(user, {
+    accion: 'auditoria.eliminar',
+    entidad: 'auditoria',
+    entidadId: id,
+    empresaId: row.empresa.id,
+    detalle: {
+      periodo: `${row.auditoria.fechaInicio} → ${row.auditoria.fechaFin}`,
+      tipoServicio: row.auditoria.tipoServicio,
+      papeles: papelIds.length,
+    },
+  })
+
+  return c.json({ data: { id } })
+})
 
 // ─── Materialidad (NIA 320) ──────────────────────────────────────────────────
 
@@ -821,9 +1251,12 @@ app.put(
   },
 )
 
-// DELETE /auditorias/:id/riesgos/:riesgoId
+// DELETE /auditorias/:id/riesgos/:riesgoId — borra el riesgo y, en cascada, los papeles de
+// trabajo que lo atienden (con sus tareas, evidencia, muestras, PBC, notas y hallazgos).
+// El frontend exige confirmación previa cuando hay papeles enlazados.
 app.delete('/auditorias/:id/riesgos/:riesgoId', async (c) => {
-  const { firmaId } = c.get('user')
+  const user = c.get('user')
+  const { firmaId } = user
   const id = c.req.param('id')
   const riesgoId = c.req.param('riesgoId')
 
@@ -832,16 +1265,65 @@ app.delete('/auditorias/:id/riesgos/:riesgoId', async (c) => {
     return c.json({ error: { code: 'NOT_FOUND', message: 'Auditoría no encontrada' } }, 404)
   }
 
-  const [eliminado] = await db
-    .delete(riesgos)
+  const [riesgo] = await db
+    .select({ id: riesgos.id })
+    .from(riesgos)
     .where(and(eq(riesgos.id, riesgoId), eq(riesgos.auditoriaId, id)))
-    .returning()
-
-  if (!eliminado) {
+  if (!riesgo) {
     return c.json({ error: { code: 'NOT_FOUND', message: 'Riesgo no encontrado' } }, 404)
   }
 
-  return c.json({ data: { id: riesgoId } })
+  // Papeles de trabajo que responden a este riesgo (se borran en cascada con sus hijos).
+  const papeles = await db
+    .select({ id: papelesTrabajo.id })
+    .from(papelesTrabajo)
+    .where(and(eq(papelesTrabajo.riesgoId, riesgoId), eq(papelesTrabajo.auditoriaId, id)))
+  const papelIds = papeles.map((p) => p.id)
+
+  // Archivos físicos de la evidencia de esos papeles: se limpian tras el commit.
+  const claves = papelIds.length
+    ? (
+        await db
+          .select({ key: evidencias.archivoKey })
+          .from(evidencias)
+          .where(inArray(evidencias.papelTrabajoId, papelIds))
+      )
+        .map((e) => e.key)
+        .filter((k): k is string => !!k)
+    : []
+
+  await db.transaction(async (tx) => {
+    if (papelIds.length) {
+      await tx.delete(muestras).where(inArray(muestras.papelTrabajoId, papelIds)) // cascada → muestra_items
+      await tx.delete(solicitudesPbc).where(inArray(solicitudesPbc.papelTrabajoId, papelIds)) // ref → evidencias
+      await tx.delete(notasRevision).where(inArray(notasRevision.papelTrabajoId, papelIds))
+      await tx.delete(hallazgos).where(inArray(hallazgos.papelTrabajoId, papelIds))
+      await tx.delete(evidencias).where(inArray(evidencias.papelTrabajoId, papelIds))
+    }
+    // Tareas ligadas al riesgo o a cualquiera de sus papeles.
+    await tx.delete(tareas).where(
+      papelIds.length
+        ? or(eq(tareas.riesgoId, riesgoId), inArray(tareas.papelTrabajoId, papelIds))
+        : eq(tareas.riesgoId, riesgoId),
+    )
+    if (papelIds.length) {
+      await tx.delete(papelesTrabajo).where(inArray(papelesTrabajo.id, papelIds)) // ref → riesgos
+    }
+    await tx.delete(riesgos).where(eq(riesgos.id, riesgoId))
+  })
+
+  for (const key of claves) await storage.eliminar(key).catch(() => {})
+
+  registrarEvento(user, {
+    accion: 'riesgo.eliminar',
+    entidad: 'riesgo',
+    entidadId: riesgoId,
+    auditoriaId: id,
+    empresaId: row.empresa.id,
+    detalle: { papeles: papelIds.length },
+  })
+
+  return c.json({ data: { id: riesgoId, papelesEliminados: papelIds.length } })
 })
 
 // POST /auditorias/:id/riesgos/sugerir — IA stub: inserta riesgos típicos del sector
@@ -938,24 +1420,38 @@ app.get('/auditorias/:id/riesgos/candidatos', async (c) => {
   const [mat] = await db.select().from(materialidades).where(eq(materialidades.auditoriaId, id))
   const umbral = mat ? Number(mat.materialidadDesempeno || mat.materialidad) : null
 
+  // Misma base de comparación honesta que GET /balance: comparativo real si está
+  // cargado; sin él, el saldo inicial solo en cuentas de balance.
+  const comparativoRows = await db
+    .select()
+    .from(cuentasBalanceComparativo)
+    .where(and(eq(cuentasBalanceComparativo.auditoriaId, id), eq(cuentasBalanceComparativo.nivel, 4)))
+  const compPorCodigo = new Map(comparativoRows.map((r) => [r.codigo, Number(r.saldo)]))
+  const compCargado = comparativoRows.length > 0
+
   const candidatos = cuentas
     .map((ct) => {
       const actual = Number(ct.saldoActual)
-      const anterior = Number(ct.saldoAnterior)
-      const variacionPct = anterior !== 0 ? ((actual - anterior) / Math.abs(anterior)) * 100 : null
+      const base = compCargado
+        ? (compPorCodigo.get(ct.codigo) ?? 0)
+        : esClaseBalance(ct.codigo) ? Number(ct.saldoInicial) : null
+      const variacionPct = base !== null && base !== 0 ? ((actual - base) / Math.abs(base)) * 100 : null
       const significativa = umbral !== null && Math.abs(actual) > umbral
-      const anomalia = (variacionPct !== null && Math.abs(variacionPct) >= UMBRAL_VARIACION_PCT) || (anterior === 0 && actual !== 0)
+      const anomalia =
+        base !== null &&
+        ((variacionPct !== null && Math.abs(variacionPct) >= UMBRAL_VARIACION_PCT) || (base === 0 && actual !== 0))
       return { ct, actual, variacionPct, significativa, anomalia }
     })
     .filter((x) => x.significativa || x.anomalia)
     .map(({ ct, actual, variacionPct, significativa, anomalia }) => {
       const area = areaDesdeCodigo(ct.codigo)
       const nombre = ct.nombre ?? `Cuenta ${ct.codigo}`
+      const refBase = compCargado ? 'frente al mismo corte del año anterior' : 'frente al saldo inicial del período'
       const pct = variacionPct === null ? 'nuevo' : `${variacionPct > 0 ? '+' : ''}${variacionPct.toFixed(0)}%`
       const motivo: 'significativa' | 'anomalia' | 'ambas' = significativa && anomalia ? 'ambas' : anomalia ? 'anomalia' : 'significativa'
       let descripcion: string
-      if (motivo === 'ambas') descripcion = `${nombre} (${ct.codigo}): cuenta significativa con variación inusual de ${pct} frente al período anterior. Posible riesgo de ${ASERCION[area]}.`
-      else if (motivo === 'anomalia') descripcion = `${nombre} (${ct.codigo}): variación inusual de ${pct} frente al período anterior. Posible riesgo de ${ASERCION[area]}.`
+      if (motivo === 'ambas') descripcion = `${nombre} (${ct.codigo}): cuenta significativa con variación inusual de ${pct} ${refBase}. Posible riesgo de ${ASERCION[area]}.`
+      else if (motivo === 'anomalia') descripcion = `${nombre} (${ct.codigo}): variación inusual de ${pct} ${refBase}. Posible riesgo de ${ASERCION[area]}.`
       else descripcion = `${nombre} (${ct.codigo}): saldo significativo de ${copCO(actual)}. Posible riesgo de ${ASERCION[area]}.`
       return {
         codigo: ct.codigo,

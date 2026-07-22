@@ -106,76 +106,96 @@ export function EmpresaInformacion() {
   const ciiuInfo = empresa.ciiu ? infoCiiu(empresa.ciiu) : null
 
   const fields = [
-    { label: 'Razón social', value: empresa.nombre },
+    { label: 'Razón social', value: empresa.nombre, full: true },
     { label: 'NIT', value: empresa.nit },
     { label: 'Ciudad', value: empresa.ciudad || '—' },
     {
       label: 'CIIU',
       value: empresa.ciiu ? `${empresa.ciiu}${ciiuInfo ? ` · ${ciiuInfo.descripcion}` : ''}` : '—',
+      full: true,
     },
-    { label: 'Actividad económica', value: empresa.actividadEconomica || '—' },
+    { label: 'Actividad económica', value: empresa.actividadEconomica || '—', full: true },
     { label: 'Sector económico', value: empresa.sector },
     { label: 'Marco contable', value: MARCO_LABEL[empresa.marcoContable] ?? empresa.marcoContable },
     { label: 'Estado del encargo', value: ESTADO_LABEL[empresa.estadoEncargo] ?? empresa.estadoEncargo },
     {
       label: 'Fecha de registro',
       value: new Date(empresa.createdAt).toLocaleDateString('es-CO', {
-        year: 'numeric', month: 'long', day: 'numeric',
+        year: 'numeric', month: 'short', day: 'numeric',
       }),
     },
   ]
 
   return (
-    <div className="p-8 max-w-2xl space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Información</h1>
-          <p className="text-sm text-gray-500 mt-1">Datos generales del cliente.</p>
-        </div>
-        {canEdit && (
-          <Button variant="secondary" size="sm" className="gap-1.5" onClick={() => setEditOpen(true)}>
-            <Pencil size={13} /> Editar
-          </Button>
-        )}
-      </div>
-
-      <div className="bg-white rounded-xl border border-gray-200 shadow-sm divide-y divide-gray-50">
-        {fields.map((f) => (
-          <div key={f.label} className="flex items-center px-5 py-4 gap-4">
-            <p className="text-sm text-gray-400 w-44 shrink-0">{f.label}</p>
-            <p className="text-sm font-medium text-gray-900">{f.value}</p>
-          </div>
-        ))}
-      </div>
-
-      {/* Archivo permanente — entendimiento del negocio (capa global) */}
+    <div className="p-8 space-y-4">
       <div>
-        <div className="flex items-center justify-between mb-2">
-          <div>
-            <h2 className="text-base font-semibold text-gray-900">Entendimiento del negocio</h2>
-            <p className="text-xs text-gray-500 mt-0.5">
-              Archivo permanente — conocimiento estable que heredan todos los encargos.
-            </p>
+        <h1 className="text-2xl font-bold text-gray-900">Información</h1>
+        <p className="text-sm text-gray-500 mt-1">Datos generales y entendimiento del cliente.</p>
+      </div>
+
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm grid grid-cols-1 lg:grid-cols-2 divide-y lg:divide-y-0 lg:divide-x divide-gray-100">
+        {/* Datos generales */}
+        <section className="p-5">
+          <div className="flex items-center justify-between mb-3.5">
+            <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-400">Datos generales</h2>
+            {canEdit && (
+              <button
+                onClick={() => setEditOpen(true)}
+                title="Editar"
+                className="rounded-md p-1 text-gray-400 hover:bg-gray-100 hover:text-indigo-600 transition-colors"
+              >
+                <Pencil size={13} />
+              </button>
+            )}
           </div>
-          {canEdit && (
-            <Button variant="secondary" size="sm" className="gap-1.5" onClick={() => setArchivoOpen(true)}>
-              <Pencil size={13} /> Editar
-            </Button>
-          )}
-        </div>
-        <div className="bg-white rounded-xl border border-gray-200 shadow-sm divide-y divide-gray-50">
-          {ARCHIVO_CAMPOS.map((f) => {
-            const valor = (empresa[f.key] as string | null) || null
-            return (
-              <div key={f.key} className="px-5 py-4">
-                <p className="text-sm text-gray-400 mb-1">{f.label}</p>
-                <p className={cn('text-sm whitespace-pre-wrap', valor ? 'text-gray-900' : 'text-gray-400 italic')}>
-                  {valor || 'Sin registrar'}
-                </p>
+          <dl className="grid grid-cols-2 xl:grid-cols-3 gap-x-4 gap-y-3">
+            {fields.map((f) => (
+              <div key={f.label} className={f.full ? 'col-span-2 xl:col-span-3' : ''}>
+                <dt className="text-[11px] text-gray-400">{f.label}</dt>
+                <dd className="text-sm font-medium text-gray-900 truncate" title={f.value}>
+                  {f.value}
+                </dd>
               </div>
-            )
-          })}
-        </div>
+            ))}
+          </dl>
+        </section>
+
+        {/* Archivo permanente — entendimiento del negocio (capa global) */}
+        <section className="p-5">
+          <div className="flex items-center justify-between mb-3.5">
+            <h2
+              className="text-xs font-semibold uppercase tracking-wider text-gray-400"
+              title="Archivo permanente — conocimiento estable que heredan todos los encargos"
+            >
+              Entendimiento del negocio
+            </h2>
+            {canEdit && (
+              <button
+                onClick={() => setArchivoOpen(true)}
+                title="Editar"
+                className="rounded-md p-1 text-gray-400 hover:bg-gray-100 hover:text-indigo-600 transition-colors"
+              >
+                <Pencil size={13} />
+              </button>
+            )}
+          </div>
+          <dl className="space-y-3">
+            {ARCHIVO_CAMPOS.map((f) => {
+              const valor = (empresa[f.key] as string | null) || null
+              return (
+                <div key={f.key}>
+                  <dt className="text-[11px] text-gray-400">{f.label}</dt>
+                  <dd
+                    className={cn('text-sm line-clamp-2', valor ? 'text-gray-800' : 'text-gray-400 italic')}
+                    title={valor || undefined}
+                  >
+                    {valor || 'Sin registrar'}
+                  </dd>
+                </div>
+              )
+            })}
+          </dl>
+        </section>
       </div>
 
       {editOpen && (

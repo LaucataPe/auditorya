@@ -1,13 +1,12 @@
 /**
  * STUB DE IA — Sugerencia de riesgos por sector (NIA 315).
  *
- * Por ahora devuelve un catálogo curado de riesgos típicos según el sector
- * económico de la empresa. NO llama a la API de Claude todavía.
+ * Devuelve un catálogo curado de riesgos típicos según el sector económico de
+ * la empresa. Es el fallback estático cuando la IA no está disponible.
  *
- * Cuando se active la fase de IA, reemplazar `sugerirRiesgos` por una llamada
- * a Claude (CLAUDE_MODEL, p. ej. claude-sonnet-4-6) que reciba el sector, el
- * marco contable y los estados financieros, y devuelva el mismo shape
- * (RiesgoSugerido[]). La firma de la función puede mantenerse igual.
+ * Cuando hay IA configurada (OPENROUTER_API_KEY), `routes/ia.ts` llama al LLM
+ * (OPENROUTER_MODEL) con el contexto real del encargo; si no, se usa este
+ * catálogo. Ambos caminos devuelven el mismo shape (RiesgoSugerido[]).
  */
 import type { RiesgoSugerido } from '@auditorya/types'
 

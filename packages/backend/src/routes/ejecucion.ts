@@ -13,6 +13,9 @@ import {
   usuarios,
   riesgos,
   solicitudesPbc,
+  notasRevision,
+  muestras,
+  hallazgos,
 } from '../db/schema'
 import { authMiddleware } from '../middleware/auth'
 import { esSocioResponsable, ERROR_NO_SOCIO_RESPONSABLE } from '../lib/permisos'
@@ -187,6 +190,24 @@ app.post(
       )
     }
 
+    // Anti-duplicado: no crear el mismo papel (mismo título) dos veces para un riesgo.
+    if (body.riesgoId) {
+      const [dup] = await db
+        .select({ id: papelesTrabajo.id })
+        .from(papelesTrabajo)
+        .where(and(
+          eq(papelesTrabajo.auditoriaId, id),
+          eq(papelesTrabajo.riesgoId, body.riesgoId),
+          eq(papelesTrabajo.titulo, body.titulo),
+        ))
+      if (dup) {
+        return c.json(
+          { error: { code: 'PAPEL_DUPLICADO', message: `Ya existe un papel "${body.titulo}" para este riesgo.` } },
+          409,
+        )
+      }
+    }
+
     const [papel] = await db
       .insert(papelesTrabajo)
       .values({
@@ -308,6 +329,51 @@ app.put(
   },
 )
 
+// PATCH /papeles/:papelId/pasos — marca/edita un paso del checklist de la guía.
+// Merge server-side por índice para no pisar el resto del checklist.
+app.patch(
+  '/papeles/:papelId/pasos',
+  zValidator(
+    'json',
+    z.object({
+      indice: z.number().int().min(0),
+      hecho: z.boolean().optional(),
+      nota: z.string().max(500).optional(),
+    }),
+  ),
+  async (c) => {
+    const { firmaId } = c.get('user')
+    const papelId = c.req.param('papelId')
+    const body = c.req.valid('json')
+
+    const row = await cargarPapel(papelId, firmaId)
+    if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Papel de trabajo no encontrado' } }, 404)
+
+    if (row.papel.estado === 'aprobado') {
+      return c.json(
+        { error: { code: 'PAPEL_APROBADO', message: 'Un papel aprobado no puede editarse. Reábrelo primero.' } },
+        409,
+      )
+    }
+
+    const pasos = { ...(row.papel.pasosEstado ?? {}) }
+    const clave = String(body.indice)
+    const actual = pasos[clave] ?? { hecho: false, nota: null }
+    pasos[clave] = {
+      hecho: body.hecho ?? actual.hecho,
+      nota: body.nota !== undefined ? body.nota || null : actual.nota,
+    }
+
+    const [actualizado] = await db
+      .update(papelesTrabajo)
+      .set({ pasosEstado: pasos })
+      .where(eq(papelesTrabajo.id, papelId))
+      .returning()
+
+    return c.json({ data: actualizado })
+  },
+)
+
 // POST /papeles/:papelId/aprobar — Regla: solo el socio responsable
 app.post('/papeles/:papelId/aprobar', async (c) => {
   const user = c.get('user')
@@ -383,8 +449,30 @@ app.delete('/papeles/:papelId', async (c) => {
     )
   }
 
-  await db.delete(evidencias).where(eq(evidencias.papelTrabajoId, papelId))
-  await db.delete(papelesTrabajo).where(eq(papelesTrabajo.id, papelId))
+  // Archivos físicos de la evidencia: se recogen antes para limpiarlos del storage tras el commit.
+  const claves = (
+    await db
+      .select({ key: evidencias.archivoKey })
+      .from(evidencias)
+      .where(eq(evidencias.papelTrabajoId, papelId))
+  )
+    .map((e) => e.key)
+    .filter((k): k is string => !!k)
+
+  // Limpieza de dependencias antes de borrar el papel (evita violar llaves foráneas).
+  await db.transaction(async (tx) => {
+    await tx.delete(solicitudesPbc).where(eq(solicitudesPbc.papelTrabajoId, papelId)) // ref → evidencias
+    await tx.delete(evidencias).where(eq(evidencias.papelTrabajoId, papelId))
+    await tx.delete(notasRevision).where(eq(notasRevision.papelTrabajoId, papelId))
+    await tx.delete(muestras).where(eq(muestras.papelTrabajoId, papelId)) // los ítems caen por cascade
+    // Las tareas y hallazgos se conservan como sueltos (no se pierde el trabajo).
+    await tx.update(tareas).set({ papelTrabajoId: null }).where(eq(tareas.papelTrabajoId, papelId))
+    await tx.update(hallazgos).set({ papelTrabajoId: null }).where(eq(hallazgos.papelTrabajoId, papelId))
+    await tx.delete(papelesTrabajo).where(eq(papelesTrabajo.id, papelId))
+  })
+
+  // Limpieza best-effort de los archivos en disco/S3 (fuera de la transacción).
+  for (const key of claves) await storage.eliminar(key).catch(() => {})
 
   return c.json({ data: { id: papelId } })
 })
@@ -645,6 +733,7 @@ app.post(
       fechaInicio: z.string().datetime().optional().or(z.literal('')),
       vencimiento: z.string().datetime().optional().or(z.literal('')),
       riesgoId: z.string().uuid().optional(),
+      papelTrabajoId: z.string().uuid().optional(),
     }),
   ),
   async (c) => {
@@ -682,6 +771,7 @@ app.post(
         titulo: body.titulo,
         descripcion: body.descripcion ?? null,
         riesgoId: body.riesgoId ?? null,
+        papelTrabajoId: body.papelTrabajoId ?? null,
         asignadoA: body.asignadoA,
         fechaInicio: body.fechaInicio ? new Date(body.fechaInicio) : null,
         vencimiento: body.vencimiento ? new Date(body.vencimiento) : null,
@@ -691,6 +781,23 @@ app.post(
     return c.json({ data: tarea }, 201)
   },
 )
+
+// GET /papeles/:papelId/tareas — asignaciones que cuelgan de un papel
+app.get('/papeles/:papelId/tareas', async (c) => {
+  const { firmaId } = c.get('user')
+  const papelId = c.req.param('papelId')
+
+  const row = await cargarPapel(papelId, firmaId)
+  if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Papel de trabajo no encontrado' } }, 404)
+
+  const lista = await db
+    .select()
+    .from(tareas)
+    .where(eq(tareas.papelTrabajoId, papelId))
+    .orderBy(desc(tareas.createdAt))
+
+  return c.json({ data: lista })
+})
 
 // PUT /tareas/:tareaId
 app.put(
@@ -759,14 +866,14 @@ app.get('/auditorias/:id/riesgos-respuestas', async (c) => {
   const row = await cargarAuditoria(id, firmaId)
   if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Auditoría no encontrada' } }, 404)
 
-  const [ts, ps] = await Promise.all([
-    db.select({ riesgoId: tareas.riesgoId }).from(tareas).where(eq(tareas.auditoriaId, id)),
-    db.select({ riesgoId: papelesTrabajo.riesgoId }).from(papelesTrabajo).where(eq(papelesTrabajo.auditoriaId, id)),
-  ])
+  const ps = await db
+    .select({ riesgoId: papelesTrabajo.riesgoId })
+    .from(papelesTrabajo)
+    .where(eq(papelesTrabajo.auditoriaId, id))
 
-  const mapa: Record<string, { tareas: number; papeles: number }> = {}
-  for (const t of ts) if (t.riesgoId) (mapa[t.riesgoId] ??= { tareas: 0, papeles: 0 }).tareas++
-  for (const p of ps) if (p.riesgoId) (mapa[p.riesgoId] ??= { tareas: 0, papeles: 0 }).papeles++
+  // La respuesta al riesgo son las pruebas (papeles). Las tareas cuelgan del papel.
+  const mapa: Record<string, { papeles: number }> = {}
+  for (const p of ps) if (p.riesgoId) (mapa[p.riesgoId] ??= { papeles: 0 }).papeles++
 
   return c.json({ data: mapa })
 })
@@ -784,12 +891,22 @@ app.get('/riesgos/:riesgoId/respuestas', async (c) => {
     .where(and(eq(riesgos.id, riesgoId), eq(empresas.firmaId, firmaId)))
   if (!own) return c.json({ error: { code: 'NOT_FOUND', message: 'Riesgo no encontrado' } }, 404)
 
-  const [ts, ps] = await Promise.all([
-    db.select().from(tareas).where(eq(tareas.riesgoId, riesgoId)).orderBy(desc(tareas.createdAt)),
-    db.select().from(papelesTrabajo).where(eq(papelesTrabajo.riesgoId, riesgoId)).orderBy(desc(papelesTrabajo.createdAt)),
-  ])
+  const ps = await db
+    .select()
+    .from(papelesTrabajo)
+    .where(eq(papelesTrabajo.riesgoId, riesgoId))
+    .orderBy(desc(papelesTrabajo.createdAt))
 
-  return c.json({ data: { tareas: ts, papeles: ps } })
+  // Conteo de tareas por papel (un papel puede tener varias asignaciones).
+  const tareasRows = await db
+    .select({ papelTrabajoId: tareas.papelTrabajoId })
+    .from(tareas)
+    .where(eq(tareas.riesgoId, riesgoId))
+  const numTareas: Record<string, number> = {}
+  for (const t of tareasRows) if (t.papelTrabajoId) numTareas[t.papelTrabajoId] = (numTareas[t.papelTrabajoId] ?? 0) + 1
+
+  const papeles = ps.map((p) => ({ ...p, numTareas: numTareas[p.id] ?? 0 }))
+  return c.json({ data: { papeles } })
 })
 
 // DELETE /tareas/:tareaId

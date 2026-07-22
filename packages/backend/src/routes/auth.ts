@@ -8,6 +8,7 @@ import { firmas, usuarios } from '../db/schema'
 import { signToken } from '../lib/jwt'
 import { authMiddleware } from '../middleware/auth'
 import { excedeLimite, limpiarLimite } from '../lib/rate-limit'
+import { seedRolesFirma } from '../lib/roles'
 
 const app = new Hono()
 
@@ -52,10 +53,13 @@ app.post(
 
     const [firma] = await db.insert(firmas).values(firmaData).returning()
 
+    // Sembrar los roles de sistema y asignar el rol Socio al usuario fundador.
+    const rolesPorNivel = await seedRolesFirma(firma.id)
+
     const passwordHash = await bcrypt.hash(usuarioData.password, 12)
     const [usuario] = await db
       .insert(usuarios)
-      .values({ ...usuarioData, passwordHash, firmaId: firma.id, rol: 'socio' })
+      .values({ ...usuarioData, passwordHash, firmaId: firma.id, rol: 'socio', rolId: rolesPorNivel.socio })
       .returning()
 
     const token = signToken({ sub: usuario.id, firmaId: firma.id, rol: 'socio' })

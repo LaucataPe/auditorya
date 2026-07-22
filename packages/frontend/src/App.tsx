@@ -20,11 +20,13 @@ import { SuperadminLayout } from './components/superadmin/SuperadminLayout'
 import { SuperadminLogin } from './pages/superadmin/SuperadminLogin'
 import { SuperadminFirmas } from './pages/superadmin/SuperadminFirmas'
 import { SuperadminUsuarios } from './pages/superadmin/SuperadminUsuarios'
+import { SuperadminPermisos } from './pages/superadmin/SuperadminPermisos'
 
 // Empresa panel pages
 import { EmpresaDashboard } from './pages/empresa/EmpresaDashboard'
 import { EmpresaEncargos } from './pages/empresa/EmpresaEncargos'
 import { EmpresaAuditoria } from './pages/empresa/EmpresaAuditoria'
+import { EmpresaPapel } from './pages/empresa/EmpresaPapel'
 import { EmpresaEvaluacion } from './pages/empresa/EmpresaEvaluacion'
 import { EmpresaDocumentos } from './pages/empresa/EmpresaDocumentos'
 import { EmpresaInformacion } from './pages/empresa/EmpresaInformacion'
@@ -78,6 +80,7 @@ export default function App() {
         <Route path="dashboard" element={<EmpresaDashboard />} />
         <Route path="encargos" element={<EmpresaEncargos />} />
         <Route path="encargos/:auditoriaId" element={<EmpresaAuditoria />} />
+        <Route path="encargos/:auditoriaId/papeles/:papelId" element={<EmpresaPapel />} />
         <Route path="evaluacion" element={<EmpresaEvaluacion />} />
         <Route path="documentos" element={<EmpresaDocumentos />} />
         <Route path="informacion" element={<EmpresaInformacion />} />
@@ -89,6 +92,7 @@ export default function App() {
         <Route index element={<Navigate to="firmas" replace />} />
         <Route path="firmas" element={<SuperadminFirmas />} />
         <Route path="usuarios" element={<SuperadminUsuarios />} />
+        <Route path="permisos" element={<SuperadminPermisos />} />
       </Route>
 
       <Route path="*" element={<Navigate to="/login" replace />} />

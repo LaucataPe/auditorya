@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
-import { and, eq, inArray } from 'drizzle-orm'
+import { and, desc, eq, inArray } from 'drizzle-orm'
 import { db } from '../db/client'
 import {
   auditorias,
@@ -10,6 +10,7 @@ import {
   informes,
   controlesCoso,
   papelesTrabajo,
+  hallazgos,
   hallazgosAI,
   entendimientoPeriodo,
   materialidades,
@@ -139,7 +140,8 @@ app.post(
     const [firma] = await db.select().from(firmas).where(eq(firmas.id, firmaId))
 
     let deficienciasCoso: { titulo: string; calificacion: string; observaciones: string | null }[] = []
-    let hallazgos: { area: string; titulo: string; hallazgos: string | null }[] = []
+    let hallazgosNarrativa: { area: string; titulo: string; hallazgos: string | null }[] = []
+    let deficienciasHallazgos: { area: string; condicion: string; criterio: string | null; causa: string | null; efecto: string | null; recomendacion: string | null; severidad: string }[] = []
     let hallazgosAIData: { titulo: string; nivelRiesgo: string; condicion: string; criterio: string; causa: string; efecto: string; recomendacion: string }[] = []
 
     // Datos de planeación para el memo (NIA 300)
@@ -172,9 +174,26 @@ app.post(
         .select()
         .from(papelesTrabajo)
         .where(eq(papelesTrabajo.auditoriaId, id))
-      hallazgos = papeles
+      hallazgosNarrativa = papeles
         .filter((p) => (p.hallazgos ?? '').trim().length > 0)
         .map((p) => ({ area: AREA_LABEL[p.area] ?? p.area, titulo: p.titulo, hallazgos: p.hallazgos }))
+
+      // Hallazgos estructurados tipo "deficiencia de control" → carta NIA 265.
+      // Las incorrecciones no entran aquí (van a la hoja de ajustes / dictamen).
+      const deficiencias = await db
+        .select()
+        .from(hallazgos)
+        .where(and(eq(hallazgos.auditoriaId, id), eq(hallazgos.tipo, 'deficiencia')))
+        .orderBy(desc(hallazgos.createdAt))
+      deficienciasHallazgos = deficiencias.map((h) => ({
+        area: AREA_LABEL[h.area] ?? h.area,
+        condicion: h.descripcion,
+        criterio: h.criterio,
+        causa: h.causa,
+        efecto: h.efecto,
+        recomendacion: h.recomendacion,
+        severidad: h.severidad,
+      }))
     }
 
     if (tipo === 'informe_ai') {
@@ -247,10 +266,11 @@ app.post(
       empresaNombre: row.empresa.nombre,
       empresaNit: row.empresa.nit,
       marcoContable: row.empresa.marcoContable,
-      periodo: row.auditoria.periodo,
+      periodo: String(new Date(row.auditoria.fechaFin + 'T00:00:00').getFullYear()),
       tipoOpinion: tipo === 'dictamen' ? tipoOpinion ?? 'limpia' : null,
       deficienciasCoso,
-      hallazgos,
+      hallazgos: hallazgosNarrativa,
+      deficienciasHallazgos,
       hallazgosAI: hallazgosAIData,
       ...memoData,
     })

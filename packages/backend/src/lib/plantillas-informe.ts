@@ -23,6 +23,16 @@ export type ContextoInforme = {
   tipoOpinion?: TipoOpinion | null
   deficienciasCoso?: { titulo: string; calificacion: string; observaciones: string | null }[]
   hallazgos?: { area: string; titulo: string; hallazgos: string | null }[]
+  // Hallazgos estructurados tipo deficiencia de control (condición/criterio/causa/efecto).
+  deficienciasHallazgos?: {
+    area: string
+    condicion: string
+    criterio: string | null
+    causa: string | null
+    efecto: string | null
+    recomendacion: string | null
+    severidad: string
+  }[]
   hallazgosAI?: {
     titulo: string
     nivelRiesgo: string
@@ -179,11 +189,23 @@ function dictamen(ctx: ContextoInforme): Record<string, string> {
   }
 }
 
+const SEVERIDAD_HALLAZGO_LABEL: Record<string, string> = { alta: 'Alta', media: 'Media', baja: 'Baja' }
+
 function cartaControlInterno(ctx: ContextoInforme): Record<string, string> {
   const items: string[] = []
   for (const d of ctx.deficienciasCoso ?? []) {
     const cal = d.calificacion === 'deficiente' ? 'Deficiente' : 'Con deficiencias'
     items.push(`• ${d.titulo} (${cal}): ${d.observaciones?.trim() || 'Ver detalle en papeles de trabajo.'}`)
+  }
+  // Hallazgos estructurados: se comunican con sus atributos (condición/criterio/causa/efecto + recomendación).
+  for (const h of ctx.deficienciasHallazgos ?? []) {
+    const sev = SEVERIDAD_HALLAZGO_LABEL[h.severidad] ?? h.severidad
+    const lineas = [`• [${h.area} · Severidad ${sev}] ${h.condicion.trim()}`]
+    if (h.criterio?.trim()) lineas.push(`   Criterio: ${h.criterio.trim()}`)
+    if (h.causa?.trim()) lineas.push(`   Causa: ${h.causa.trim()}`)
+    if (h.efecto?.trim()) lineas.push(`   Efecto: ${h.efecto.trim()}`)
+    if (h.recomendacion?.trim()) lineas.push(`   Recomendación: ${h.recomendacion.trim()}`)
+    items.push(lineas.join('\n'))
   }
   for (const h of ctx.hallazgos ?? []) {
     if (h.hallazgos?.trim()) items.push(`• [${h.area}] ${h.titulo}: ${h.hallazgos.trim()}`)

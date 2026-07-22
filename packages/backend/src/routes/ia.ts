@@ -1,5 +1,5 @@
 /**
- * Funciones de IA (Claude) sobre una auditoría:
+ * Funciones de IA (LLM vía OpenRouter) sobre una auditoría:
  *  - GET  /ia/estado                              → disponibilidad
  *  - POST /auditorias/:id/ia/sugerir-riesgos      → riesgos sugeridos con contexto real
  *  - POST /auditorias/:id/ia/analisis-balance     → lectura analítica del balance (NIA 520)
@@ -16,10 +16,11 @@ import { and, eq, isNull, lte } from 'drizzle-orm'
 import { db } from '../db/client'
 import {
   auditorias, empresas, materialidades, riesgos, papelesTrabajo,
-  cuentasBalance, entendimientoPeriodo,
+  cuentasBalance, cuentasBalanceComparativo, balanceMeta, entendimientoPeriodo,
 } from '../db/schema'
+import { esClaseBalance } from '@auditorya/types'
 import { authMiddleware } from '../middleware/auth'
-import { iaDisponible, completarJSON, completarTexto, MODELO, type MensajeChat } from '../lib/claude'
+import { iaDisponible, completarJSON, completarTexto, MODELO, type MensajeChat } from '../lib/llm'
 import { sugerirRiesgos } from '../lib/ia'
 import { registrarEvento } from '../lib/eventos'
 import type { JwtPayload } from '../lib/jwt'
@@ -35,7 +36,7 @@ const AREAS = [
 
 const ERROR_IA = {
   code: 'IA_NO_DISPONIBLE',
-  message: 'Las funciones de IA no están disponibles: configura ANTHROPIC_API_KEY en el backend',
+  message: 'Las funciones de IA no están disponibles: configura OPENROUTER_API_KEY en el backend',
 } as const
 
 // ─── Helpers de contexto ─────────────────────────────────────────────────────
@@ -62,30 +63,52 @@ async function resumenBalance(auditoriaId: string): Promise<string> {
   const [mat] = await db.select().from(materialidades).where(eq(materialidades.auditoriaId, auditoriaId))
   const umbral = mat ? Number(mat.materialidadDesempeno || mat.materialidad) : null
 
+  // Misma base de comparación que el análisis del balance: comparativo real del
+  // año anterior si está cargado; sin él, el saldo inicial solo sirve en cuentas
+  // de balance (en resultado no hay base y no se reporta variación).
+  const comparativoRows = await db
+    .select()
+    .from(cuentasBalanceComparativo)
+    .where(and(eq(cuentasBalanceComparativo.auditoriaId, auditoriaId), lte(cuentasBalanceComparativo.nivel, 4)))
+  const compPorCodigo = new Map(comparativoRows.map((r) => [r.codigo, Number(r.saldo)]))
+  const compCargado = comparativoRows.length > 0
+  const [meta] = await db.select().from(balanceMeta).where(eq(balanceMeta.auditoriaId, auditoriaId))
+
   const filas = cuentas
     .map((ct) => {
       const actual = Number(ct.saldoActual)
-      const anterior = Number(ct.saldoAnterior)
-      const varPct = anterior !== 0 ? ((actual - anterior) / Math.abs(anterior)) * 100 : null
-      return { ct, actual, anterior, varPct }
+      const base = compCargado
+        ? (compPorCodigo.get(ct.codigo) ?? 0)
+        : esClaseBalance(ct.codigo) ? Number(ct.saldoInicial) : null
+      const varPct = base !== null && base !== 0 ? ((actual - base) / Math.abs(base)) * 100 : null
+      return { ct, actual, base, varPct }
     })
     // Prioriza cuentas relevantes: significativas o con variación fuerte.
-    .filter(({ actual, anterior, varPct }) =>
+    .filter(({ actual, base, varPct }) =>
       (umbral !== null && Math.abs(actual) > umbral) ||
       (varPct !== null && Math.abs(varPct) >= 30) ||
-      (anterior === 0 && actual !== 0),
+      (base === 0 && actual !== 0),
     )
     .sort((a, b) => Math.abs(b.actual) - Math.abs(a.actual))
     .slice(0, 40)
-    .map(({ ct, actual, anterior, varPct }) =>
-      `${ct.codigo} ${ct.nombre ?? ''}: actual ${Math.round(actual).toLocaleString('es-CO')}, anterior ${Math.round(anterior).toLocaleString('es-CO')}${varPct !== null ? `, variación ${varPct.toFixed(0)}%` : ' (cuenta nueva)'}`,
-    )
+    .map(({ ct, actual, base, varPct }) => {
+      const cmp = base !== null
+        ? `, base ${Math.round(base).toLocaleString('es-CO')}${varPct !== null ? `, variación ${varPct.toFixed(0)}%` : base === 0 && actual !== 0 ? ' (cuenta nueva)' : ''}`
+        : ' (sin base de comparación)'
+      return `${ct.codigo} ${ct.nombre ?? ''}: actual ${Math.round(actual).toLocaleString('es-CO')}${cmp}`
+    })
 
   const encabezado = umbral !== null
     ? `Materialidad de desempeño: ${Math.round(umbral).toLocaleString('es-CO')} COP.`
     : 'Materialidad aún no calculada.'
+  const periodo = meta?.corteDesde || meta?.corteHasta
+    ? `Período del balance: ${meta?.corteDesde ?? '?'} a ${meta?.corteHasta ?? '?'}.`
+    : 'Período del balance no declarado.'
+  const notaBase = compCargado
+    ? 'La "base" de cada cuenta es el saldo al mismo corte del año anterior (balance comparativo).'
+    : 'No hay balance comparativo del año anterior: la "base" es el saldo inicial del período y solo aplica a cuentas de balance (activo/pasivo/patrimonio); las cuentas de resultado no traen variación.'
 
-  return `${encabezado}\nCuentas destacadas del balance de prueba (PUC Colombia, saldos en COP):\n${filas.join('\n')}`
+  return `${encabezado}\n${periodo}\n${notaBase}\nCuentas destacadas del balance de prueba (PUC Colombia, saldos en COP):\n${filas.join('\n')}`
 }
 
 async function contextoEncargo(auditoriaId: string, firmaId: string) {
@@ -101,7 +124,7 @@ async function contextoEncargo(auditoriaId: string, firmaId: string) {
   const lineas = [
     `Empresa: ${empresa.nombre} (NIT ${empresa.nit}). Sector: ${empresa.sector}.`,
     empresa.actividadEconomica ? `Actividad económica: ${empresa.actividadEconomica}.` : '',
-    `Marco contable: ${empresa.marcoContable}. Período auditado: ${auditoria.periodo}.`,
+    `Marco contable: ${empresa.marcoContable}. Período auditado: ${auditoria.fechaInicio} a ${auditoria.fechaFin}.`,
     `Tipo de servicio: ${auditoria.tipoServicio === 'auditoria_interna' ? 'auditoría interna (IPPF)' : 'revisoría fiscal / auditoría externa (NIA)'}.`,
     empresa.modeloNegocio ? `Modelo de negocio: ${empresa.modeloNegocio}` : '',
     empresa.entornoRegulatorio ? `Entorno regulatorio: ${empresa.entornoRegulatorio}` : '',
@@ -311,7 +334,7 @@ app.post(
         role: 'user',
         content: `Redacta ${ETIQUETA[campo]} para este papel de trabajo (NIA 230). Devuelve solo el texto listo para pegar, sin encabezados ni comentarios.
 
-Empresa: ${row.empresa.nombre} — sector ${row.empresa.sector}, marco ${row.empresa.marcoContable}, período ${row.auditoria.periodo}.
+Empresa: ${row.empresa.nombre} — sector ${row.empresa.sector}, marco ${row.empresa.marcoContable}, período ${row.auditoria.fechaInicio} a ${row.auditoria.fechaFin}.
 Papel de trabajo: "${row.papel.titulo}" — área: ${row.papel.area}.
 ${riesgoTexto}
 ${row.papel.procedimiento && campo !== 'procedimiento' ? `Procedimiento ya documentado: ${row.papel.procedimiento}` : ''}

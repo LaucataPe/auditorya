@@ -36,7 +36,7 @@ export function SuperadminUsuarios() {
   const totalUsuarios = allUsuarios.reduce((s, f) => s + f.usuarios.length, 0)
 
   return (
-    <div className="p-8 max-w-4xl space-y-6">
+    <div className="p-8 space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Usuarios del sistema</h1>
         <p className="text-sm text-gray-500 mt-1">{totalUsuarios} usuarios en {firmas.length} firmas</p>

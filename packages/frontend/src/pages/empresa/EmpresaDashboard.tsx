@@ -105,7 +105,7 @@ export function EmpresaDashboard() {
   const encargoRechazado = empresa.estadoEncargo === 'rechazado'
 
   return (
-    <div className="p-8 space-y-7 max-w-6xl">
+    <div className="p-8 space-y-7">
       {/* Header */}
       <div>
         <p className="text-xs font-medium text-indigo-500 uppercase tracking-wide mb-1">

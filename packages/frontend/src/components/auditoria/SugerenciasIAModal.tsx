@@ -41,7 +41,7 @@ const NIVEL_BADGE: Record<Nivel, string> = {
 }
 
 /**
- * Sugerencias de riesgos (NIA 315) generadas por Claude con el contexto real
+ * Sugerencias de riesgos (NIA 315) generadas por IA con el contexto real
  * del encargo (sector, entendimiento, balance). El auditor revisa y elige
  * cuáles entran a la matriz — la IA propone, el auditor decide.
  */

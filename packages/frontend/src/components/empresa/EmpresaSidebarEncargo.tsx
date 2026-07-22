@@ -1,7 +1,7 @@
 import { useState } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useMatch, useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { ArrowLeft, Check, CircleDot, Circle, Lock, Minus, LayoutDashboard, ChevronDown } from 'lucide-react'
+import { ArrowLeft, Check, CircleDot, Circle, Lock, LogOut, Minus, LayoutDashboard, ChevronDown } from 'lucide-react'
 import { construirGuia, type SignalsProgreso } from '@auditorya/types'
 import {
   tabsPorServicio, FASES_ORDEN, TIPO_LABEL, SERVICIO_LABEL,
@@ -10,12 +10,14 @@ import {
 import { estadoPaso } from '../../lib/progreso-pasos'
 import { api } from '../../lib/api'
 import { cn } from '../../lib/cn'
+import { useAuthStore } from '../../store/auth.store'
 
 type Empresa = { id: string; nombre: string }
 
 type Auditoria = {
   id: string
-  periodo: string
+  fechaInicio: string
+  fechaFin: string
   tipoServicio: string
   tipo: string | null
   materialidadAprobada: boolean
@@ -24,6 +26,12 @@ type Auditoria = {
 export function EmpresaSidebarEncargo({ empresa, auditoriaId }: { empresa: Empresa; auditoriaId: string }) {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
+  const { logout } = useAuthStore()
+
+  async function handleLogout() {
+    await logout()
+    navigate('/login')
+  }
 
   const { data: auditoria } = useQuery<Auditoria>({
     queryKey: ['auditoria', auditoriaId],
@@ -42,14 +50,24 @@ export function EmpresaSidebarEncargo({ empresa, auditoriaId }: { empresa: Empre
   const tabs = tabsPorServicio(auditoria?.tipoServicio)
   const materialidadAprobada = auditoria?.materialidadAprobada ?? false
 
+  // Dentro de un papel de trabajo el paso activo es "papeles" y navegar
+  // a otro paso implica volver a la página del encargo.
+  const enPapel = !!useMatch('/empresas/:id/encargos/:auditoriaId/papeles/:papelId')
+
   const pasoParam = searchParams.get('paso') as SubTab | null
-  const pasoActivo: SubTab = pasoParam === 'resumen'
-    ? 'resumen'
-    : tabs.find((t) => t.id === pasoParam) ? pasoParam! : 'resumen'
+  const pasoActivo: SubTab = enPapel
+    ? 'papeles'
+    : pasoParam === 'resumen'
+      ? 'resumen'
+      : tabs.find((t) => t.id === pasoParam) ? pasoParam! : 'resumen'
 
   const guia = signals ? construirGuia(signals) : null
 
   const irA = (paso: SubTab) => {
+    if (enPapel) {
+      navigate(`/empresas/${empresa.id}/encargos/${auditoriaId}?paso=${paso}`)
+      return
+    }
     const next = new URLSearchParams(searchParams)
     next.set('paso', paso)
     setSearchParams(next, { replace: true })
@@ -91,7 +109,7 @@ export function EmpresaSidebarEncargo({ empresa, auditoriaId }: { empresa: Empre
       <div className="px-4 py-4 border-b border-gray-100">
         <p className="text-sm font-semibold text-gray-900 leading-tight">{titulo}</p>
         <p className="text-xs text-gray-400 mt-0.5 truncate">
-          {empresa.nombre}{auditoria ? ` · ${auditoria.periodo}` : ''}
+          {empresa.nombre}{auditoria ? ` · ${new Date(auditoria.fechaInicio + 'T00:00:00').getFullYear()}` : ''}
         </p>
       </div>
 
@@ -199,6 +217,16 @@ export function EmpresaSidebarEncargo({ empresa, auditoriaId }: { empresa: Empre
           </div>
         </div>
       )}
+
+      {/* Cerrar sesión */}
+      <div className="border-t border-gray-100 px-4 py-3">
+        <button
+          onClick={handleLogout}
+          className="flex items-center gap-2 text-xs text-gray-400 hover:text-red-500 transition-colors"
+        >
+          <LogOut size={13} /> Cerrar sesión
+        </button>
+      </div>
     </aside>
   )
 }

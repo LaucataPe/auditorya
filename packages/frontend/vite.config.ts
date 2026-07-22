@@ -13,4 +13,18 @@ export default defineConfig({
       },
     },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        // Separa las librerías estables en chunks propios: bundle de entrada más liviano
+        // y mejor caché (el vendor cambia poco entre despliegues). `docx` sigue en su
+        // chunk perezoso (import dinámico), no entra aquí.
+        manualChunks: {
+          'react-vendor': ['react', 'react-dom', 'react-router-dom'],
+          'data-vendor': ['@tanstack/react-query', 'zustand'],
+          icons: ['lucide-react'],
+        },
+      },
+    },
+  },
 })

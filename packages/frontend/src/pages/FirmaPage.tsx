@@ -8,6 +8,7 @@ import { Input } from '../components/ui/Input'
 import { Select } from '../components/ui/Select'
 import { Modal } from '../components/ui/Modal'
 import { CalidadTab } from '../components/firma/CalidadTab'
+import { RolesTab } from '../components/firma/RolesTab'
 import { cn } from '../lib/cn'
 
 type Miembro = {
@@ -15,10 +16,18 @@ type Miembro = {
   nombre: string
   email: string
   rol: string
+  rolId: string | null
+  rolNombre: string | null
   createdAt: string
 }
 
-const tabs = ['Información', 'Equipo', 'Control de calidad'] as const
+type RolFirma = {
+  id: string
+  nombre: string
+  nivel: string
+}
+
+const tabs = ['Información', 'Equipo', 'Roles', 'Control de calidad'] as const
 type Tab = (typeof tabs)[number]
 
 const ROL_LABEL: Record<string, string> = {
@@ -40,7 +49,7 @@ export function FirmaPage() {
   const { firma } = useAuthStore()
 
   return (
-    <div className="p-8 max-w-3xl space-y-6">
+    <div className="p-8 space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Mi Firma</h1>
         <p className="text-gray-500 mt-1 text-sm">Gestiona la información, equipo y calidad de la firma.</p>
@@ -79,6 +88,7 @@ export function FirmaPage() {
 
       {activeTab === 'Información' && <InfoTab />}
       {activeTab === 'Equipo' && <EquipoTab />}
+      {activeTab === 'Roles' && <RolesTab />}
       {activeTab === 'Control de calidad' && <CalidadTab />}
     </div>
   )
@@ -242,8 +252,13 @@ function EquipoTab() {
     queryFn: () => api.get<Miembro[]>('/firmas/mia/usuarios'),
   })
 
+  const { data: roles = [] } = useQuery<RolFirma[]>({
+    queryKey: ['roles'],
+    queryFn: () => api.get<RolFirma[]>('/firmas/mia/roles'),
+  })
+
   const addMutation = useMutation({
-    mutationFn: (body: { nombre: string; email: string; password: string; rol: string }) =>
+    mutationFn: (body: { nombre: string; email: string; password: string; rolId: string }) =>
       api.post('/firmas/mia/usuarios', body),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['equipo'] })
@@ -252,7 +267,7 @@ function EquipoTab() {
   })
 
   const editMutation = useMutation({
-    mutationFn: ({ id, body }: { id: string; body: { nombre: string; rol: string } }) =>
+    mutationFn: ({ id, body }: { id: string; body: { nombre: string; rolId: string } }) =>
       api.put(`/firmas/mia/usuarios/${id}`, body),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['equipo'] })
@@ -296,8 +311,8 @@ function EquipoTab() {
               <div className="flex items-center gap-3">
                 <div className="flex items-center gap-1.5">
                   <UserCheck size={13} className="text-indigo-500" />
-                  <span className={cn('text-xs font-medium px-2 py-0.5 rounded-full capitalize', ROL_BADGE[m.rol] ?? 'bg-gray-100 text-gray-600')}>
-                    {ROL_LABEL[m.rol] ?? m.rol}
+                  <span className={cn('text-xs font-medium px-2 py-0.5 rounded-full', ROL_BADGE[m.rol] ?? 'bg-gray-100 text-gray-600')}>
+                    {m.rolNombre ?? ROL_LABEL[m.rol] ?? m.rol}
                   </span>
                 </div>
                 {canManage && m.id !== user?.id && (
@@ -317,6 +332,7 @@ function EquipoTab() {
 
       <AnadirMiembroModal
         open={addOpen}
+        roles={roles}
         onClose={() => setAddOpen(false)}
         onSubmit={(data) => addMutation.mutate(data)}
         loading={addMutation.isPending}
@@ -326,6 +342,7 @@ function EquipoTab() {
       {editTarget && (
         <EditarMiembroModal
           miembro={editTarget}
+          roles={roles}
           onClose={() => setEditTarget(null)}
           onSubmit={(body) => editMutation.mutate({ id: editTarget.id, body })}
           loading={editMutation.isPending}
@@ -337,20 +354,22 @@ function EquipoTab() {
 }
 
 function EditarMiembroModal({
-  miembro, onClose, onSubmit, loading, error,
+  miembro, roles, onClose, onSubmit, loading, error,
 }: {
   miembro: Miembro
+  roles: RolFirma[]
   onClose: () => void
-  onSubmit: (data: { nombre: string; rol: string }) => void
+  onSubmit: (data: { nombre: string; rolId: string }) => void
   loading: boolean
   error: string | null
 }) {
-  const [form, setForm] = useState({ nombre: miembro.nombre, rol: miembro.rol })
+  const [form, setForm] = useState({ nombre: miembro.nombre, rolId: miembro.rolId ?? roles[0]?.id ?? '' })
   const [nombreError, setNombreError] = useState<string | null>(null)
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (!form.nombre.trim()) { setNombreError('El nombre es requerido'); return }
+    if (!form.rolId) return
     setNombreError(null)
     onSubmit(form)
   }
@@ -375,13 +394,9 @@ function EditarMiembroModal({
         <Select
           id="e-rol"
           label="Rol"
-          value={form.rol}
-          onChange={(e) => setForm({ ...form, rol: e.target.value })}
-          options={[
-            { value: 'gerente', label: 'Gerente' },
-            { value: 'senior', label: 'Senior' },
-            { value: 'asistente', label: 'Asistente' },
-          ]}
+          value={form.rolId}
+          onChange={(e) => setForm({ ...form, rolId: e.target.value })}
+          options={roles.map((r) => ({ value: r.id, label: r.nombre }))}
         />
 
         {error && (
@@ -398,16 +413,19 @@ function EditarMiembroModal({
 }
 
 function AnadirMiembroModal({
-  open, onClose, onSubmit, loading, error,
+  open, roles, onClose, onSubmit, loading, error,
 }: {
   open: boolean
+  roles: RolFirma[]
   onClose: () => void
-  onSubmit: (data: { nombre: string; email: string; password: string; rol: string }) => void
+  onSubmit: (data: { nombre: string; email: string; password: string; rolId: string }) => void
   loading: boolean
   error: string | null
 }) {
-  const [form, setForm] = useState({ nombre: '', email: '', password: '', rol: 'asistente' })
+  const [form, setForm] = useState({ nombre: '', email: '', password: '', rolId: '' })
   const [errors, setErrors] = useState<Record<string, string>>({})
+
+  const rolId = form.rolId || roles[0]?.id || ''
 
   function validate() {
     const next: Record<string, string> = {}
@@ -415,6 +433,7 @@ function AnadirMiembroModal({
     if (!form.email.trim()) next.email = 'El correo es requerido'
     else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) next.email = 'Ingresa un correo válido'
     if (form.password.length < 8) next.password = 'La contraseña debe tener al menos 8 caracteres'
+    if (!rolId) next.rol = 'Selecciona un rol'
     return next
   }
 
@@ -423,7 +442,7 @@ function AnadirMiembroModal({
     const next = validate()
     if (Object.keys(next).length > 0) { setErrors(next); return }
     setErrors({})
-    onSubmit(form)
+    onSubmit({ ...form, rolId })
   }
 
   function clearError(field: string) {
@@ -465,17 +484,16 @@ function AnadirMiembroModal({
           />
           {errors.password && <p className="text-xs text-red-600">{errors.password}</p>}
         </div>
-        <Select
-          id="m-rol"
-          label="Rol"
-          value={form.rol}
-          onChange={(e) => setForm({ ...form, rol: e.target.value })}
-          options={[
-            { value: 'gerente', label: 'Gerente' },
-            { value: 'senior', label: 'Senior' },
-            { value: 'asistente', label: 'Asistente' },
-          ]}
-        />
+        <div className="space-y-1">
+          <Select
+            id="m-rol"
+            label="Rol"
+            value={rolId}
+            onChange={(e) => { setForm({ ...form, rolId: e.target.value }); clearError('rol') }}
+            options={roles.map((r) => ({ value: r.id, label: r.nombre }))}
+          />
+          {errors.rol && <p className="text-xs text-red-600">{errors.rol}</p>}
+        </div>
 
         {error && (
           <p className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{error}</p>

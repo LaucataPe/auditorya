@@ -1,12 +1,13 @@
 import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
-import { eq, sql } from 'drizzle-orm'
+import { asc, eq, sql } from 'drizzle-orm'
 import bcrypt from 'bcryptjs'
 import { db } from '../db/client'
-import { firmas, usuarios } from '../db/schema'
+import { firmas, usuarios, permisos } from '../db/schema'
 import { signToken } from '../lib/jwt'
 import { superadminMiddleware } from '../middleware/superadmin'
+import { seedRolesFirma } from '../lib/roles'
 import type { JwtPayload } from '../lib/jwt'
 
 const app = new Hono<{ Variables: { user: JwtPayload } }>()
@@ -87,10 +88,11 @@ app.post(
     }
 
     const [firma] = await db.insert(firmas).values(firmaData).returning()
+    const rolesPorNivel = await seedRolesFirma(firma.id)
     const passwordHash = await bcrypt.hash(usuarioData.password, 12)
     const [usuario] = await db
       .insert(usuarios)
-      .values({ ...usuarioData, passwordHash, firmaId: firma.id, rol: 'socio' })
+      .values({ ...usuarioData, passwordHash, firmaId: firma.id, rol: 'socio', rolId: rolesPorNivel.socio })
       .returning({ id: usuarios.id, nombre: usuarios.nombre, email: usuarios.email, rol: usuarios.rol, createdAt: usuarios.createdAt })
 
     return c.json({ data: { firma, usuario } }, 201)
@@ -105,6 +107,78 @@ app.get('/firmas/:id/usuarios', superadminMiddleware, async (c) => {
     .from(usuarios)
     .where(eq(usuarios.firmaId, firmaId))
   return c.json({ data: miembros })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Catálogo global de permisos (CRUD del superadmin). Un permiso nuevo solo surte
+// efecto real si el backend tiene un gate que lo verifica; los sembrados sí.
+// ─────────────────────────────────────────────────────────────────────────────
+const CLAVE_RE = /^[a-z][a-z0-9]*(\.[a-z][a-z0-9]*)+$/
+
+// GET /superadmin/permisos
+app.get('/permisos', superadminMiddleware, async (c) => {
+  const filas = await db.select().from(permisos).orderBy(asc(permisos.orden), asc(permisos.clave))
+  return c.json({ data: filas })
+})
+
+// POST /superadmin/permisos
+app.post(
+  '/permisos',
+  superadminMiddleware,
+  zValidator(
+    'json',
+    z.object({
+      clave: z.string().regex(CLAVE_RE, 'Formato: recurso.accion (minúsculas, p. ej. "empresa.crear")'),
+      grupo: z.string().min(2),
+      label: z.string().min(2),
+      descripcion: z.string().default(''),
+      orden: z.number().int().default(0),
+    }),
+  ),
+  async (c) => {
+    const body = c.req.valid('json')
+    const [existe] = await db.select({ clave: permisos.clave }).from(permisos).where(eq(permisos.clave, body.clave))
+    if (existe) {
+      return c.json({ error: { code: 'CLAVE_DUPLICADA', message: 'Ya existe un permiso con esa clave' } }, 409)
+    }
+    const [nuevo] = await db.insert(permisos).values(body).returning()
+    return c.json({ data: nuevo }, 201)
+  },
+)
+
+// PUT /superadmin/permisos/:clave  (la clave es inmutable)
+app.put(
+  '/permisos/:clave',
+  superadminMiddleware,
+  zValidator(
+    'json',
+    z.object({
+      grupo: z.string().min(2).optional(),
+      label: z.string().min(2).optional(),
+      descripcion: z.string().optional(),
+      activo: z.boolean().optional(),
+      orden: z.number().int().optional(),
+    }),
+  ),
+  async (c) => {
+    const clave = c.req.param('clave')
+    const body = c.req.valid('json')
+    const [actualizado] = await db.update(permisos).set(body).where(eq(permisos.clave, clave)).returning()
+    if (!actualizado) {
+      return c.json({ error: { code: 'NOT_FOUND', message: 'Permiso no encontrado' } }, 404)
+    }
+    return c.json({ data: actualizado })
+  },
+)
+
+// DELETE /superadmin/permisos/:clave  (cascada: lo remueve de todos los roles)
+app.delete('/permisos/:clave', superadminMiddleware, async (c) => {
+  const clave = c.req.param('clave')
+  const [borrado] = await db.delete(permisos).where(eq(permisos.clave, clave)).returning({ clave: permisos.clave })
+  if (!borrado) {
+    return c.json({ error: { code: 'NOT_FOUND', message: 'Permiso no encontrado' } }, 404)
+  }
+  return c.json({ data: { clave: borrado.clave } })
 })
 
 export default app

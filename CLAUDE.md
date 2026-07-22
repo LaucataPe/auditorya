@@ -18,9 +18,11 @@ Software de auditoría financiera externa SaaS para firmas auditoras colombianas
 - BullMQ + Redis (jobs en background para IA)
 - JWT + cookies httpOnly
 
-**IA** — Claude API (`claude-sonnet-4-6`) vía `lib/claude.ts`. Diseño "real con fallback": si no hay
-`ANTHROPIC_API_KEY`, `GET /ia/estado` devuelve `disponible: false`, el frontend oculta las funciones de IA
-y la sugerencia de riesgos cae al catálogo estático por sector (`lib/ia.ts`). Endpoints de IA en `routes/ia.ts`:
+**IA** — LLM vía OpenRouter (`OPENROUTER_MODEL`, p. ej. `anthropic/claude-sonnet-4.5`) en `lib/llm.ts`.
+OpenRouter es compatible con la API de OpenAI (Chat Completions); se llama directo con `fetch`, sin SDK.
+Diseño "real con fallback": si no hay `OPENROUTER_API_KEY`, `GET /ia/estado` devuelve `disponible: false`,
+el frontend oculta las funciones de IA y la sugerencia de riesgos cae al catálogo estático por sector
+(`lib/ia.ts`). Endpoints de IA en `routes/ia.ts`:
 sugerir riesgos con contexto real (sector + entendimiento + balance), análisis analítico del balance (NIA 520),
 asistente NIA conversacional por encargo, y redacción de campos de papeles de trabajo.
 
@@ -52,8 +54,10 @@ pnpm test                             # vitest en types y backend (lógica pura)
 DATABASE_URL=postgresql://user:pass@localhost:5432/auditorya
 REDIS_URL=redis://localhost:6379
 JWT_SECRET=...
-ANTHROPIC_API_KEY=...
-CLAUDE_MODEL=claude-sonnet-4-6
+OPENROUTER_API_KEY=...
+OPENROUTER_MODEL=anthropic/claude-sonnet-4.5    # cualquier slug de OpenRouter
+OPENROUTER_BASE_URL=https://openrouter.ai/api/v1  # opcional (default)
+OPENROUTER_SITE_URL=https://auditorya.app         # opcional (atribución)
 S3_BUCKET=auditorya-evidencia
 AWS_ACCESS_KEY_ID=...
 AWS_SECRET_ACCESS_KEY=...

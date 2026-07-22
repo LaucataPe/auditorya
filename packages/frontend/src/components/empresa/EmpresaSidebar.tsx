@@ -6,8 +6,10 @@ import {
   FileText,
   Info,
   LayoutDashboard,
+  LogOut,
 } from 'lucide-react'
 import { cn } from '../../lib/cn'
+import { useAuthStore } from '../../store/auth.store'
 
 type Empresa = {
   id: string
@@ -34,6 +36,12 @@ const MARCO_LABEL: Record<string, string> = {
 
 export function EmpresaSidebar({ empresa }: { empresa: Empresa }) {
   const navigate = useNavigate()
+  const { logout } = useAuthStore()
+
+  async function handleLogout() {
+    await logout()
+    navigate('/login')
+  }
 
   return (
     <aside className="flex h-screen w-56 flex-col bg-white border-r border-gray-200 shrink-0">
@@ -88,6 +96,16 @@ export function EmpresaSidebar({ empresa }: { empresa: Empresa }) {
         <p className="text-xs font-medium text-gray-600 mt-0.5">{empresa.sector}</p>
         <p className="text-xs text-gray-400 mt-2">Marco contable</p>
         <p className="text-xs font-medium text-gray-600 mt-0.5">{MARCO_LABEL[empresa.marcoContable] ?? empresa.marcoContable}</p>
+      </div>
+
+      {/* Cerrar sesión */}
+      <div className="border-t border-gray-100 px-4 py-3">
+        <button
+          onClick={handleLogout}
+          className="flex items-center gap-2 text-xs text-gray-400 hover:text-red-500 transition-colors"
+        >
+          <LogOut size={13} /> Cerrar sesión
+        </button>
       </div>
     </aside>
   )

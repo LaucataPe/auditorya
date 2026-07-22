@@ -1,10 +1,12 @@
 import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
-  SECCIONES_INFORME, TIPO_INFORME_LABEL, TIPO_OPINION_LABEL,
-  type TipoInforme, type TipoOpinion,
+  SECCIONES_INFORME, TIPO_INFORME_LABEL, TIPO_OPINION_LABEL, OPINION_LABEL,
+  ESTADO_HALLAZGO_LABEL,
+  type TipoInforme, type TipoOpinion, type EvaluacionOpinion, type OpinionSugerida,
+  type HallazgoConPapel,
 } from '@auditorya/types'
-import { Lock, FileText, CheckCircle, Printer, FileDown, Sparkles, ShieldCheck } from 'lucide-react'
+import { Lock, FileText, CheckCircle, Printer, FileDown, Sparkles, ShieldCheck, Mail } from 'lucide-react'
 import { Button } from '../ui/Button'
 import { Modal } from '../ui/Modal'
 import { Select } from '../ui/Select'
@@ -29,6 +31,47 @@ const TIPOS: TipoInforme[] = ['dictamen', 'carta_control_interno', 'carta_repres
 const OPINION_OPTS = (Object.keys(TIPO_OPINION_LABEL) as TipoOpinion[]).map((v) => ({
   value: v, label: TIPO_OPINION_LABEL[v],
 }))
+
+// Mapea la opinión sugerida por la hoja de ajustes al tipo de opinión del dictamen.
+const SUGERIDA_A_OPINION: Record<OpinionSugerida, TipoOpinion | null> = {
+  favorable: 'limpia',
+  con_salvedades: 'con_salvedades',
+  negativa: 'negativa',
+  sin_base: null,
+}
+
+function SugerenciaOpinion({
+  auditoriaId, opinionActual, onAplicar, disabled,
+}: {
+  auditoriaId: string
+  opinionActual: TipoOpinion
+  onAplicar: (o: TipoOpinion) => void
+  disabled?: boolean
+}) {
+  const { data } = useQuery<{ evaluacion: EvaluacionOpinion }>({
+    queryKey: ['ajustes', auditoriaId],
+    queryFn: () => api.get<{ evaluacion: EvaluacionOpinion }>(`/auditorias/${auditoriaId}/ajustes`),
+  })
+  const ev = data?.evaluacion
+  if (!ev || ev.opinionSugerida === 'sin_base') return null
+
+  const sugerida = SUGERIDA_A_OPINION[ev.opinionSugerida]
+  const coincide = sugerida === opinionActual
+  return (
+    <div className={cn('rounded-lg border px-3 py-2 text-xs',
+      coincide ? 'border-emerald-100 bg-emerald-50 text-emerald-700' : 'border-amber-200 bg-amber-50 text-amber-800')}>
+      <p>
+        La hoja de ajustes sugiere: <strong>{OPINION_LABEL[ev.opinionSugerida]}</strong>.{' '}
+        {coincide ? 'Coincide con la opción seleccionada.' : 'No coincide con la opción seleccionada.'}
+      </p>
+      {!coincide && sugerida && !disabled && (
+        <button onClick={() => onAplicar(sugerida)} className="mt-1 text-indigo-600 hover:underline font-medium">
+          Aplicar sugerencia
+        </button>
+      )}
+    </div>
+  )
+}
 
 export function InformesTab({
   auditoriaId, materialidadAprobada, empresaNombre, periodo,
@@ -62,6 +105,8 @@ export function InformesTab({
 
   return (
     <div className="space-y-5">
+
+      <CartaRecomendaciones auditoriaId={auditoriaId} empresaNombre={empresaNombre} periodo={periodo} />
 
       {isLoading ? (
         <div className="flex justify-center py-16">
@@ -114,6 +159,93 @@ export function InformesTab({
           onClose={() => setAbierto(null)}
         />
       )}
+    </div>
+  )
+}
+
+const AREA_LABEL_CARTA: Record<string, string> = {
+  efectivo: 'Efectivo', cartera: 'Cartera', inventarios: 'Inventarios',
+  propiedad_planta_equipo: 'Propiedad, planta y equipo', proveedores: 'Proveedores', nomina: 'Nómina',
+  impuestos: 'Impuestos', ingresos: 'Ingresos', gastos: 'Gastos', patrimonio: 'Patrimonio', otro: 'Otros',
+}
+
+function CartaRecomendaciones({
+  auditoriaId, empresaNombre, periodo,
+}: {
+  auditoriaId: string
+  empresaNombre: string
+  periodo: string
+}) {
+  const { firma } = useAuthStore()
+
+  const { data: hallazgos = [] } = useQuery<HallazgoConPapel[]>({
+    queryKey: ['hallazgos', auditoriaId],
+    queryFn: () => api.get<HallazgoConPapel[]>(`/auditorias/${auditoriaId}/hallazgos`),
+  })
+
+  // La carta comunica lo que aún requiere acción del contador (no lo ya corregido).
+  const pendientes = hallazgos.filter((h) => h.estado !== 'corregido')
+
+  function secciones() {
+    const areas = Array.from(new Set(pendientes.map((h) => h.area)))
+    return areas.map((area) => ({
+      label: AREA_LABEL_CARTA[area] ?? area,
+      contenido: pendientes
+        .filter((h) => h.area === area)
+        .map((h) => {
+          const rec = h.recomendacion ? `\n   Recomendación: ${h.recomendacion}` : ''
+          const est = ` [${ESTADO_HALLAZGO_LABEL[h.estado]}]`
+          return `• ${h.descripcion}${est}${rec}`
+        })
+        .join('\n\n'),
+    }))
+  }
+
+  function exportOpts() {
+    const intro = {
+      label: 'Presentación',
+      contenido:
+        `Apreciado equipo contable de ${empresaNombre}:\n\n` +
+        `En desarrollo de nuestra revisión del período ${periodo}, presentamos a continuación las observaciones ` +
+        `y recomendaciones identificadas, para su análisis y corrección. Agradecemos su gestión sobre los siguientes puntos.`,
+    }
+    return {
+      titulo: 'Carta de recomendaciones',
+      empresaNombre,
+      periodo,
+      firma,
+      secciones: [intro, ...secciones()],
+    }
+  }
+
+  const pdf = () => imprimirInforme(construirHtmlInforme(exportOpts()))
+  const word = () => descargarDocx(`Carta_recomendaciones_${empresaNombre.replace(/[^\w]+/g, '_')}`, exportOpts())
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 shadow-sm px-5 py-4">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-amber-50 text-amber-600 shrink-0">
+            <Mail size={16} />
+          </div>
+          <div>
+            <p className="font-semibold text-gray-900">Carta de recomendaciones</p>
+            <p className="text-xs text-gray-500 mt-0.5">
+              {pendientes.length === 0
+                ? 'Sin hallazgos pendientes de comunicar'
+                : `${pendientes.length} hallazgo${pendientes.length !== 1 ? 's' : ''} para el contador (NIA 260)`}
+            </p>
+          </div>
+        </div>
+        <div className="flex gap-2">
+          <Button size="sm" variant="secondary" className="gap-1.5" disabled={pendientes.length === 0} onClick={pdf}>
+            <Printer size={13} /> PDF
+          </Button>
+          <Button size="sm" variant="secondary" className="gap-1.5" disabled={pendientes.length === 0} onClick={word}>
+            <FileDown size={13} /> Word
+          </Button>
+        </div>
+      </div>
     </div>
   )
 }
@@ -192,12 +324,13 @@ function InformeEditor({
               Aún no has generado este documento. Crea un borrador con la redacción estándar y luego edítalo.
             </p>
             {tipo === 'dictamen' && (
-              <div className="max-w-sm mx-auto text-left">
+              <div className="max-w-sm mx-auto text-left space-y-2">
                 <Select
                   id="op-gen" label="Tipo de opinión"
                   value={opinion} onChange={(e) => setOpinion(e.target.value as TipoOpinion)}
                   options={OPINION_OPTS}
                 />
+                <SugerenciaOpinion auditoriaId={auditoriaId} opinionActual={opinion} onAplicar={setOpinion} />
               </div>
             )}
             <Button className="gap-1.5" loading={generar.isPending} onClick={() => generar.mutate()}>
@@ -224,21 +357,24 @@ function InformeEditor({
             </div>
 
             {tipo === 'dictamen' && (
-              <div className="flex items-end gap-2">
-                <div className="flex-1">
-                  <Select
-                    id="op-edit" label="Tipo de opinión"
-                    value={opinion} disabled={aprobado}
-                    onChange={(e) => setOpinion(e.target.value as TipoOpinion)}
-                    options={OPINION_OPTS}
-                  />
+              <div className="space-y-2">
+                <div className="flex items-end gap-2">
+                  <div className="flex-1">
+                    <Select
+                      id="op-edit" label="Tipo de opinión"
+                      value={opinion} disabled={aprobado}
+                      onChange={(e) => setOpinion(e.target.value as TipoOpinion)}
+                      options={OPINION_OPTS}
+                    />
+                  </div>
+                  {!aprobado && (
+                    <Button size="sm" variant="secondary" className="gap-1.5"
+                      loading={generar.isPending} onClick={() => generar.mutate()}>
+                      <Sparkles size={13} /> Regenerar
+                    </Button>
+                  )}
                 </div>
-                {!aprobado && (
-                  <Button size="sm" variant="secondary" className="gap-1.5"
-                    loading={generar.isPending} onClick={() => generar.mutate()}>
-                    <Sparkles size={13} /> Regenerar
-                  </Button>
-                )}
+                <SugerenciaOpinion auditoriaId={auditoriaId} opinionActual={opinion} onAplicar={setOpinion} disabled={aprobado} />
               </div>
             )}
 

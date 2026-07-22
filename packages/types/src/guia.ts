@@ -1,4 +1,6 @@
 import type { TipoServicio } from './auditoria'
+import type { OpinionSugerida } from './ajuste'
+import { OPINION_LABEL } from './ajuste'
 
 /** Señales crudas de avance que produce el backend (GET /auditorias/:id/progreso). */
 export type SignalsProgreso = {
@@ -14,10 +16,14 @@ export type SignalsProgreso = {
   materialidadAprobada: boolean
   papelesTotal: number
   papelesAprobados: number
+  riesgosAltosSinPrueba: number
+  papelesSinEvidencia: number
+  hallazgosSinResolver: number
   cosoEvaluados: number
   tareasTotal: number
   tareasCompletadas: number
   informes: Record<string, 'borrador' | 'aprobado'>
+  opinionSugerida: OpinionSugerida
   // Auditoría interna
   programasTotal: number
   programasCompletados: number
@@ -71,6 +77,9 @@ function fasesRevisoriaFiscal(s: SignalsProgreso): FaseDef[] {
       label: 'Ejecución',
       items: [
         { label: 'Papeles de trabajo creados', hecho: s.papelesTotal > 0, requerido: true, tab: 'papeles', hint: `${s.papelesTotal}` },
+        { label: 'Riesgos altos con prueba diseñada', hecho: s.riesgosAltosSinPrueba === 0, requerido: false, tab: 'riesgos', hint: s.riesgosAltosSinPrueba > 0 ? `${s.riesgosAltosSinPrueba} sin prueba` : undefined },
+        { label: 'Papeles con evidencia', hecho: s.papelesSinEvidencia === 0, requerido: false, tab: 'papeles', hint: s.papelesSinEvidencia > 0 ? `${s.papelesSinEvidencia} sin evidencia` : undefined },
+        { label: 'Hallazgos comunicados atendidos', hecho: s.hallazgosSinResolver === 0, requerido: false, tab: 'papeles', hint: s.hallazgosSinResolver > 0 ? `${s.hallazgosSinResolver} sin resolver` : undefined },
         { label: 'Control interno COSO evaluado', hecho: s.cosoEvaluados >= 5, requerido: true, tab: 'control_interno', hint: `${s.cosoEvaluados}/5` },
         { label: 'Papeles aprobados por el socio', hecho: s.papelesTotal > 0 && s.papelesAprobados === s.papelesTotal, requerido: true, tab: 'papeles', hint: `${s.papelesAprobados}/${s.papelesTotal}` },
         { label: 'Tareas completadas', hecho: s.tareasTotal === 0 ? true : s.tareasCompletadas === s.tareasTotal, requerido: false, tab: 'tareas', hint: s.tareasTotal > 0 ? `${s.tareasCompletadas}/${s.tareasTotal}` : undefined },
@@ -80,6 +89,7 @@ function fasesRevisoriaFiscal(s: SignalsProgreso): FaseDef[] {
       id: 'informes',
       label: 'Informes',
       items: [
+        { label: 'Hoja de ajustes evaluada (opinión)', hecho: s.opinionSugerida !== 'sin_base', requerido: false, tab: 'cierre', hint: s.opinionSugerida !== 'sin_base' ? OPINION_LABEL[s.opinionSugerida] : 'Calcula la materialidad' },
         { label: 'Dictamen generado', hecho: !!inf.dictamen, requerido: true, tab: 'informes' },
         { label: 'Dictamen aprobado por el socio', hecho: inf.dictamen === 'aprobado', requerido: true, tab: 'informes' },
         { label: 'Carta de control interno', hecho: !!inf.carta_control_interno, requerido: false, tab: 'informes' },

@@ -24,7 +24,8 @@ app.get('/mia/resumen', async (c) => {
       .select({
         id: auditorias.id,
         estado: auditorias.estado,
-        periodo: auditorias.periodo,
+        fechaInicio: auditorias.fechaInicio,
+        fechaFin: auditorias.fechaFin,
         tipoServicio: auditorias.tipoServicio,
         createdAt: auditorias.createdAt,
         empresaId: empresas.id,

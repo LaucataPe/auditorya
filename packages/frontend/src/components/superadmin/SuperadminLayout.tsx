@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { Outlet, Navigate, useNavigate } from 'react-router-dom'
-import { Building2, LogOut, ShieldCheck, Users } from 'lucide-react'
+import { Building2, KeyRound, LogOut, ShieldCheck, Users } from 'lucide-react'
 import { NavLink } from 'react-router-dom'
 import { cn } from '../../lib/cn'
 import { useSuperadminStore } from '../../store/superadmin.store'
@@ -8,6 +8,7 @@ import { useSuperadminStore } from '../../store/superadmin.store'
 const navItems = [
   { label: 'Firmas', icon: Building2, to: '/superadmin/firmas' },
   { label: 'Usuarios', icon: Users, to: '/superadmin/usuarios' },
+  { label: 'Permisos', icon: KeyRound, to: '/superadmin/permisos' },
 ]
 
 export function SuperadminLayout() {

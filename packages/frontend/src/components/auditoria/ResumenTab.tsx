@@ -8,6 +8,7 @@ import {
   BookOpen, AlertOctagon, AlertTriangle, CheckCircle, ChevronRight,
 } from 'lucide-react'
 import { MapaCalorRiesgos } from './MapaCalorRiesgos'
+import { MatrizAsercionesPanel } from './MatrizAsercionesPanel'
 import { api } from '../../lib/api'
 import { cn } from '../../lib/cn'
 import type { SubTab } from '../../lib/etapas-encargo'
@@ -165,7 +166,7 @@ export function ResumenTab({
         )}
 
         {/* Pendientes / alertas */}
-        <div className="rounded-2xl border border-gray-200 bg-white p-5">
+        <div className={cn('rounded-2xl border border-gray-200 bg-white p-5', esAI && 'md:col-span-2')}>
           <h3 className="text-sm font-semibold text-gray-900 mb-3">Pendientes</h3>
           {alertas.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-6 text-center">
@@ -189,6 +190,9 @@ export function ResumenTab({
           )}
         </div>
       </div>
+
+      {/* Cobertura de aserciones (transversal, solo RF) */}
+      {!esAI && <MatrizAsercionesPanel auditoriaId={auditoriaId} onIr={onIr} />}
     </div>
   )
 }

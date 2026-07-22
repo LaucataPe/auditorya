@@ -8,6 +8,8 @@ export type Tarea = {
   area: AreaRiesgo
   titulo: string
   descripcion: string | null
+  riesgoId: string | null
+  papelTrabajoId: string | null
   asignadoA: string
   estado: EstadoTarea
   fechaInicio: string | null

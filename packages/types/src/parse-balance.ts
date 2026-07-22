@@ -118,7 +118,7 @@ export function nombrePuc(codigo: string): string | null {
 }
 
 /** Convierte texto numérico en formato local (1.234.567,89 / (123)) a número. */
-function num(raw: string): number {
+export function parseNumeroLocal(raw: string): number {
   let s = (raw ?? '').toString().trim().replace(/[^\d.,\-()]/g, '')
   if (!s) return NaN
   let neg = false
@@ -173,7 +173,7 @@ export function parseBalanceMatrix(filas: string[][]): CuentaParseada[] {
     // valores numéricos de la fila, excluyendo la columna del código
     const numericos = fila
       .slice(1)
-      .map((c) => ({ raw: (c ?? '').toString().trim(), n: num((c ?? '').toString()) }))
+      .map((c) => ({ raw: (c ?? '').toString().trim(), n: parseNumeroLocal((c ?? '').toString()) }))
       .filter((x) => x.raw !== '' && isFinite(x.n))
 
     if (numericos.length === 0) continue
@@ -195,12 +195,20 @@ export function parseBalanceMatrix(filas: string[][]): CuentaParseada[] {
     const previos = numericos.slice(0, numericos.length - saldos.length)
     const tercero = nivel >= 8 && previos.length > 0 ? previos[previos.length - 1].raw : null
 
+    // Nombre del tercero: las celdas de texto (con letras) de la fila — la razón social.
+    const nombreTexto = fila
+      .slice(1)
+      .map((c) => (c ?? '').toString().trim())
+      .filter((t) => t !== '' && /[A-Za-zÁÉÍÓÚÑáéíóúñ]/.test(t))
+      .join(' ')
+      .trim()
+
     out.push({
       codigo,
       nombre: nombrePuc(codigo),
       nivel,
       tercero,
-      terceroNombre: null,
+      terceroNombre: tercero && nombreTexto ? nombreTexto : null,
       saldoActual: final,
       saldoAnterior: inicial,
       debito,

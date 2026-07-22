@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { PROGRAMA_AUDITORIA, TIPO_PRUEBA_LABEL } from '@auditorya/types'
-import { Plus, Sparkles, Trash2, ShieldAlert, TableProperties, ArrowRightCircle, FileText, ListTodo, CheckCircle } from 'lucide-react'
+import { Pencil, Plus, Sparkles, Trash2, ShieldAlert, TableProperties, ArrowRightCircle, FileText, CheckCircle } from 'lucide-react'
 import { Button } from '../ui/Button'
 import { Modal } from '../ui/Modal'
 import { Input } from '../ui/Input'
@@ -71,8 +71,7 @@ function NivelChip({ nivel }: { nivel: Nivel }) {
   )
 }
 
-type RespuestasMap = Record<string, { tareas: number; papeles: number }>
-type Usuario = { id: string; nombre: string; rol: string }
+type RespuestasMap = Record<string, { papeles: number }>
 
 export function RiesgosTab({
   auditoriaId, sector, materialidadAprobada = false,
@@ -86,6 +85,8 @@ export function RiesgosTab({
   const [balanceOpen, setBalanceOpen] = useState(false)
   const [iaOpen, setIaOpen] = useState(false)
   const [responder, setResponder] = useState<Riesgo | null>(null)
+  const [editTarget, setEditTarget] = useState<Riesgo | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<Riesgo | null>(null)
 
   const { data: riesgos = [], isLoading } = useQuery<Riesgo[]>({
     queryKey: ['riesgos', auditoriaId],
@@ -97,10 +98,6 @@ export function RiesgosTab({
     queryFn: () => api.get<RespuestasMap>(`/auditorias/${auditoriaId}/riesgos-respuestas`),
   })
 
-  const { data: usuarios = [] } = useQuery<Usuario[]>({
-    queryKey: ['usuarios'],
-    queryFn: () => api.get<Usuario[]>(`/firmas/mia/usuarios`),
-  })
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['riesgos', auditoriaId] })
 
@@ -117,9 +114,22 @@ export function RiesgosTab({
     onSuccess: invalidate,
   })
 
+  const updateMutation = useMutation({
+    mutationFn: ({ id, body }: { id: string; body: EditarRiesgoBody }) =>
+      api.put(`/auditorias/${auditoriaId}/riesgos/${id}`, body),
+    onSuccess: () => { invalidate(); setEditTarget(null) },
+  })
+
   const deleteMutation = useMutation({
     mutationFn: (id: string) => api.delete(`/auditorias/${auditoriaId}/riesgos/${id}`),
-    onSuccess: invalidate,
+    onSuccess: () => {
+      invalidate()
+      // El borrado en cascada afecta papeles, tareas y respuestas del riesgo.
+      queryClient.invalidateQueries({ queryKey: ['riesgos-respuestas', auditoriaId] })
+      queryClient.invalidateQueries({ queryKey: ['papeles', auditoriaId] })
+      queryClient.invalidateQueries({ queryKey: ['tareas', auditoriaId] })
+      setDeleteTarget(null)
+    },
   })
 
   return (
@@ -192,13 +202,22 @@ export function RiesgosTab({
                     </p>
                   )}
                 </div>
-                <button
-                  onClick={() => deleteMutation.mutate(r.id)}
-                  className="text-gray-300 hover:text-red-500 transition-colors shrink-0"
-                  title="Eliminar riesgo"
-                >
-                  <Trash2 size={15} />
-                </button>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    onClick={() => setEditTarget(r)}
+                    className="text-gray-300 hover:text-indigo-500 transition-colors"
+                    title="Editar riesgo"
+                  >
+                    <Pencil size={15} />
+                  </button>
+                  <button
+                    onClick={() => setDeleteTarget(r)}
+                    className="text-gray-300 hover:text-red-500 transition-colors"
+                    title="Eliminar riesgo"
+                  >
+                    <Trash2 size={15} />
+                  </button>
+                </div>
               </div>
 
               {/* Niveles */}
@@ -232,9 +251,9 @@ export function RiesgosTab({
               {/* Respuesta al riesgo */}
               <div className="flex items-center justify-between mt-3 pt-3 border-t border-gray-50">
                 <p className="text-xs text-gray-500">
-                  {respuestas[r.id]
-                    ? `Respuestas: ${respuestas[r.id].tareas} tarea(s) · ${respuestas[r.id].papeles} papel(es)`
-                    : 'Aún sin respuesta planeada'}
+                  {respuestas[r.id] && respuestas[r.id].papeles > 0
+                    ? `${respuestas[r.id].papeles} prueba(s) diseñada(s)`
+                    : 'Aún sin prueba diseñada'}
                 </p>
                 <div className="flex flex-col items-end">
                   <Button
@@ -262,6 +281,22 @@ export function RiesgosTab({
         onCreate={(body) => createMutation.mutate(body)}
       />
 
+      <EditarRiesgoModal
+        riesgo={editTarget}
+        onClose={() => { setEditTarget(null); updateMutation.reset() }}
+        loading={updateMutation.isPending}
+        error={updateMutation.error instanceof Error ? updateMutation.error.message : null}
+        onSave={(body) => editTarget && updateMutation.mutate({ id: editTarget.id, body })}
+      />
+
+      <EliminarRiesgoModal
+        riesgo={deleteTarget}
+        onClose={() => { setDeleteTarget(null); deleteMutation.reset() }}
+        loading={deleteMutation.isPending}
+        error={deleteMutation.error instanceof Error ? deleteMutation.error.message : null}
+        onConfirm={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}
+      />
+
       {balanceOpen && (
         <CandidatosModal
           auditoriaId={auditoriaId}
@@ -282,7 +317,6 @@ export function RiesgosTab({
         <ResponderRiesgoModal
           auditoriaId={auditoriaId}
           riesgo={responder}
-          usuarios={usuarios}
           onClose={() => setResponder(null)}
           onCambio={() => {
             queryClient.invalidateQueries({ queryKey: ['riesgos-respuestas', auditoriaId] })
@@ -296,20 +330,16 @@ export function RiesgosTab({
 }
 
 function ResponderRiesgoModal({
-  auditoriaId, riesgo, usuarios, onClose, onCambio,
+  auditoriaId, riesgo, onClose, onCambio,
 }: {
   auditoriaId: string
   riesgo: Riesgo
-  usuarios: Usuario[]
   onClose: () => void
   onCambio: () => void
 }) {
   const queryClient = useQueryClient()
-  const socios = usuarios.filter((u) => u.rol === 'socio')
-  const opcUsuarios = (socios.length > 0 ? usuarios : usuarios).map((u) => ({ value: u.id, label: u.nombre }))
 
   const [titulo, setTitulo] = useState(`Respuesta al riesgo de ${AREA_LABEL[riesgo.area]}`)
-  const [asignadoA, setAsignadoA] = useState(usuarios[0]?.id ?? '')
   const pruebas = PROGRAMA_AUDITORIA[riesgo.area] ?? []
   const [selPruebas, setSelPruebas] = useState<Set<number>>(new Set())
   const togglePrueba = (i: number) =>
@@ -320,15 +350,19 @@ function ResponderRiesgoModal({
       return n
     })
 
-  const { data: resp, isLoading } = useQuery<{ tareas: { id: string; titulo: string; estado: string }[]; papeles: { id: string; titulo: string; estado: string }[] }>({
+  const { data: resp, isLoading } = useQuery<{ papeles: { id: string; titulo: string; estado: string; numTareas: number }[] }>({
     queryKey: ['riesgo-respuestas', riesgo.id],
     queryFn: () => api.get(`/riesgos/${riesgo.id}/respuestas`),
   })
 
   const refetch = () => {
     queryClient.invalidateQueries({ queryKey: ['riesgo-respuestas', riesgo.id] })
+    queryClient.invalidateQueries({ queryKey: ['papeles', auditoriaId] })
     onCambio()
   }
+
+  // Títulos de pruebas que ya tienen papel: se bloquean para no duplicar.
+  const yaCreadas = new Set((resp?.papeles ?? []).map((p) => p.titulo))
 
   const crearPapel = useMutation({
     mutationFn: () =>
@@ -340,22 +374,12 @@ function ResponderRiesgoModal({
       }),
     onSuccess: refetch,
   })
-  const crearTarea = useMutation({
-    mutationFn: () =>
-      api.post(`/auditorias/${auditoriaId}/tareas`, {
-        area: riesgo.area,
-        titulo,
-        descripcion: riesgo.respuestaPlaneada ?? undefined,
-        asignadoA,
-        riesgoId: riesgo.id,
-      }),
-    onSuccess: refetch,
-  })
 
   const crearPruebas = useMutation({
     mutationFn: async () => {
       for (const i of selPruebas) {
         const p = pruebas[i]
+        if (yaCreadas.has(p.titulo)) continue
         const guiaTexto = p.guia.length > 0 ? `\n\nPasos:\n${p.guia.map((g) => `• ${g}`).join('\n')}` : ''
         await api.post(`/auditorias/${auditoriaId}/papeles`, {
           area: riesgo.area,
@@ -369,7 +393,12 @@ function ResponderRiesgoModal({
     onSuccess: () => { setSelPruebas(new Set()); refetch() },
   })
 
-  const err = crearPapel.error || crearTarea.error || crearPruebas.error
+  const eliminarPapel = useMutation({
+    mutationFn: (papelId: string) => api.delete(`/papeles/${papelId}`),
+    onSuccess: refetch,
+  })
+
+  const err = crearPapel.error || crearPruebas.error || eliminarPapel.error
 
   return (
     <Modal open onClose={onClose} title="Responder al riesgo" size="lg">
@@ -385,63 +414,79 @@ function ResponderRiesgoModal({
         {/* Respuestas existentes */}
         {isLoading ? (
           <div className="flex justify-center py-4"><div className="h-5 w-5 animate-spin rounded-full border-2 border-indigo-600 border-t-transparent" /></div>
-        ) : (resp && (resp.tareas.length > 0 || resp.papeles.length > 0)) ? (
+        ) : (resp && resp.papeles.length > 0) ? (
           <div className="space-y-1.5">
-            <p className="text-xs text-gray-500">Respuestas creadas</p>
+            <p className="text-xs text-gray-500">Pruebas (papeles) que responden al riesgo</p>
             {resp.papeles.map((p) => (
               <div key={p.id} className="flex items-center gap-2 text-sm text-gray-700 rounded-lg border border-gray-100 px-3 py-1.5">
-                <FileText size={13} className="text-indigo-500" /> {p.titulo}
+                <FileText size={13} className="text-indigo-500 shrink-0" />
+                <span className="truncate">{p.titulo}</span>
+                {p.numTareas > 0 && <span className="text-[10px] text-gray-400">· {p.numTareas} tarea(s)</span>}
                 <span className="ml-auto text-xs text-gray-400 capitalize">{p.estado}</span>
-              </div>
-            ))}
-            {resp.tareas.map((t) => (
-              <div key={t.id} className="flex items-center gap-2 text-sm text-gray-700 rounded-lg border border-gray-100 px-3 py-1.5">
-                <ListTodo size={13} className="text-amber-500" /> {t.titulo}
-                <span className="ml-auto text-xs text-gray-400 capitalize">{t.estado.replace('_', ' ')}</span>
+                {p.estado === 'borrador' && (
+                  <button
+                    onClick={() => eliminarPapel.mutate(p.id)}
+                    disabled={eliminarPapel.isPending}
+                    className="text-gray-300 hover:text-red-500 shrink-0"
+                    title="Eliminar papel (solo en borrador)"
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                )}
               </div>
             ))}
           </div>
         ) : (
-          <p className="text-xs text-gray-400">Aún no has creado tareas ni papeles para este riesgo.</p>
+          <p className="text-xs text-gray-400">Aún no has diseñado pruebas para este riesgo.</p>
         )}
 
         {/* Programa de auditoría — pruebas estándar del área */}
         {pruebas.length > 0 && (
           <div className="border-t border-gray-100 pt-4">
             <p className="text-xs text-gray-500 mb-2">
-              Programa de {AREA_LABEL[riesgo.area]} — selecciona las pruebas que aplican. Se creará un
-              papel por prueba (con su guía) y se generará la lista de documentos a solicitar al cliente.
+              Programa de {AREA_LABEL[riesgo.area]} — selecciona las pruebas que aplican. Se crea un
+              papel por prueba (con su guía) y se genera la lista de documentos a solicitar al cliente. Las tareas se
+              asignan dentro de cada papel.
             </p>
             <div className="space-y-1.5">
-              {pruebas.map((p, i) => (
-                <label
-                  key={i}
-                  className={cn(
-                    'flex items-start gap-2.5 rounded-lg border px-3 py-2 cursor-pointer transition-colors',
-                    selPruebas.has(i) ? 'border-indigo-300 bg-indigo-50/40' : 'border-gray-200 hover:border-gray-300',
-                  )}
-                >
-                  <input
-                    type="checkbox"
-                    checked={selPruebas.has(i)}
-                    onChange={() => togglePrueba(i)}
-                    className="h-4 w-4 mt-0.5 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
-                  />
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-sm font-medium text-gray-900">{p.titulo}</span>
-                      <span className="text-xs text-gray-400">{TIPO_PRUEBA_LABEL[p.tipo]}</span>
-                    </div>
-                    <p className="text-xs text-gray-500">{p.procedimiento}</p>
-                    <p className="text-xs text-indigo-500 mt-0.5">Aserciones: {p.aserciones.join(', ')}</p>
-                    {p.documentosRequeridos.length > 0 && (
-                      <p className="text-xs text-gray-500 mt-1">
-                        <span className="font-medium text-gray-600">Documentos:</span> {p.documentosRequeridos.join(' · ')}
-                      </p>
+              {pruebas.map((p, i) => {
+                const creado = yaCreadas.has(p.titulo)
+                return (
+                  <label
+                    key={i}
+                    className={cn(
+                      'flex items-start gap-2.5 rounded-lg border px-3 py-2 transition-colors',
+                      creado
+                        ? 'border-emerald-100 bg-emerald-50/40 opacity-70 cursor-default'
+                        : selPruebas.has(i)
+                          ? 'border-indigo-300 bg-indigo-50/40 cursor-pointer'
+                          : 'border-gray-200 hover:border-gray-300 cursor-pointer',
                     )}
-                  </div>
-                </label>
-              ))}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={creado || selPruebas.has(i)}
+                      disabled={creado}
+                      onChange={() => togglePrueba(i)}
+                      className="h-4 w-4 mt-0.5 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                    />
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-sm font-medium text-gray-900">{p.titulo}</span>
+                        <span className="text-xs text-gray-400">{TIPO_PRUEBA_LABEL[p.tipo]}</span>
+                        {creado && <span className="text-[10px] text-emerald-600">✓ ya creado</span>}
+                      </div>
+                      <p className="text-xs text-gray-500">{p.procedimiento}</p>
+                      <p className="text-xs text-indigo-500 mt-0.5">Aserciones: {p.aserciones.join(', ')}</p>
+                      {p.documentosRequeridos.length > 0 && (
+                        <p className="text-xs text-gray-500 mt-1">
+                          <span className="font-medium text-gray-600">Documentos:</span> {p.documentosRequeridos.join(' · ')}
+                        </p>
+                      )}
+                    </div>
+                  </label>
+                )
+              })}
             </div>
             <Button
               size="sm"
@@ -455,34 +500,27 @@ function ResponderRiesgoModal({
           </div>
         )}
 
-        {/* Respuesta a la medida */}
+        {/* Otra prueba a la medida (papel) */}
         <div className="border-t border-gray-100 pt-4 space-y-3">
-          <p className="text-xs text-gray-500">Otra respuesta a la medida</p>
-          <Input id="resp-titulo" label="Título de la respuesta" value={titulo} onChange={(e) => setTitulo(e.target.value)} />
-          <Select
-            id="resp-asignado"
-            label="Responsable (para la tarea)"
-            value={asignadoA}
-            onChange={(e) => setAsignadoA(e.target.value)}
-            options={opcUsuarios.length > 0 ? opcUsuarios : [{ value: '', label: 'Sin usuarios' }]}
-          />
+          <p className="text-xs text-gray-500">Otra prueba a la medida</p>
+          <Input id="resp-titulo" label="Título del papel de trabajo" value={titulo} onChange={(e) => setTitulo(e.target.value)} />
           {err && (
             <p className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">
-              {err instanceof Error ? err.message : 'Error al crear la respuesta'}
+              {err instanceof Error ? err.message : 'Error al crear la prueba'}
             </p>
           )}
-          <div className="flex gap-2">
-            <Button size="sm" className="gap-1.5" loading={crearPapel.isPending} disabled={titulo.trim().length < 3}
-              onClick={() => crearPapel.mutate()}>
-              <FileText size={13} /> Crear papel de trabajo
-            </Button>
-            <Button size="sm" variant="secondary" className="gap-1.5" loading={crearTarea.isPending}
-              disabled={titulo.trim().length < 3 || !asignadoA} onClick={() => crearTarea.mutate()}>
-              <ListTodo size={13} /> Crear tarea
-            </Button>
-          </div>
-          {(crearPapel.isSuccess || crearTarea.isSuccess) && (
-            <p className="text-xs text-emerald-600 flex items-center gap-1"><CheckCircle size={12} /> Respuesta creada y enlazada al riesgo.</p>
+          <Button
+            size="sm" className="gap-1.5"
+            loading={crearPapel.isPending}
+            disabled={titulo.trim().length < 3 || yaCreadas.has(titulo.trim())}
+            onClick={() => crearPapel.mutate()}
+          >
+            <FileText size={13} /> Crear papel de trabajo
+          </Button>
+          {crearPapel.isSuccess && (
+            <p className="text-xs text-emerald-600 flex items-center gap-1">
+              <CheckCircle size={12} /> Papel creado y enlazado al riesgo. Agrega las tareas dentro del papel.
+            </p>
           )}
         </div>
 
@@ -686,6 +724,198 @@ function NuevoRiesgoModal({
           </Button>
         </div>
       </form>
+    </Modal>
+  )
+}
+
+type EditarRiesgoBody = {
+  area: Area
+  descripcion: string
+  riesgoInherente: Nivel
+  riesgoControl: Nivel
+  respuestaPlaneada: string
+}
+
+function EditarRiesgoModal({
+  riesgo, onClose, onSave, loading, error,
+}: {
+  riesgo: Riesgo | null
+  onClose: () => void
+  loading: boolean
+  error: string | null
+  onSave: (b: EditarRiesgoBody) => void
+}) {
+  const [form, setForm] = useState<EditarRiesgoBody>({
+    area: 'ingresos', descripcion: '', riesgoInherente: 'alto', riesgoControl: 'medio', respuestaPlaneada: '',
+  })
+
+  useEffect(() => {
+    if (riesgo) {
+      setForm({
+        area: riesgo.area,
+        descripcion: riesgo.descripcion,
+        riesgoInherente: riesgo.riesgoInherente,
+        riesgoControl: riesgo.riesgoControl,
+        respuestaPlaneada: riesgo.respuestaPlaneada ?? '',
+      })
+    }
+  }, [riesgo])
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    if (form.descripcion.trim().length < 3) return
+    onSave(form)
+  }
+
+  return (
+    <Modal open={!!riesgo} onClose={onClose} title="Editar riesgo">
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <Select
+          id="er-area"
+          label="Área / Ciclo"
+          value={form.area}
+          onChange={(e) => setForm({ ...form, area: e.target.value as Area })}
+          options={AREA_OPTS}
+        />
+        <Input
+          id="er-desc"
+          label="Descripción del riesgo"
+          placeholder="Ej: Reconocimiento de ingresos en período incorrecto"
+          value={form.descripcion}
+          onChange={(e) => setForm({ ...form, descripcion: e.target.value })}
+        />
+        <div className="grid grid-cols-2 gap-3">
+          <Select
+            id="er-inh"
+            label="Riesgo inherente"
+            value={form.riesgoInherente}
+            onChange={(e) => setForm({ ...form, riesgoInherente: e.target.value as Nivel })}
+            options={NIVEL_OPTS}
+          />
+          <Select
+            id="er-ctrl"
+            label="Riesgo de control"
+            value={form.riesgoControl}
+            onChange={(e) => setForm({ ...form, riesgoControl: e.target.value as Nivel })}
+            options={NIVEL_OPTS}
+          />
+        </div>
+        <Input
+          id="er-resp"
+          label="Respuesta planeada (opcional)"
+          placeholder="Ej: Pruebas de corte y circularización"
+          value={form.respuestaPlaneada}
+          onChange={(e) => setForm({ ...form, respuestaPlaneada: e.target.value })}
+        />
+
+        {error && (
+          <p className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{error}</p>
+        )}
+
+        <div className="flex justify-end gap-3 pt-1">
+          <Button type="button" variant="secondary" onClick={onClose}>Cancelar</Button>
+          <Button type="submit" loading={loading} disabled={form.descripcion.trim().length < 3}>
+            Guardar cambios
+          </Button>
+        </div>
+      </form>
+    </Modal>
+  )
+}
+
+function EliminarRiesgoModal({
+  riesgo, onClose, onConfirm, loading, error,
+}: {
+  riesgo: Riesgo | null
+  onClose: () => void
+  loading: boolean
+  error: string | null
+  onConfirm: () => void
+}) {
+  const [texto, setTexto] = useState('')
+
+  useEffect(() => { if (riesgo) setTexto('') }, [riesgo])
+
+  const { data, isLoading } = useQuery<{ papeles: { id: string; titulo: string; estado: string; numTareas: number }[] }>({
+    queryKey: ['riesgo-respuestas', riesgo?.id],
+    queryFn: () => api.get(`/riesgos/${riesgo!.id}/respuestas`),
+    enabled: !!riesgo,
+  })
+
+  const papeles = data?.papeles ?? []
+  const totalTareas = papeles.reduce((s, p) => s + p.numTareas, 0)
+  const tieneCascada = papeles.length > 0
+  // Con papeles enlazados exigimos confirmación escrita; sin ellos basta con confirmar.
+  const confirmado = !tieneCascada || texto.trim().toUpperCase() === 'ELIMINAR'
+
+  return (
+    <Modal open={!!riesgo} onClose={onClose} title="Eliminar riesgo">
+      <div className="space-y-4">
+        {riesgo && (
+          <div className="rounded-xl bg-gray-50 border border-gray-100 px-4 py-3">
+            <p className="text-xs text-gray-400 mb-0.5">{AREA_LABEL[riesgo.area]}</p>
+            <p className="text-sm text-gray-700">{riesgo.descripcion}</p>
+          </div>
+        )}
+
+        {isLoading ? (
+          <div className="flex justify-center py-4">
+            <div className="h-5 w-5 animate-spin rounded-full border-2 border-indigo-600 border-t-transparent" />
+          </div>
+        ) : tieneCascada ? (
+          <>
+            <div className="flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3">
+              <ShieldAlert size={18} className="text-red-500 shrink-0 mt-0.5" />
+              <p className="text-sm text-red-700">
+                Este riesgo tiene <strong>{papeles.length} papel(es) de trabajo</strong> enlazados. Al
+                eliminarlo se borrarán también esos papeles, sus tareas
+                {totalTareas > 0 ? ` (${totalTareas})` : ''}, evidencia y documentos relacionados. Esta
+                acción es <strong>irreversible</strong>.
+              </p>
+            </div>
+            <ul className="text-sm text-gray-600 list-disc pl-5 space-y-0.5">
+              {papeles.map((p) => (
+                <li key={p.id}>
+                  {p.titulo}
+                  <span className="text-xs text-gray-400 capitalize">
+                    {' · '}{p.estado}{p.numTareas > 0 ? ` · ${p.numTareas} tarea(s)` : ''}
+                  </span>
+                </li>
+              ))}
+            </ul>
+            <Input
+              id="confirmar-eliminar-riesgo"
+              label="Escribe ELIMINAR para confirmar"
+              value={texto}
+              onChange={(e) => setTexto(e.target.value)}
+              placeholder="ELIMINAR"
+              autoComplete="off"
+            />
+          </>
+        ) : (
+          <p className="text-sm text-gray-600">
+            ¿Seguro que quieres eliminar este riesgo? Esta acción no se puede deshacer.
+          </p>
+        )}
+
+        {error && (
+          <p className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{error}</p>
+        )}
+
+        <div className="flex justify-end gap-3 pt-2">
+          <Button type="button" variant="secondary" onClick={onClose}>Cancelar</Button>
+          <Button
+            type="button"
+            variant="danger"
+            className="disabled:opacity-50"
+            loading={loading}
+            disabled={!confirmado}
+            onClick={onConfirm}
+          >
+            {tieneCascada ? 'Eliminar todo' : 'Eliminar riesgo'}
+          </Button>
+        </div>
+      </div>
     </Modal>
   )
 }

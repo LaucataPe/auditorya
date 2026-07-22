@@ -1,10 +1,10 @@
 import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import bcrypt from 'bcryptjs'
 import { db } from '../db/client'
-import { usuarios } from '../db/schema'
+import { usuarios, rolesFirma } from '../db/schema'
 import { authMiddleware } from '../middleware/auth'
 import type { JwtPayload } from '../lib/jwt'
 
@@ -23,9 +23,12 @@ app.get('/mia/usuarios', async (c) => {
       nombre: usuarios.nombre,
       email: usuarios.email,
       rol: usuarios.rol,
+      rolId: usuarios.rolId,
+      rolNombre: rolesFirma.nombre,
       createdAt: usuarios.createdAt,
     })
     .from(usuarios)
+    .leftJoin(rolesFirma, eq(usuarios.rolId, rolesFirma.id))
     .where(eq(usuarios.firmaId, firmaId))
 
   return c.json({ data: miembros })
@@ -40,7 +43,7 @@ app.post(
       nombre: z.string().min(2),
       email: z.string().email(),
       password: z.string().min(8),
-      rol: z.enum(['socio', 'gerente', 'senior', 'asistente']),
+      rolId: z.string().uuid(),
     }),
   ),
   async (c) => {
@@ -50,7 +53,16 @@ app.post(
       return c.json({ error: { code: 'FORBIDDEN', message: 'Solo el socio o gerente pueden añadir miembros' } }, 403)
     }
 
-    const { nombre, email, password, rol } = c.req.valid('json')
+    const { nombre, email, password, rolId } = c.req.valid('json')
+
+    // El rol debe pertenecer a la firma; su nivel es el respaldo de seguridad.
+    const [rolElegido] = await db
+      .select()
+      .from(rolesFirma)
+      .where(and(eq(rolesFirma.id, rolId), eq(rolesFirma.firmaId, firmaId)))
+    if (!rolElegido) {
+      return c.json({ error: { code: 'ROL_INVALIDO', message: 'El rol no existe en esta firma' } }, 400)
+    }
 
     const [existe] = await db.select().from(usuarios).where(eq(usuarios.email, email))
     if (existe) {
@@ -60,17 +72,18 @@ app.post(
     const passwordHash = await bcrypt.hash(password, 12)
     const [nuevo] = await db
       .insert(usuarios)
-      .values({ nombre, email, passwordHash, rol, firmaId })
+      .values({ nombre, email, passwordHash, rol: rolElegido.nivel, rolId: rolElegido.id, firmaId })
       .returning({
         id: usuarios.id,
         firmaId: usuarios.firmaId,
         nombre: usuarios.nombre,
         email: usuarios.email,
         rol: usuarios.rol,
+        rolId: usuarios.rolId,
         createdAt: usuarios.createdAt,
       })
 
-    return c.json({ data: nuevo }, 201)
+    return c.json({ data: { ...nuevo, rolNombre: rolElegido.nombre } }, 201)
   },
 )
 
@@ -81,7 +94,7 @@ app.put(
     'json',
     z.object({
       nombre: z.string().min(2).optional(),
-      rol: z.enum(['socio', 'gerente', 'senior', 'asistente']).optional(),
+      rolId: z.string().uuid().optional(),
     }),
   ),
   async (c) => {
@@ -101,18 +114,33 @@ app.put(
     }
 
     // Solo el socio puede cambiar el rol de otro socio
-    if (body.rol && miembro.rol === 'socio' && rolActual !== 'socio') {
+    if (body.rolId && miembro.rol === 'socio' && rolActual !== 'socio') {
       return c.json({ error: { code: 'FORBIDDEN', message: 'Solo el socio puede modificar el rol de otro socio' } }, 403)
     }
 
-    // No se puede degradar el propio rol
-    if (body.rol && miembro.id === sub) {
+    // No se puede cambiar el propio rol
+    if (body.rolId && miembro.id === sub) {
       return c.json({ error: { code: 'FORBIDDEN', message: 'No puedes cambiar tu propio rol' } }, 403)
+    }
+
+    // El rol elegido debe pertenecer a la firma; su nivel es el respaldo.
+    let rolElegido: typeof rolesFirma.$inferSelect | undefined
+    if (body.rolId) {
+      ;[rolElegido] = await db
+        .select()
+        .from(rolesFirma)
+        .where(and(eq(rolesFirma.id, body.rolId), eq(rolesFirma.firmaId, firmaId)))
+      if (!rolElegido) {
+        return c.json({ error: { code: 'ROL_INVALIDO', message: 'El rol no existe en esta firma' } }, 400)
+      }
     }
 
     const [actualizado] = await db
       .update(usuarios)
-      .set({ ...(body.nombre && { nombre: body.nombre }), ...(body.rol && { rol: body.rol }) })
+      .set({
+        ...(body.nombre && { nombre: body.nombre }),
+        ...(rolElegido && { rol: rolElegido.nivel, rolId: rolElegido.id }),
+      })
       .where(eq(usuarios.id, id))
       .returning({
         id: usuarios.id,
@@ -120,10 +148,11 @@ app.put(
         nombre: usuarios.nombre,
         email: usuarios.email,
         rol: usuarios.rol,
+        rolId: usuarios.rolId,
         createdAt: usuarios.createdAt,
       })
 
-    return c.json({ data: actualizado })
+    return c.json({ data: { ...actualizado, rolNombre: rolElegido?.nombre } })
   },
 )
 
