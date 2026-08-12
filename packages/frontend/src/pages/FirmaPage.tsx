@@ -1,8 +1,9 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Building2, MapPin, Pencil, Plus, UserCheck } from 'lucide-react'
+import { Building2, ImagePlus, MapPin, Pencil, Plus, Trash2, UserCheck } from 'lucide-react'
 import { api } from '../lib/api'
 import { useAuthStore } from '../store/auth.store'
+import { toast } from '../store/toast.store'
 import { Button } from '../components/ui/Button'
 import { Input } from '../components/ui/Input'
 import { Select } from '../components/ui/Select'
@@ -151,6 +152,8 @@ function InfoTab() {
         </div>
       </div>
 
+      <MarcaCard />
+
       {firma && editOpen && (
         <EditarFirmaModal
           firma={firma}
@@ -161,6 +164,194 @@ function InfoTab() {
         />
       )}
     </>
+  )
+}
+
+/* ── Identidad de marca de los documentos (PDF/Word) ─────────────────────── */
+
+const COLOR_MARCA_DEFECTO = '#4338CA'
+const PRESETS_MARCA = ['#4338CA', '#7C3AED', '#1D4ED8', '#0F766E', '#B91C1C', '#334155']
+
+/** Reduce el logo a tamaño de membrete (PNG, máx. 200 px de alto) para guardarlo como data URI. */
+async function procesarLogo(file: File): Promise<string | null> {
+  const dataUrl = await new Promise<string | null>((resolve) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result as string)
+    reader.onerror = () => resolve(null)
+    reader.readAsDataURL(file)
+  })
+  if (!dataUrl) return null
+
+  const img = await new Promise<HTMLImageElement | null>((resolve) => {
+    const i = new Image()
+    i.onload = () => resolve(i)
+    i.onerror = () => resolve(null)
+    i.src = dataUrl
+  })
+  if (!img || !img.naturalHeight) return null
+
+  const escala = Math.min(1, 200 / img.naturalHeight, 600 / img.naturalWidth)
+  const canvas = document.createElement('canvas')
+  canvas.width = Math.max(1, Math.round(img.naturalWidth * escala))
+  canvas.height = Math.max(1, Math.round(img.naturalHeight * escala))
+  canvas.getContext('2d')!.drawImage(img, 0, 0, canvas.width, canvas.height)
+  return canvas.toDataURL('image/png') // PNG: conserva transparencia y lo acepta el .docx
+}
+
+function MarcaCard() {
+  const { firma, user } = useAuthStore()
+  const canEdit = user?.rol === 'socio'
+  const fileRef = useRef<HTMLInputElement>(null)
+
+  const [color, setColor] = useState(firma?.colorMarca ?? COLOR_MARCA_DEFECTO)
+  const [logo, setLogo] = useState<string | null>(firma?.logo ?? null)
+
+  const sinCambios =
+    color === (firma?.colorMarca ?? COLOR_MARCA_DEFECTO) && logo === (firma?.logo ?? null)
+
+  const guardar = useMutation({
+    mutationFn: () => api.put('/firmas/mia', { colorMarca: color, logo }),
+    onSuccess: () => {
+      toast.success('Identidad de marca guardada')
+      useAuthStore.getState().checkSession()
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : 'Error al guardar la marca'),
+  })
+
+  async function onArchivo(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    const dataUri = await procesarLogo(file)
+    if (!dataUri) {
+      toast.error('No se pudo leer la imagen. Usa un PNG o JPG.')
+      return
+    }
+    if (dataUri.length > 400_000) {
+      toast.error('El logo sigue siendo muy pesado tras reducirlo. Usa una imagen más simple.')
+      return
+    }
+    setLogo(dataUri)
+  }
+
+  const fechaHoy = new Date().toLocaleDateString('es-CO', { day: 'numeric', month: 'long', year: 'numeric' })
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 mt-6">
+      <div className="flex items-center justify-between mb-1">
+        <p className="text-sm font-medium text-gray-700">Identidad de marca</p>
+        {canEdit && (
+          <Button
+            size="sm"
+            className="gap-1.5"
+            disabled={sinCambios}
+            loading={guardar.isPending}
+            onClick={() => guardar.mutate()}
+          >
+            Guardar marca
+          </Button>
+        )}
+      </div>
+      <p className="text-xs text-gray-400 mb-5">
+        El color y el logo se aplican al membrete de todos los documentos que exporta la firma (dictamen,
+        cartas, memo, solicitud de documentos), en PDF y Word.
+      </p>
+
+      <div className="grid gap-6 sm:grid-cols-2">
+        <div className="space-y-5">
+          {/* Color */}
+          <div>
+            <p className="text-xs font-medium text-gray-400 uppercase tracking-wide mb-2">Color de acento</p>
+            <div className="flex items-center gap-2">
+              {PRESETS_MARCA.map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  disabled={!canEdit}
+                  onClick={() => setColor(c)}
+                  className={cn(
+                    'h-7 w-7 rounded-full border-2 transition-transform',
+                    color.toUpperCase() === c ? 'border-gray-900 scale-110' : 'border-transparent',
+                    canEdit && 'hover:scale-110',
+                  )}
+                  style={{ backgroundColor: c }}
+                  title={c}
+                />
+              ))}
+              <label
+                className={cn(
+                  'relative h-7 w-7 overflow-hidden rounded-full border border-dashed border-gray-300',
+                  canEdit ? 'cursor-pointer' : 'opacity-50',
+                )}
+                title="Color personalizado"
+              >
+                <span
+                  className="absolute inset-0"
+                  style={{ background: 'conic-gradient(red, yellow, lime, cyan, blue, magenta, red)' }}
+                />
+                <input
+                  type="color"
+                  disabled={!canEdit}
+                  value={color}
+                  onChange={(e) => setColor(e.target.value)}
+                  className="absolute inset-0 opacity-0 cursor-pointer"
+                />
+              </label>
+            </div>
+          </div>
+
+          {/* Logo */}
+          <div>
+            <p className="text-xs font-medium text-gray-400 uppercase tracking-wide mb-2">Logo del membrete</p>
+            <div className="flex items-center gap-3">
+              {logo ? (
+                <img src={logo} alt="Logo de la firma" className="h-10 max-w-[140px] object-contain rounded border border-gray-100 bg-white p-1" />
+              ) : (
+                <p className="text-xs text-gray-400">Sin logo — el membrete usa solo el nombre.</p>
+              )}
+              {canEdit && (
+                <div className="flex gap-1.5">
+                  <Button size="sm" variant="secondary" className="gap-1.5" onClick={() => fileRef.current?.click()}>
+                    <ImagePlus size={13} /> {logo ? 'Cambiar' : 'Subir'}
+                  </Button>
+                  {logo && (
+                    <Button size="sm" variant="secondary" className="gap-1.5" onClick={() => setLogo(null)}>
+                      <Trash2 size={13} /> Quitar
+                    </Button>
+                  )}
+                </div>
+              )}
+              <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={onArchivo} />
+            </div>
+          </div>
+        </div>
+
+        {/* Vista previa del membrete */}
+        <div>
+          <p className="text-xs font-medium text-gray-400 uppercase tracking-wide mb-2">Vista previa</p>
+          <div className="rounded-lg border border-gray-200 bg-white p-4">
+            <div className="flex items-end justify-between gap-3 pb-2" style={{ borderBottom: `2.5px solid ${color}` }}>
+              <div className="flex items-center gap-2.5 min-w-0">
+                {logo && <img src={logo} alt="" className="h-8 max-w-[100px] object-contain shrink-0" />}
+                <div className="min-w-0">
+                  <p className="text-sm font-bold text-gray-900 truncate">{firma?.nombre ?? 'Mi firma'}</p>
+                  <p className="text-[10px] uppercase tracking-wider text-gray-500 truncate">
+                    NIT {firma?.nit ?? '—'} · {firma?.ciudad ?? '—'}
+                  </p>
+                </div>
+              </div>
+              <p className="text-[10px] text-gray-400 whitespace-nowrap">{fechaHoy}</p>
+            </div>
+            <p className="mt-3 text-[10px] font-bold uppercase tracking-widest" style={{ color }}>
+              Título de sección
+            </p>
+            <p className="mt-1 text-[11px] text-gray-500 font-serif">
+              Así se verá el encabezado de los documentos exportados.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
   )
 }
 

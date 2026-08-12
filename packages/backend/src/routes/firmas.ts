@@ -1,11 +1,12 @@
 import { Hono } from 'hono'
-import { zValidator } from '@hono/zod-validator'
+import { zValidator } from '../lib/validacion'
 import { z } from 'zod'
 import { and, desc, eq, sql } from 'drizzle-orm'
 import { db } from '../db/client'
 import { firmas, empresas, auditorias, informes } from '../db/schema'
 import { authMiddleware } from '../middleware/auth'
 import type { JwtPayload } from '../lib/jwt'
+import { registrarEvento } from '../lib/eventos'
 
 const app = new Hono<{ Variables: { user: JwtPayload } }>()
 
@@ -73,10 +74,19 @@ app.put(
       nombre: z.string().min(2).optional(),
       nit: z.string().min(5).optional(),
       ciudad: z.string().min(2).optional(),
+      // Identidad de marca de los documentos. null limpia el valor (vuelve al defecto).
+      colorMarca: z.string().regex(/^#[0-9a-fA-F]{6}$/, 'Color inválido (formato #rrggbb)').nullable().optional(),
+      logo: z
+        .string()
+        .regex(/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/, 'Logo inválido (se espera una imagen en data URI)')
+        .max(400_000, 'El logo es demasiado grande (máx. ~300 KB)')
+        .nullable()
+        .optional(),
     }),
   ),
   async (c) => {
-    const { firmaId, rol } = c.get('user')
+    const user = c.get('user')
+    const { firmaId, rol } = user
     if (rol !== 'socio') {
       return c.json({ error: { code: 'FORBIDDEN', message: 'Solo el socio puede actualizar la firma' } }, 403)
     }
@@ -87,6 +97,18 @@ app.put(
     }
 
     const [firma] = await db.update(firmas).set(body).where(eq(firmas.id, firmaId)).returning()
+
+    registrarEvento(user, {
+      accion: 'firma.actualizar',
+      entidad: 'firma',
+      entidadId: firmaId,
+      // El logo no se vuelca al detalle (pesa); se deja constancia de qué campos cambiaron.
+      detalle: {
+        campos: Object.keys(body),
+        ...(body.colorMarca !== undefined ? { colorMarca: body.colorMarca } : {}),
+      },
+    })
+
     return c.json({ data: firma })
   },
 )

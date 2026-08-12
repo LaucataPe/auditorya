@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../store/auth.store'
 import { Button } from '../components/ui/Button'
 import { Input } from '../components/ui/Input'
+import { Logo } from '../components/ui/Logo'
 
 export function LoginPage() {
   const [email, setEmail] = useState('')
@@ -30,11 +31,8 @@ export function LoginPage() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-indigo-50 to-gray-100 flex items-center justify-center p-4">
       <div className="w-full max-w-sm">
-        <div className="flex items-center justify-center gap-3 mb-8">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-600 text-white text-lg font-bold shadow">
-            A
-          </div>
-          <span className="text-2xl font-bold text-gray-900">AuditorYa</span>
+        <div className="flex items-center justify-center mb-8">
+          <Logo className="h-20 w-auto" />
         </div>
 
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-8">

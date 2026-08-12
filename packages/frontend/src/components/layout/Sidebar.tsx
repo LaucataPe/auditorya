@@ -1,6 +1,7 @@
 import { NavLink, useNavigate } from 'react-router-dom'
 import { Building2, LayoutDashboard, LogOut, Users } from 'lucide-react'
 import { cn } from '../../lib/cn'
+import { Isotipo } from '../ui/Logo'
 import { useAuthStore } from '../../store/auth.store'
 
 const nav = [
@@ -39,9 +40,7 @@ export function Sidebar() {
     <aside className="flex h-screen w-60 flex-col bg-slate-950 text-white">
       {/* Logo */}
       <div className="flex items-center gap-2.5 px-5 py-5">
-        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-500 text-sm font-bold shadow-[0_0_16px_rgba(99,102,241,0.4)]">
-          A
-        </div>
+        <Isotipo className="h-8 w-8 rounded-lg shadow-[0_0_16px_rgba(139,92,246,0.35)]" />
         <div className="min-w-0">
           <span className="block text-[15px] font-semibold tracking-tight leading-tight">AuditorYa</span>
           <span className="block text-[11px] text-slate-500 truncate">{firma?.nombre}</span>

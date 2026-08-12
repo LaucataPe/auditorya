@@ -6,6 +6,7 @@ import { api } from '../lib/api'
 import { Button } from '../components/ui/Button'
 import { Input } from '../components/ui/Input'
 import { Select } from '../components/ui/Select'
+import { Logo } from '../components/ui/Logo'
 import { cn } from '../lib/cn'
 
 const STEPS = [
@@ -94,9 +95,8 @@ export function OnboardingPage() {
       <div className="w-full max-w-xl">
         {/* Header */}
         <div className="text-center mb-8">
-          <div className="flex items-center justify-center gap-2 mb-3">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-600 text-white text-sm font-bold">A</div>
-            <span className="text-lg font-semibold text-gray-900">AuditorYa</span>
+          <div className="flex items-center justify-center mb-3">
+            <Logo className="h-14 w-auto" />
           </div>
           <h1 className="text-2xl font-bold text-gray-900">Crea tu cuenta</h1>
           <p className="text-sm text-gray-500 mt-1">Solo toma unos minutos</p>

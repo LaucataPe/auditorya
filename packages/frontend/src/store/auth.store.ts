@@ -15,6 +15,8 @@ export type Firma = {
   nombre: string
   nit: string
   ciudad: string
+  colorMarca: string | null
+  logo: string | null
   createdAt: string
 }
 

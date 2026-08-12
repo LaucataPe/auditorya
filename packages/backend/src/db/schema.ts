@@ -5,6 +5,9 @@ export const firmas = pgTable('firmas', {
   nombre: text('nombre').notNull(),
   nit: text('nit').notNull().unique(),
   ciudad: text('ciudad').notNull(),
+  // Identidad de marca para los documentos exportados (PDF/Word).
+  colorMarca: text('color_marca'), // hex '#rrggbb'; null → color por defecto de la app
+  logo: text('logo'), // data URI (image/png|jpeg|webp) ya reducido en el cliente; null → sin logo
   createdAt: timestamp('created_at').defaultNow().notNull(),
 })
 
