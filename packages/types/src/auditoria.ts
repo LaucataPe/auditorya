@@ -12,7 +12,8 @@ export type Auditoria = {
   id: string
   empresaId: string
   socioId: string
-  periodo: string
+  fechaInicio: string
+  fechaFin: string
   tipoServicio: TipoServicio
   tipo: TipoAuditoria | null
   estado: EstadoAuditoria

@@ -1,4 +1,5 @@
 node_modules
+strategy
 dist
 .env
 .env.local
