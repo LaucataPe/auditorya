@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import { zValidator } from '@hono/zod-validator'
+import { zValidator } from '../lib/validacion'
 import { z } from 'zod'
 import { and, eq, sql } from 'drizzle-orm'
 import { db } from '../db/client'
@@ -13,6 +13,7 @@ import {
   muestraItems,
 } from '../db/schema'
 import { authMiddleware } from '../middleware/auth'
+import { encargoCerrado, ERROR_ENCARGO_CERRADO } from '../lib/encargo'
 import { registrarEvento } from '../lib/eventos'
 import { seleccionarMuestra, resumirMuestra, type TerceroSaldo } from '@auditorya/types'
 import type { JwtPayload } from '../lib/jwt'
@@ -143,6 +144,13 @@ app.post(
 
     const papel = await cargarPapel(papelId, user.firmaId)
     if (!papel) return c.json({ error: { code: 'NOT_FOUND', message: 'Papel no encontrado' } }, 404)
+    if (await encargoCerrado(papel.auditoria.id)) return c.json({ error: ERROR_ENCARGO_CERRADO }, 409)
+    if (papel.papel.estado === 'aprobado') {
+      return c.json(
+        { error: { code: 'PAPEL_APROBADO', message: 'No se puede modificar la muestra de un papel aprobado. Reábrelo primero.' } },
+        409,
+      )
+    }
 
     const poblacion = await poblacionPorTercero(papel.auditoria.id, codigoCuenta)
     if (poblacion.length === 0) {
@@ -222,12 +230,19 @@ app.patch(
     }),
   ),
   async (c) => {
-    const { firmaId } = c.get('user')
+    const user = c.get('user')
     const itemId = c.req.param('itemId')
     const body = c.req.valid('json')
 
-    const row = await cargarItem(itemId, firmaId)
+    const row = await cargarItem(itemId, user.firmaId)
     if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Ítem no encontrado' } }, 404)
+    if (await encargoCerrado(row.muestra.auditoriaId)) return c.json({ error: ERROR_ENCARGO_CERRADO }, 409)
+    if (row.papel.estado === 'aprobado') {
+      return c.json(
+        { error: { code: 'PAPEL_APROBADO', message: 'No se puede modificar la muestra de un papel aprobado. Reábrelo primero.' } },
+        409,
+      )
+    }
 
     const updates: Record<string, unknown> = {}
     if (body.incluido !== undefined) updates.incluido = body.incluido
@@ -244,6 +259,17 @@ app.patch(
     const muestraArmada = await armarMuestra(row.muestra)
     if (body.incluido !== undefined) {
       await sincronizarAlcance(row.papel.id, row.muestra, muestraArmada.resumen)
+    }
+
+    // El resultado de la prueba sobre un ítem es un hecho de auditoría: queda en la pista.
+    if (body.resultado !== undefined && body.resultado !== row.item.resultado) {
+      registrarEvento(user, {
+        accion: 'muestra_item.resultado',
+        entidad: 'muestra_item',
+        entidadId: itemId,
+        auditoriaId: row.muestra.auditoriaId,
+        detalle: { resultado: body.resultado, diferencia: body.diferencia ?? null, tercero: row.item.tercero },
+      })
     }
 
     return c.json({ data: muestraArmada })
@@ -269,6 +295,13 @@ app.post(
 
     const row = await cargarMuestra(muestraId, firmaId)
     if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Muestra no encontrada' } }, 404)
+    if (await encargoCerrado(row.muestra.auditoriaId)) return c.json({ error: ERROR_ENCARGO_CERRADO }, 409)
+    if (row.papel.estado === 'aprobado') {
+      return c.json(
+        { error: { code: 'PAPEL_APROBADO', message: 'No se puede modificar la muestra de un papel aprobado. Reábrelo primero.' } },
+        409,
+      )
+    }
 
     await db.insert(muestraItems).values({
       muestraId,
@@ -293,6 +326,13 @@ app.delete('/muestra-items/:itemId', async (c) => {
 
   const row = await cargarItem(itemId, firmaId)
   if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Ítem no encontrado' } }, 404)
+  if (await encargoCerrado(row.muestra.auditoriaId)) return c.json({ error: ERROR_ENCARGO_CERRADO }, 409)
+  if (row.papel.estado === 'aprobado') {
+    return c.json(
+      { error: { code: 'PAPEL_APROBADO', message: 'No se puede modificar la muestra de un papel aprobado. Reábrelo primero.' } },
+      409,
+    )
+  }
 
   await db.delete(muestraItems).where(eq(muestraItems.id, itemId))
 

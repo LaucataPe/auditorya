@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import { zValidator } from '@hono/zod-validator'
+import { zValidator } from '../lib/validacion'
 import { z } from 'zod'
 import { and, desc, eq } from 'drizzle-orm'
 import { db } from '../db/client'
@@ -11,6 +11,7 @@ import {
   solicitudesPbc,
 } from '../db/schema'
 import { authMiddleware } from '../middleware/auth'
+import { encargoCerrado, ERROR_ENCARGO_CERRADO } from '../lib/encargo'
 import { registrarEvento } from '../lib/eventos'
 import type { JwtPayload } from '../lib/jwt'
 
@@ -88,12 +89,22 @@ app.post(
     }),
   ),
   async (c) => {
-    const { firmaId } = c.get('user')
+    const user = c.get('user')
     const id = c.req.param('id')
     const body = c.req.valid('json')
 
-    if (!(await cargarAuditoria(id, firmaId))) {
+    const auditoria = await cargarAuditoria(id, user.firmaId)
+    if (!auditoria) {
       return c.json({ error: { code: 'NOT_FOUND', message: 'Auditoría no encontrada' } }, 404)
+    }
+    if (await encargoCerrado(id)) return c.json({ error: ERROR_ENCARGO_CERRADO }, 409)
+
+    // El PBC es parte de la ejecución: requiere la materialidad aprobada.
+    if (!auditoria.materialidadAprobada) {
+      return c.json(
+        { error: { code: 'MATERIALIDAD_NO_APROBADA', message: 'No se pueden solicitar documentos (PBC) sin aprobar la materialidad' } },
+        409,
+      )
     }
 
     const descripciones = body.descripciones ?? (body.descripcion ? [body.descripcion] : [])
@@ -114,6 +125,13 @@ app.post(
       )
       .returning()
 
+    registrarEvento(user, {
+      accion: 'pbc.crear',
+      entidad: 'solicitud_pbc',
+      auditoriaId: id,
+      detalle: { cantidad: creadas.length, papelId: body.papelTrabajoId ?? null },
+    })
+
     return c.json({ data: creadas }, 201)
   },
 )
@@ -131,12 +149,13 @@ app.put(
     }),
   ),
   async (c) => {
-    const { firmaId } = c.get('user')
+    const user = c.get('user')
     const solicitudId = c.req.param('id')
     const body = c.req.valid('json')
 
-    const row = await cargarSolicitud(solicitudId, firmaId)
+    const row = await cargarSolicitud(solicitudId, user.firmaId)
     if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Solicitud no encontrada' } }, 404)
+    if (await encargoCerrado(row.solicitud.auditoriaId)) return c.json({ error: ERROR_ENCARGO_CERRADO }, 409)
 
     const updates: Record<string, string | Date | null> = {}
     if (body.descripcion) updates.descripcion = body.descripcion
@@ -156,6 +175,14 @@ app.put(
       .where(eq(solicitudesPbc.id, solicitudId))
       .returning()
 
+    registrarEvento(user, {
+      accion: 'pbc.editar',
+      entidad: 'solicitud_pbc',
+      entidadId: solicitudId,
+      auditoriaId: row.solicitud.auditoriaId,
+      detalle: { campos: Object.keys(updates), estado: actualizada.estado },
+    })
+
     return c.json({ data: actualizada })
   },
 )
@@ -168,6 +195,7 @@ app.post('/pbc/:id/recibir', async (c) => {
 
   const row = await cargarSolicitud(solicitudId, firmaId)
   if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Solicitud no encontrada' } }, 404)
+  if (await encargoCerrado(row.solicitud.auditoriaId)) return c.json({ error: ERROR_ENCARGO_CERRADO }, 409)
 
   if (!row.solicitud.papelTrabajoId) {
     return c.json(
@@ -216,13 +244,33 @@ app.post('/pbc/:id/recibir', async (c) => {
 
 // DELETE /pbc/:id
 app.delete('/pbc/:id', async (c) => {
-  const { firmaId } = c.get('user')
+  const user = c.get('user')
   const solicitudId = c.req.param('id')
 
-  const row = await cargarSolicitud(solicitudId, firmaId)
+  const row = await cargarSolicitud(solicitudId, user.firmaId)
   if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Solicitud no encontrada' } }, 404)
+  if (await encargoCerrado(row.solicitud.auditoriaId)) return c.json({ error: ERROR_ENCARGO_CERRADO }, 409)
 
   await db.delete(solicitudesPbc).where(eq(solicitudesPbc.id, solicitudId))
+
+  // Si la evidencia se creó al marcar "recibido" y nunca recibió archivo ni enlace,
+  // era un placeholder de esta solicitud: se limpia para no dejar evidencia fantasma.
+  if (row.solicitud.evidenciaId) {
+    const [ev] = await db.select().from(evidencias).where(eq(evidencias.id, row.solicitud.evidenciaId))
+    if (ev && !ev.archivoKey && !ev.enlaceExterno) {
+      // Best-effort: si otra solicitud aún la referencia, se conserva.
+      await db.delete(evidencias).where(eq(evidencias.id, ev.id)).catch(() => {})
+    }
+  }
+
+  registrarEvento(user, {
+    accion: 'pbc.eliminar',
+    entidad: 'solicitud_pbc',
+    entidadId: solicitudId,
+    auditoriaId: row.solicitud.auditoriaId,
+    detalle: { descripcion: row.solicitud.descripcion, estado: row.solicitud.estado },
+  })
+
   return c.json({ data: { id: solicitudId } })
 })
 

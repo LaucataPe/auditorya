@@ -1,18 +1,31 @@
 import { Hono } from 'hono'
-import { zValidator } from '@hono/zod-validator'
+import { zValidator } from '../lib/validacion'
 import { z } from 'zod'
 import { asc, eq, sql } from 'drizzle-orm'
 import bcrypt from 'bcryptjs'
+import { createHash, timingSafeEqual } from 'node:crypto'
 import { db } from '../db/client'
 import { firmas, usuarios, permisos } from '../db/schema'
 import { signToken } from '../lib/jwt'
 import { superadminMiddleware } from '../middleware/superadmin'
 import { seedRolesFirma } from '../lib/roles'
+import { excedeLimite, limpiarLimite } from '../lib/rate-limit'
 import type { JwtPayload } from '../lib/jwt'
 
 const app = new Hono<{ Variables: { user: JwtPayload } }>()
 
-const SA_COOKIE = 'sa_token; HttpOnly; Path=/; SameSite=Lax; Max-Age=28800'
+// Igual que la cookie de sesión normal: Secure + SameSite=None en producción.
+const esProd = process.env.NODE_ENV === 'production'
+const SA_COOKIE_OPTS = esProd
+  ? 'HttpOnly; Path=/; SameSite=None; Secure; Max-Age=28800'
+  : 'HttpOnly; Path=/; SameSite=Lax; Max-Age=28800'
+
+/** Comparación en tiempo constante sobre hashes (evita fugas por longitud). */
+function igualSeguro(a: string, b: string): boolean {
+  const ha = createHash('sha256').update(a).digest()
+  const hb = createHash('sha256').update(b).digest()
+  return timingSafeEqual(ha, hb)
+}
 
 // POST /superadmin/login
 app.post(
@@ -28,19 +41,37 @@ app.post(
       return c.json({ error: { code: 'NOT_CONFIGURED', message: 'Superadmin no configurado' } }, 500)
     }
 
-    if (email !== saEmail || password !== saPassword) {
-      return c.json({ error: { code: 'CREDENCIALES_INVALIDAS', message: 'Credenciales incorrectas' } }, 401)
+    // Mismo rate-limit que el login normal, por IP.
+    const ip = c.req.header('x-forwarded-for')?.split(',')[0]?.trim() ?? 'local'
+    const claveLimite = `sa-login:${ip}`
+    if (excedeLimite(claveLimite)) {
+      return c.json(
+        { error: { code: 'DEMASIADOS_INTENTOS', message: 'Demasiados intentos. Espera unos minutos.' } },
+        429,
+      )
     }
 
+    const emailOk = igualSeguro(email, saEmail)
+    const passwordOk = igualSeguro(password, saPassword)
+    if (!emailOk || !passwordOk) {
+      return c.json({ error: { code: 'CREDENCIALES_INVALIDAS', message: 'Credenciales incorrectas' } }, 401)
+    }
+    limpiarLimite(claveLimite)
+
     const token = signToken({ sub: 'superadmin', firmaId: '', rol: 'superadmin' })
-    c.header('Set-Cookie', `sa_token=${token}; ${SA_COOKIE}`)
+    c.header('Set-Cookie', `sa_token=${token}; ${SA_COOKIE_OPTS}`)
     return c.json({ data: { email: saEmail } })
   },
 )
 
 // POST /superadmin/logout
 app.post('/logout', (c) => {
-  c.header('Set-Cookie', 'sa_token=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0')
+  c.header(
+    'Set-Cookie',
+    esProd
+      ? 'sa_token=; HttpOnly; Path=/; SameSite=None; Secure; Max-Age=0'
+      : 'sa_token=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0',
+  )
   return c.json({ data: null })
 })
 

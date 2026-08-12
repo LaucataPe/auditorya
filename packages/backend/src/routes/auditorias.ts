@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import { zValidator } from '@hono/zod-validator'
+import { zValidator } from '../lib/validacion'
 import { z } from 'zod'
 import { and, desc, eq, lte, isNull, inArray, or, sql } from 'drizzle-orm'
 import { createHash } from 'node:crypto'
@@ -9,10 +9,11 @@ import {
   papelesTrabajo, controlesCoso, tareas, informes, programasAI, hallazgosAI,
   entendimientoPeriodo, cuentasBalance, balanceArchivos, perfilesBalance, cuentasBalanceComparativo, balanceMeta,
   eventos, usuarios, evidencias, ajustes, hallazgos,
-  solicitudesPbc, notasRevision, cierresAuditoria, muestras,
+  solicitudesPbc, notasRevision, cierresAuditoria, muestras, papelesSnapshots,
 } from '../db/schema'
 import { authMiddleware } from '../middleware/auth'
 import { esSocioResponsable, ERROR_NO_SOCIO_RESPONSABLE } from '../lib/permisos'
+import { encargoCerrado, ERROR_ENCARGO_CERRADO } from '../lib/encargo'
 import { registrarEvento } from '../lib/eventos'
 import { storage } from '../lib/storage'
 import { sugerirRiesgos } from '../lib/ia'
@@ -46,26 +47,32 @@ app.get('/auditorias/:id/progreso', async (c) => {
   const row = await cargarAuditoria(id, firmaId)
   if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Auditoría no encontrada' } }, 404)
 
-  const [riesgosRows, materialidadRows, papelesRows, cosoRows, tareasRows, informesRows, programasRows, hallazgosAiRows, entendimientoRows, balanceRows, evidRows, ajustesRows, hallazgosRows] =
+  const [riesgosRows, materialidadRows, papelesRows, cosoRows, tareasRows, informesRows, programasRows, hallazgosAiRows, entendimientoRows, balanceRows, evidRows, ajustesRows, hallazgosRows, pbcRows, cierreRows] =
     await Promise.all([
       db.select({ id: riesgos.id, combinado: riesgos.riesgoCombinado, respuesta: riesgos.respuestaPlaneada }).from(riesgos).where(eq(riesgos.auditoriaId, id)),
       db.select({ id: materialidades.id, materialidad: materialidades.materialidad }).from(materialidades).where(eq(materialidades.auditoriaId, id)),
-      db.select({ id: papelesTrabajo.id, estado: papelesTrabajo.estado, riesgoId: papelesTrabajo.riesgoId }).from(papelesTrabajo).where(eq(papelesTrabajo.auditoriaId, id)),
+      db.select({ id: papelesTrabajo.id, estado: papelesTrabajo.estado, riesgoId: papelesTrabajo.riesgoId, fechaInicio: papelesTrabajo.fechaInicio, fechaFin: papelesTrabajo.fechaFin }).from(papelesTrabajo).where(eq(papelesTrabajo.auditoriaId, id)),
       db.select({ componente: controlesCoso.componente }).from(controlesCoso).where(eq(controlesCoso.auditoriaId, id)),
-      db.select({ estado: tareas.estado }).from(tareas).where(eq(tareas.auditoriaId, id)),
+      db.select({ estado: tareas.estado, fechaInicio: tareas.fechaInicio, vencimiento: tareas.vencimiento }).from(tareas).where(eq(tareas.auditoriaId, id)),
       db.select({ tipo: informes.tipo, estado: informes.estado }).from(informes).where(eq(informes.auditoriaId, id)),
       db.select({ estado: programasAI.estado }).from(programasAI).where(eq(programasAI.auditoriaId, id)),
       db.select({ id: hallazgosAI.id }).from(hallazgosAI).where(eq(hallazgosAI.auditoriaId, id)),
       db.select({ confirmado: entendimientoPeriodo.confirmado }).from(entendimientoPeriodo).where(eq(entendimientoPeriodo.auditoriaId, id)),
       db.select({ id: cuentasBalance.id }).from(cuentasBalance).where(eq(cuentasBalance.auditoriaId, id)).limit(1),
+      // Solo cuenta evidencia real: con archivo adjunto o enlace externo (no filas vacías).
       db
         .select({ papelId: evidencias.papelTrabajoId, n: sql<number>`count(*)::int` })
         .from(evidencias)
         .innerJoin(papelesTrabajo, eq(evidencias.papelTrabajoId, papelesTrabajo.id))
-        .where(eq(papelesTrabajo.auditoriaId, id))
+        .where(and(
+          eq(papelesTrabajo.auditoriaId, id),
+          sql`(${evidencias.archivoKey} is not null or ${evidencias.enlaceExterno} is not null)`,
+        ))
         .groupBy(evidencias.papelTrabajoId),
       db.select({ monto: ajustes.monto, corregido: ajustes.corregido, efecto: ajustes.efecto }).from(ajustes).where(eq(ajustes.auditoriaId, id)),
       db.select({ estado: hallazgos.estado }).from(hallazgos).where(eq(hallazgos.auditoriaId, id)),
+      db.select({ estado: solicitudesPbc.estado }).from(solicitudesPbc).where(eq(solicitudesPbc.auditoriaId, id)),
+      db.select().from(cierresAuditoria).where(eq(cierresAuditoria.auditoriaId, id)),
     ])
 
   const mapaInformes: Record<string, string> = {}
@@ -89,6 +96,13 @@ app.get('/auditorias/:id/progreso', async (c) => {
   // Hallazgos aún pendientes de decisión del contador (NIA 260/265).
   const hallazgosSinResolver = resumirHallazgos(hallazgosRows).sinResolver
 
+  // Señales de acompañamiento: PBC, cronograma (fechas asignadas) y cierre.
+  const cierre = cierreRows[0]
+  const cronogramaItems = tareasRows.length + papelesRows.length
+  const cronogramaProgramados =
+    tareasRows.filter((t) => t.fechaInicio && t.vencimiento).length +
+    papelesRows.filter((p) => p.fechaInicio && p.fechaFin).length
+
   return c.json({
     data: {
       tipoServicio: row.auditoria.tipoServicio,
@@ -110,6 +124,16 @@ app.get('/auditorias/:id/progreso', async (c) => {
       tareasCompletadas: tareasRows.filter((t) => t.estado === 'completada').length,
       informes: mapaInformes,
       opinionSugerida,
+      pbcTotal: pbcRows.length,
+      pbcPendientes: pbcRows.filter((p) => p.estado === 'solicitado').length,
+      cronogramaItems,
+      cronogramaProgramados,
+      cierreChecklistCompleto:
+        !!cierre &&
+        cierre.hechosPosterioresEvaluado &&
+        cierre.negocioMarchaEvaluado &&
+        cierre.revisionCalidadCompleta,
+      cierreCerrado: cierre?.cerrado ?? false,
       programasTotal: programasRows.length,
       programasCompletados: programasRows.filter((p) => p.estado === 'completado').length,
       hallazgosTotal: hallazgosAiRows.length,
@@ -138,7 +162,10 @@ app.get('/auditorias/:id/completitud', async (c) => {
       .select({ papelId: evidencias.papelTrabajoId, n: sql<number>`count(*)::int` })
       .from(evidencias)
       .innerJoin(papelesTrabajo, eq(evidencias.papelTrabajoId, papelesTrabajo.id))
-      .where(eq(papelesTrabajo.auditoriaId, id))
+      .where(and(
+        eq(papelesTrabajo.auditoriaId, id),
+        sql`(${evidencias.archivoKey} is not null or ${evidencias.enlaceExterno} is not null)`,
+      ))
       .groupBy(evidencias.papelTrabajoId),
   ])
 
@@ -209,12 +236,13 @@ app.put(
     }),
   ),
   async (c) => {
-    const { firmaId } = c.get('user')
+    const user = c.get('user')
     const id = c.req.param('id')
     const body = c.req.valid('json')
 
-    const row = await cargarAuditoria(id, firmaId)
+    const row = await cargarAuditoria(id, user.firmaId)
     if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Auditoría no encontrada' } }, 404)
+    if (await encargoCerrado(id)) return c.json({ error: ERROR_ENCARGO_CERRADO }, 409)
 
     const valores = {
       cambiosSignificativos: body.cambiosSignificativos ?? null,
@@ -242,6 +270,14 @@ app.put(
         .values({ auditoriaId: id, ...valores })
         .returning()
     }
+
+    registrarEvento(user, {
+      accion: 'entendimiento.guardar',
+      entidad: 'entendimiento_periodo',
+      entidadId: resultado.id,
+      auditoriaId: id,
+      detalle: { confirmado: valores.confirmado, sinCambios: valores.sinCambios },
+    })
 
     return c.json({ data: resultado })
   },
@@ -507,6 +543,7 @@ app.post(
 
     const row = await cargarAuditoria(id, firmaId)
     if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Auditoría no encontrada' } }, 404)
+    if (await encargoCerrado(id)) return c.json({ error: ERROR_ENCARGO_CERRADO }, 409)
 
     await db.delete(cuentasBalance).where(eq(cuentasBalance.auditoriaId, id))
 
@@ -580,16 +617,25 @@ app.post(
 
 // DELETE /auditorias/:id/balance
 app.delete('/auditorias/:id/balance', async (c) => {
-  const { firmaId } = c.get('user')
+  const user = c.get('user')
   const id = c.req.param('id')
 
-  const row = await cargarAuditoria(id, firmaId)
+  const row = await cargarAuditoria(id, user.firmaId)
   if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Auditoría no encontrada' } }, 404)
+  if (await encargoCerrado(id)) return c.json({ error: ERROR_ENCARGO_CERRADO }, 409)
 
   await db.delete(cuentasBalance).where(eq(cuentasBalance.auditoriaId, id))
   await db.delete(balanceArchivos).where(eq(balanceArchivos.auditoriaId, id))
   await db.delete(cuentasBalanceComparativo).where(eq(cuentasBalanceComparativo.auditoriaId, id))
   await db.delete(balanceMeta).where(eq(balanceMeta.auditoriaId, id))
+
+  registrarEvento(user, {
+    accion: 'balance.eliminar',
+    entidad: 'balance',
+    auditoriaId: id,
+    detalle: {},
+  })
+
   return c.json({ data: { ok: true } })
 })
 
@@ -620,6 +666,7 @@ app.post(
 
     const row = await cargarAuditoria(id, firmaId)
     if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Auditoría no encontrada' } }, 404)
+    if (await encargoCerrado(id)) return c.json({ error: ERROR_ENCARGO_CERRADO }, 409)
 
     await db.delete(cuentasBalanceComparativo).where(eq(cuentasBalanceComparativo.auditoriaId, id))
     const valores = cuentas.map((ct) => ({
@@ -654,17 +701,26 @@ app.post(
 
 // DELETE /auditorias/:id/balance/comparativo
 app.delete('/auditorias/:id/balance/comparativo', async (c) => {
-  const { firmaId } = c.get('user')
+  const user = c.get('user')
   const id = c.req.param('id')
 
-  const row = await cargarAuditoria(id, firmaId)
+  const row = await cargarAuditoria(id, user.firmaId)
   if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Auditoría no encontrada' } }, 404)
+  if (await encargoCerrado(id)) return c.json({ error: ERROR_ENCARGO_CERRADO }, 409)
 
   await db.delete(cuentasBalanceComparativo).where(eq(cuentasBalanceComparativo.auditoriaId, id))
   await db
     .update(balanceMeta)
     .set({ comparativoNombre: null, comparativoCreatedAt: null, updatedAt: new Date() })
     .where(eq(balanceMeta.auditoriaId, id))
+
+  registrarEvento(user, {
+    accion: 'balance.comparativo_eliminar',
+    entidad: 'balance',
+    auditoriaId: id,
+    detalle: {},
+  })
+
   return c.json({ data: { ok: true } })
 })
 
@@ -749,6 +805,19 @@ app.post(
       )
     }
 
+    // El socio responsable debe existir, pertenecer a la firma y tener nivel socio:
+    // de lo contrario el encargo nace sin nadie capaz de aprobar nada.
+    const [socio] = await db
+      .select({ id: usuarios.id, rol: usuarios.rol })
+      .from(usuarios)
+      .where(and(eq(usuarios.id, body.socioId), eq(usuarios.firmaId, firmaId)))
+    if (!socio) {
+      return c.json({ error: { code: 'SOCIO_INVALIDO', message: 'El socio responsable no pertenece a la firma' } }, 400)
+    }
+    if (socio.rol !== 'socio') {
+      return c.json({ error: { code: 'SOCIO_INVALIDO', message: 'El socio responsable debe tener nivel de socio' } }, 400)
+    }
+
     const [auditoria] = await db
       .insert(auditorias)
       .values({
@@ -794,14 +863,15 @@ app.put(
     }),
   ),
   async (c) => {
-    const { firmaId } = c.get('user')
+    const user = c.get('user')
     const id = c.req.param('id')
     const { estado } = c.req.valid('json')
 
-    const row = await cargarAuditoria(id, firmaId)
+    const row = await cargarAuditoria(id, user.firmaId)
     if (!row) {
       return c.json({ error: { code: 'NOT_FOUND', message: 'Auditoría no encontrada' } }, 404)
     }
+    if (await encargoCerrado(id)) return c.json({ error: ERROR_ENCARGO_CERRADO }, 409)
 
     const avanzaAEjecucionOmas = ['ejecucion', 'revision', 'finalizada'].includes(estado)
     if (avanzaAEjecucionOmas && !row.auditoria.materialidadAprobada) {
@@ -821,6 +891,17 @@ app.put(
       .set({ estado })
       .where(eq(auditorias.id, id))
       .returning()
+
+    if (estado !== row.auditoria.estado) {
+      registrarEvento(user, {
+        accion: 'auditoria.cambiar_estado',
+        entidad: 'auditoria',
+        entidadId: id,
+        auditoriaId: id,
+        empresaId: row.empresa.id,
+        detalle: { de: row.auditoria.estado, a: estado },
+      })
+    }
 
     return c.json({ data: actualizada })
   },
@@ -853,6 +934,7 @@ app.patch(
     if (!esSocioResponsable(user, row.auditoria)) {
       return c.json({ error: ERROR_NO_SOCIO_RESPONSABLE }, 403)
     }
+    if (await encargoCerrado(id)) return c.json({ error: ERROR_ENCARGO_CERRADO }, 409)
 
     const fechaInicio = body.fechaInicio ?? row.auditoria.fechaInicio
     const fechaFin = body.fechaFin ?? row.auditoria.fechaFin
@@ -863,14 +945,17 @@ app.patch(
       )
     }
 
-    // Si se reasigna el socio responsable, debe ser un usuario de la misma firma.
+    // Si se reasigna el socio responsable, debe ser un usuario de la misma firma con nivel socio.
     if (body.socioId && body.socioId !== row.auditoria.socioId) {
       const [nuevoSocio] = await db
-        .select({ id: usuarios.id })
+        .select({ id: usuarios.id, rol: usuarios.rol })
         .from(usuarios)
         .where(and(eq(usuarios.id, body.socioId), eq(usuarios.firmaId, firmaId)))
       if (!nuevoSocio) {
         return c.json({ error: { code: 'SOCIO_INVALIDO', message: 'El socio responsable no pertenece a la firma' } }, 400)
+      }
+      if (nuevoSocio.rol !== 'socio') {
+        return c.json({ error: { code: 'SOCIO_INVALIDO', message: 'El socio responsable debe tener nivel de socio' } }, 400)
       }
     }
 
@@ -920,6 +1005,31 @@ app.delete('/auditorias/:id', async (c) => {
     return c.json({ error: ERROR_NO_SOCIO_RESPONSABLE }, 403)
   }
 
+  // Un encargo cerrado es un archivo permanente: no se destruye (reabrir primero, con rastro).
+  if (await encargoCerrado(id)) return c.json({ error: ERROR_ENCARGO_CERRADO }, 409)
+
+  // Un encargo con informe final aprobado (dictamen / informe AI) tampoco se destruye:
+  // el socio tendría que reabrir el informe primero, y esa reapertura queda en la pista.
+  const [informeAprobado] = await db
+    .select({ id: informes.id, tipo: informes.tipo })
+    .from(informes)
+    .where(and(
+      eq(informes.auditoriaId, id),
+      inArray(informes.tipo, ['dictamen', 'informe_ai']),
+      eq(informes.estado, 'aprobado'),
+    ))
+  if (informeAprobado) {
+    return c.json(
+      {
+        error: {
+          code: 'INFORME_APROBADO',
+          message: 'No se puede eliminar un encargo con el informe final aprobado. Reábrelo primero (queda registrado).',
+        },
+      },
+      409,
+    )
+  }
+
   // Archivos físicos de la evidencia: se recogen antes para limpiarlos del storage tras el commit.
   const papeles = await db
     .select({ id: papelesTrabajo.id })
@@ -948,6 +1058,7 @@ app.delete('/auditorias/:id', async (c) => {
       await tx.delete(evidencias).where(inArray(evidencias.papelTrabajoId, papelIds)) // ref → papeles
     }
     await tx.delete(ajustes).where(eq(ajustes.auditoriaId, id))
+    await tx.delete(papelesSnapshots).where(eq(papelesSnapshots.auditoriaId, id)) // ref → papeles
     await tx.delete(papelesTrabajo).where(eq(papelesTrabajo.auditoriaId, id)) // ref → riesgos
     await tx.delete(riesgos).where(eq(riesgos.auditoriaId, id))
     await tx.delete(hallazgosAI).where(eq(hallazgosAI.auditoriaId, id)) // ref → programas_ai
@@ -961,7 +1072,7 @@ app.delete('/auditorias/:id', async (c) => {
     await tx.delete(balanceMeta).where(eq(balanceMeta.auditoriaId, id))
     await tx.delete(informes).where(eq(informes.auditoriaId, id))
     await tx.delete(cierresAuditoria).where(eq(cierresAuditoria.auditoriaId, id))
-    await tx.delete(eventos).where(eq(eventos.auditoriaId, id)) // pista propia del encargo
+    // La pista de auditoría (eventos) NO se borra: es inmutable y sobrevive al encargo.
     await tx.delete(auditorias).where(eq(auditorias.id, id))
   })
 
@@ -1018,14 +1129,15 @@ app.post(
     }),
   ),
   async (c) => {
-    const { firmaId } = c.get('user')
+    const user = c.get('user')
     const id = c.req.param('id')
     const body = c.req.valid('json')
 
-    const row = await cargarAuditoria(id, firmaId)
+    const row = await cargarAuditoria(id, user.firmaId)
     if (!row) {
       return c.json({ error: { code: 'NOT_FOUND', message: 'Auditoría no encontrada' } }, 404)
     }
+    if (await encargoCerrado(id)) return c.json({ error: ERROR_ENCARGO_CERRADO }, 409)
 
     const materialidad = body.montoBase * (body.porcentaje / 100)
     const materialidadDesempeno = materialidad * (body.porcentajeDesempeno / 100)
@@ -1063,11 +1175,30 @@ app.post(
         .returning()
     }
 
-    // Si se reedita, la auditoría vuelve a quedar bloqueada para ejecución.
+    // Si se reedita, la auditoría vuelve a quedar bloqueada para ejecución. Y si el
+    // encargo ya había avanzado de fase, se revierte a planificación: la ejecución
+    // no puede seguir corriendo sobre una materialidad que dejó de estar aprobada.
+    const invalidaAprobacion = existente?.aprobada ?? false
     await db
       .update(auditorias)
-      .set({ materialidadAprobada: false })
+      .set({
+        materialidadAprobada: false,
+        ...(row.auditoria.estado !== 'planificacion' ? { estado: 'planificacion' as const } : {}),
+      })
       .where(eq(auditorias.id, id))
+
+    registrarEvento(user, {
+      accion: 'materialidad.calcular',
+      entidad: 'materialidad',
+      entidadId: resultado.id,
+      auditoriaId: id,
+      detalle: {
+        materialidad: resultado.materialidad,
+        base: resultado.baseCalculo,
+        invalidaAprobacion,
+        ...(row.auditoria.estado !== 'planificacion' ? { estadoRevertido: row.auditoria.estado } : {}),
+      },
+    })
 
     return c.json({ data: resultado })
   },
@@ -1087,6 +1218,7 @@ app.post('/auditorias/:id/materialidad/aprobar', async (c) => {
   if (!esSocioResponsable(user, row.auditoria)) {
     return c.json({ error: ERROR_NO_SOCIO_RESPONSABLE }, 403)
   }
+  if (await encargoCerrado(id)) return c.json({ error: ERROR_ENCARGO_CERRADO }, 409)
 
   const [materialidad] = await db
     .select()
@@ -1171,14 +1303,15 @@ app.post(
     }),
   ),
   async (c) => {
-    const { firmaId } = c.get('user')
+    const user = c.get('user')
     const id = c.req.param('id')
     const body = c.req.valid('json')
 
-    const row = await cargarAuditoria(id, firmaId)
+    const row = await cargarAuditoria(id, user.firmaId)
     if (!row) {
       return c.json({ error: { code: 'NOT_FOUND', message: 'Auditoría no encontrada' } }, 404)
     }
+    if (await encargoCerrado(id)) return c.json({ error: ERROR_ENCARGO_CERRADO }, 409)
 
     const [riesgo] = await db
       .insert(riesgos)
@@ -1193,6 +1326,14 @@ app.post(
         origen: 'manual',
       })
       .returning()
+
+    registrarEvento(user, {
+      accion: 'riesgo.crear',
+      entidad: 'riesgo',
+      entidadId: riesgo.id,
+      auditoriaId: id,
+      detalle: { area: riesgo.area, combinado: riesgo.riesgoCombinado },
+    })
 
     return c.json({ data: riesgo }, 201)
   },
@@ -1212,15 +1353,16 @@ app.put(
     }),
   ),
   async (c) => {
-    const { firmaId } = c.get('user')
+    const user = c.get('user')
     const id = c.req.param('id')
     const riesgoId = c.req.param('riesgoId')
     const body = c.req.valid('json')
 
-    const row = await cargarAuditoria(id, firmaId)
+    const row = await cargarAuditoria(id, user.firmaId)
     if (!row) {
       return c.json({ error: { code: 'NOT_FOUND', message: 'Auditoría no encontrada' } }, 404)
     }
+    if (await encargoCerrado(id)) return c.json({ error: ERROR_ENCARGO_CERRADO }, 409)
 
     const [existente] = await db
       .select()
@@ -1247,6 +1389,14 @@ app.put(
       .where(eq(riesgos.id, riesgoId))
       .returning()
 
+    registrarEvento(user, {
+      accion: 'riesgo.editar',
+      entidad: 'riesgo',
+      entidadId: riesgoId,
+      auditoriaId: id,
+      detalle: { campos: Object.keys(body), combinado: actualizado.riesgoCombinado },
+    })
+
     return c.json({ data: actualizado })
   },
 )
@@ -1264,6 +1414,7 @@ app.delete('/auditorias/:id/riesgos/:riesgoId', async (c) => {
   if (!row) {
     return c.json({ error: { code: 'NOT_FOUND', message: 'Auditoría no encontrada' } }, 404)
   }
+  if (await encargoCerrado(id)) return c.json({ error: ERROR_ENCARGO_CERRADO }, 409)
 
   const [riesgo] = await db
     .select({ id: riesgos.id })
@@ -1299,6 +1450,7 @@ app.delete('/auditorias/:id/riesgos/:riesgoId', async (c) => {
       await tx.delete(notasRevision).where(inArray(notasRevision.papelTrabajoId, papelIds))
       await tx.delete(hallazgos).where(inArray(hallazgos.papelTrabajoId, papelIds))
       await tx.delete(evidencias).where(inArray(evidencias.papelTrabajoId, papelIds))
+      await tx.delete(papelesSnapshots).where(inArray(papelesSnapshots.papelTrabajoId, papelIds))
     }
     // Tareas ligadas al riesgo o a cualquiera de sus papeles.
     await tx.delete(tareas).where(
@@ -1328,13 +1480,14 @@ app.delete('/auditorias/:id/riesgos/:riesgoId', async (c) => {
 
 // POST /auditorias/:id/riesgos/sugerir — IA stub: inserta riesgos típicos del sector
 app.post('/auditorias/:id/riesgos/sugerir', async (c) => {
-  const { firmaId } = c.get('user')
+  const user = c.get('user')
   const id = c.req.param('id')
 
-  const row = await cargarAuditoria(id, firmaId)
+  const row = await cargarAuditoria(id, user.firmaId)
   if (!row) {
     return c.json({ error: { code: 'NOT_FOUND', message: 'Auditoría no encontrada' } }, 404)
   }
+  if (await encargoCerrado(id)) return c.json({ error: ERROR_ENCARGO_CERRADO }, 409)
 
   const sugerencias = sugerirRiesgos(row.empresa.sector)
   if (sugerencias.length === 0) {
@@ -1357,6 +1510,13 @@ app.post('/auditorias/:id/riesgos/sugerir', async (c) => {
       })),
     )
     .returning()
+
+  registrarEvento(user, {
+    accion: 'riesgo.sugerir',
+    entidad: 'riesgo',
+    auditoriaId: id,
+    detalle: { cantidad: insertados.length, sector: row.empresa.sector },
+  })
 
   return c.json({ data: insertados }, 201)
 })
@@ -1493,12 +1653,13 @@ app.post(
     }),
   ),
   async (c) => {
-    const { firmaId } = c.get('user')
+    const user = c.get('user')
     const id = c.req.param('id')
     const { candidatos, origen } = c.req.valid('json')
 
-    const row = await cargarAuditoria(id, firmaId)
+    const row = await cargarAuditoria(id, user.firmaId)
     if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Auditoría no encontrada' } }, 404)
+    if (await encargoCerrado(id)) return c.json({ error: ERROR_ENCARGO_CERRADO }, 409)
 
     const insertados = await db
       .insert(riesgos)
@@ -1515,6 +1676,13 @@ app.post(
         })),
       )
       .returning()
+
+    registrarEvento(user, {
+      accion: 'riesgo.agregar_candidatos',
+      entidad: 'riesgo',
+      auditoriaId: id,
+      detalle: { cantidad: insertados.length, origen },
+    })
 
     return c.json({ data: insertados }, 201)
   },

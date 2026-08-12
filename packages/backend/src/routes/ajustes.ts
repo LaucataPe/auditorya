@@ -1,10 +1,11 @@
 import { Hono } from 'hono'
-import { zValidator } from '@hono/zod-validator'
+import { zValidator } from '../lib/validacion'
 import { z } from 'zod'
 import { and, desc, eq } from 'drizzle-orm'
 import { db } from '../db/client'
 import { auditorias, empresas, materialidades, ajustes } from '../db/schema'
 import { authMiddleware } from '../middleware/auth'
+import { encargoCerrado, ERROR_ENCARGO_CERRADO } from '../lib/encargo'
 import { registrarEvento } from '../lib/eventos'
 import { evaluarOpinion } from '@auditorya/types'
 import type { JwtPayload } from '../lib/jwt'
@@ -81,8 +82,18 @@ app.post(
     const id = c.req.param('id')
     const body = c.req.valid('json')
 
-    if (!(await cargarAuditoria(id, user.firmaId))) {
+    const auditoria = await cargarAuditoria(id, user.firmaId)
+    if (!auditoria) {
       return c.json({ error: { code: 'NOT_FOUND', message: 'Auditoría no encontrada' } }, 404)
+    }
+    if (await encargoCerrado(id)) return c.json({ error: ERROR_ENCARGO_CERRADO }, 409)
+
+    // La hoja de ajustes (NIA 450) se evalúa frente a la materialidad aprobada.
+    if (!auditoria.materialidadAprobada) {
+      return c.json(
+        { error: { code: 'MATERIALIDAD_NO_APROBADA', message: 'No se pueden registrar ajustes sin aprobar la materialidad' } },
+        409,
+      )
     }
 
     const [creado] = await db
@@ -125,12 +136,13 @@ app.put(
     }),
   ),
   async (c) => {
-    const { firmaId } = c.get('user')
+    const user = c.get('user')
     const ajusteId = c.req.param('id')
     const body = c.req.valid('json')
 
-    const row = await cargarAjuste(ajusteId, firmaId)
+    const row = await cargarAjuste(ajusteId, user.firmaId)
     if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Ajuste no encontrado' } }, 404)
+    if (await encargoCerrado(row.auditoria.id)) return c.json({ error: ERROR_ENCARGO_CERRADO }, 409)
 
     const updates: Record<string, unknown> = {}
     if (body.descripcion !== undefined) updates.descripcion = body.descripcion
@@ -144,19 +156,38 @@ app.put(
     }
 
     await db.update(ajustes).set(updates).where(eq(ajustes.id, ajusteId))
+
+    registrarEvento(user, {
+      accion: 'ajuste.editar',
+      entidad: 'ajuste',
+      entidadId: ajusteId,
+      auditoriaId: row.auditoria.id,
+      detalle: { campos: Object.keys(updates) },
+    })
+
     return c.json({ data: await armarHoja(row.auditoria.id) })
   },
 )
 
 // DELETE /ajustes/:id
 app.delete('/ajustes/:id', async (c) => {
-  const { firmaId } = c.get('user')
+  const user = c.get('user')
   const ajusteId = c.req.param('id')
 
-  const row = await cargarAjuste(ajusteId, firmaId)
+  const row = await cargarAjuste(ajusteId, user.firmaId)
   if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Ajuste no encontrado' } }, 404)
+  if (await encargoCerrado(row.auditoria.id)) return c.json({ error: ERROR_ENCARGO_CERRADO }, 409)
 
   await db.delete(ajustes).where(eq(ajustes.id, ajusteId))
+
+  registrarEvento(user, {
+    accion: 'ajuste.eliminar',
+    entidad: 'ajuste',
+    entidadId: ajusteId,
+    auditoriaId: row.auditoria.id,
+    detalle: { descripcion: row.ajuste.descripcion, monto: Number(row.ajuste.monto), corregido: row.ajuste.corregido },
+  })
+
   return c.json({ data: await armarHoja(row.auditoria.id) })
 })
 

@@ -10,7 +10,7 @@
  * sugerir-riesgos, que cae al catálogo estático por sector (fallback).
  */
 import { Hono } from 'hono'
-import { zValidator } from '@hono/zod-validator'
+import { zValidator } from '../lib/validacion'
 import { z } from 'zod'
 import { and, eq, isNull, lte } from 'drizzle-orm'
 import { db } from '../db/client'
@@ -23,6 +23,7 @@ import { authMiddleware } from '../middleware/auth'
 import { iaDisponible, completarJSON, completarTexto, MODELO, type MensajeChat } from '../lib/llm'
 import { sugerirRiesgos } from '../lib/ia'
 import { registrarEvento } from '../lib/eventos'
+import { excedeLimite } from '../lib/rate-limit'
 import type { JwtPayload } from '../lib/jwt'
 
 const app = new Hono<{ Variables: { user: JwtPayload } }>()
@@ -37,6 +38,23 @@ const AREAS = [
 const ERROR_IA = {
   code: 'IA_NO_DISPONIBLE',
   message: 'Las funciones de IA no están disponibles: configura OPENROUTER_API_KEY en el backend',
+} as const
+
+const ERROR_IA_FALLO = {
+  code: 'IA_ERROR',
+  message: 'El servicio de IA no respondió correctamente. Inténtalo de nuevo en unos momentos.',
+} as const
+
+// Cuota por usuario: protege la API key de la firma de bucles y abuso de coste.
+const LIMITE_IA = { max: 30, ventanaMs: 10 * 60 * 1000 } // 30 llamadas / 10 min
+
+function excedeCuotaIA(userId: string): boolean {
+  return excedeLimite(`ia:${userId}`, LIMITE_IA.max, LIMITE_IA.ventanaMs)
+}
+
+const ERROR_CUOTA_IA = {
+  code: 'IA_CUOTA',
+  message: 'Has alcanzado el límite de llamadas de IA por ahora. Espera unos minutos.',
 } as const
 
 // ─── Helpers de contexto ─────────────────────────────────────────────────────
@@ -207,17 +225,20 @@ app.post('/auditorias/:id/ia/analisis-balance', async (c) => {
   const ctx = await contextoEncargo(id, user.firmaId)
   if (!ctx) return c.json({ error: { code: 'NOT_FOUND', message: 'Auditoría no encontrada' } }, 404)
   if (!iaDisponible()) return c.json({ error: ERROR_IA }, 503)
+  if (excedeCuotaIA(user.sub)) return c.json({ error: ERROR_CUOTA_IA }, 429)
 
   const balance = await resumenBalance(id)
   if (!balance) {
     return c.json({ error: { code: 'SIN_BALANCE', message: 'Carga primero el balance de prueba' } }, 409)
   }
 
-  const respuesta = await completarTexto({
-    system: SYSTEM_AUDITOR,
-    mensajes: [{
-      role: 'user',
-      content: `Realiza una revisión analítica preliminar (NIA 520) de este balance de prueba. Estructura tu respuesta en:
+  let respuesta: string
+  try {
+    respuesta = await completarTexto({
+      system: SYSTEM_AUDITOR,
+      mensajes: [{
+        role: 'user',
+        content: `Realiza una revisión analítica preliminar (NIA 520) de este balance de prueba. Estructura tu respuesta en:
 1. Lectura general de la situación financiera
 2. Variaciones y saldos que ameritan atención del auditor (explica por qué)
 3. Posibles riesgos de incorrección material que se desprenden de los datos
@@ -227,9 +248,13 @@ CONTEXTO:
 ${ctx.texto}
 
 ${balance}`,
-    }],
-    maxTokens: 2500,
-  })
+      }],
+      maxTokens: 2500,
+    })
+  } catch (err) {
+    console.error('[ia] analisis-balance falló:', (err as Error).message)
+    return c.json({ error: ERROR_IA_FALLO }, 502)
+  }
 
   registrarEvento(user, { accion: 'ia.analisis_balance', entidad: 'auditoria', entidadId: id, auditoriaId: id })
 
@@ -257,6 +282,7 @@ app.post(
     const ctx = await contextoEncargo(id, user.firmaId)
     if (!ctx) return c.json({ error: { code: 'NOT_FOUND', message: 'Auditoría no encontrada' } }, 404)
     if (!iaDisponible()) return c.json({ error: ERROR_IA }, 503)
+    if (excedeCuotaIA(user.sub)) return c.json({ error: ERROR_CUOTA_IA }, 429)
 
     // Estado actual del encargo para respuestas situadas.
     const [riesgosRows, papelesRows] = await Promise.all([
@@ -268,17 +294,23 @@ app.post(
 
     const mensajes: MensajeChat[] = [...(historial ?? []), { role: 'user', content: pregunta }]
 
-    const respuesta = await completarTexto({
-      system: `${SYSTEM_AUDITOR}
+    let respuesta: string
+    try {
+      respuesta = await completarTexto({
+        system: `${SYSTEM_AUDITOR}
 
 Actúas como asistente del equipo de auditoría dentro de la plataforma AuditorYa. Respondes dudas sobre NIA, procedimientos, normativa colombiana y sobre este encargo en particular. Si te preguntan algo fuera del ámbito de auditoría/contabilidad, redirige amablemente al tema.
 
 CONTEXTO DEL ENCARGO:
 ${ctx.texto}
 ${estado}`,
-      mensajes,
-      maxTokens: 1500,
-    })
+        mensajes,
+        maxTokens: 1500,
+      })
+    } catch (err) {
+      console.error('[ia] asistente falló:', (err as Error).message)
+      return c.json({ error: ERROR_IA_FALLO }, 502)
+    }
 
     registrarEvento(user, { accion: 'ia.asistente', entidad: 'auditoria', entidadId: id, auditoriaId: id })
 
@@ -302,6 +334,7 @@ app.post(
     const { campo, indicaciones } = c.req.valid('json')
 
     if (!iaDisponible()) return c.json({ error: ERROR_IA }, 503)
+    if (excedeCuotaIA(user.sub)) return c.json({ error: ERROR_CUOTA_IA }, 429)
 
     const [row] = await db
       .select({ papel: papelesTrabajo, auditoria: auditorias, empresa: empresas })
@@ -328,11 +361,13 @@ app.post(
       conclusion: 'la CONCLUSIÓN del papel de trabajo (juicio profesional sobre el objetivo, referencia a la evidencia)',
     }
 
-    const texto = await completarTexto({
-      system: SYSTEM_AUDITOR,
-      mensajes: [{
-        role: 'user',
-        content: `Redacta ${ETIQUETA[campo]} para este papel de trabajo (NIA 230). Devuelve solo el texto listo para pegar, sin encabezados ni comentarios.
+    let texto: string
+    try {
+      texto = await completarTexto({
+        system: SYSTEM_AUDITOR,
+        mensajes: [{
+          role: 'user',
+          content: `Redacta ${ETIQUETA[campo]} para este papel de trabajo (NIA 230). Devuelve solo el texto listo para pegar, sin encabezados ni comentarios.
 
 Empresa: ${row.empresa.nombre} — sector ${row.empresa.sector}, marco ${row.empresa.marcoContable}, período ${row.auditoria.fechaInicio} a ${row.auditoria.fechaFin}.
 Papel de trabajo: "${row.papel.titulo}" — área: ${row.papel.area}.
@@ -340,9 +375,13 @@ ${riesgoTexto}
 ${row.papel.procedimiento && campo !== 'procedimiento' ? `Procedimiento ya documentado: ${row.papel.procedimiento}` : ''}
 ${row.papel.hallazgos && campo === 'conclusion' ? `Hallazgos documentados: ${row.papel.hallazgos}` : ''}
 ${indicaciones ? `Indicaciones del auditor: ${indicaciones}` : ''}`,
-      }],
-      maxTokens: 1200,
-    })
+        }],
+        maxTokens: 1200,
+      })
+    } catch (err) {
+      console.error('[ia] redactar falló:', (err as Error).message)
+      return c.json({ error: ERROR_IA_FALLO }, 502)
+    }
 
     registrarEvento(user, {
       accion: 'ia.redactar_papel',

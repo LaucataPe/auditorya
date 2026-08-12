@@ -1,11 +1,12 @@
 import { Hono } from 'hono'
-import { zValidator } from '@hono/zod-validator'
+import { zValidator } from '../lib/validacion'
 import { z } from 'zod'
 import { and, eq } from 'drizzle-orm'
 import bcrypt from 'bcryptjs'
 import { db } from '../db/client'
 import { usuarios, rolesFirma } from '../db/schema'
 import { authMiddleware } from '../middleware/auth'
+import { registrarEvento } from '../lib/eventos'
 import type { JwtPayload } from '../lib/jwt'
 
 const app = new Hono<{ Variables: { user: JwtPayload } }>()
@@ -47,7 +48,8 @@ app.post(
     }),
   ),
   async (c) => {
-    const { firmaId, rol: rolActual } = c.get('user')
+    const user = c.get('user')
+    const { firmaId, rol: rolActual } = user
 
     if (rolActual !== 'socio' && rolActual !== 'gerente') {
       return c.json({ error: { code: 'FORBIDDEN', message: 'Solo el socio o gerente pueden añadir miembros' } }, 403)
@@ -62,6 +64,11 @@ app.post(
       .where(and(eq(rolesFirma.id, rolId), eq(rolesFirma.firmaId, firmaId)))
     if (!rolElegido) {
       return c.json({ error: { code: 'ROL_INVALIDO', message: 'El rol no existe en esta firma' } }, 400)
+    }
+
+    // Solo un socio puede otorgar el nivel socio (evita la escalada gerente → socio).
+    if (rolElegido.nivel === 'socio' && rolActual !== 'socio') {
+      return c.json({ error: { code: 'FORBIDDEN', message: 'Solo un socio puede otorgar el nivel de socio' } }, 403)
     }
 
     const [existe] = await db.select().from(usuarios).where(eq(usuarios.email, email))
@@ -83,6 +90,13 @@ app.post(
         createdAt: usuarios.createdAt,
       })
 
+    registrarEvento(user, {
+      accion: 'usuario.crear',
+      entidad: 'usuario',
+      entidadId: nuevo.id,
+      detalle: { email: nuevo.email, rol: rolElegido.nivel, rolNombre: rolElegido.nombre },
+    })
+
     return c.json({ data: { ...nuevo, rolNombre: rolElegido.nombre } }, 201)
   },
 )
@@ -98,7 +112,8 @@ app.put(
     }),
   ),
   async (c) => {
-    const { firmaId, rol: rolActual, sub } = c.get('user')
+    const user = c.get('user')
+    const { firmaId, rol: rolActual, sub } = user
 
     if (rolActual !== 'socio' && rolActual !== 'gerente') {
       return c.json({ error: { code: 'FORBIDDEN', message: 'Solo el socio o gerente pueden editar miembros' } }, 403)
@@ -133,6 +148,10 @@ app.put(
       if (!rolElegido) {
         return c.json({ error: { code: 'ROL_INVALIDO', message: 'El rol no existe en esta firma' } }, 400)
       }
+      // Solo un socio puede otorgar el nivel socio (evita la escalada gerente → socio).
+      if (rolElegido.nivel === 'socio' && rolActual !== 'socio') {
+        return c.json({ error: { code: 'FORBIDDEN', message: 'Solo un socio puede otorgar el nivel de socio' } }, 403)
+      }
     }
 
     const [actualizado] = await db
@@ -151,6 +170,16 @@ app.put(
         rolId: usuarios.rolId,
         createdAt: usuarios.createdAt,
       })
+
+    registrarEvento(user, {
+      accion: 'usuario.editar',
+      entidad: 'usuario',
+      entidadId: id,
+      detalle: {
+        campos: Object.keys(body),
+        ...(rolElegido ? { rolAnterior: miembro.rol, rolNuevo: rolElegido.nivel, rolNombre: rolElegido.nombre } : {}),
+      },
+    })
 
     return c.json({ data: { ...actualizado, rolNombre: rolElegido?.nombre } })
   },

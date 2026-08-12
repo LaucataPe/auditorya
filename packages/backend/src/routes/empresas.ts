@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import { zValidator } from '@hono/zod-validator'
+import { zValidator } from '../lib/validacion'
 import { z } from 'zod'
 import { and, desc, eq } from 'drizzle-orm'
 import { createHash, randomUUID } from 'node:crypto'
@@ -61,12 +61,17 @@ app.post(
       }),
   ),
   async (c) => {
-    const { firmaId } = c.get('user')
+    const user = c.get('user')
+    const { firmaId } = user
     const body = c.req.valid('json')
 
-    const [existe] = await db.select().from(empresas).where(eq(empresas.nit, body.nit))
+    // Unicidad por firma: otra firma puede tener al mismo cliente sin conflicto.
+    const [existe] = await db
+      .select()
+      .from(empresas)
+      .where(and(eq(empresas.nit, body.nit), eq(empresas.firmaId, firmaId)))
     if (existe) {
-      return c.json({ error: { code: 'NIT_DUPLICADO', message: 'Ya existe una empresa con ese NIT' } }, 409)
+      return c.json({ error: { code: 'NIT_DUPLICADO', message: 'Ya tienes una empresa con ese NIT' } }, 409)
     }
 
     // El sector (select controlado) manda; si no viene, se deriva del CIIU.
@@ -86,6 +91,14 @@ app.post(
         estadoEncargo: 'pendiente',
       })
       .returning()
+
+    registrarEvento(user, {
+      accion: 'empresa.crear',
+      entidad: 'empresa',
+      entidadId: empresa.id,
+      empresaId: empresa.id,
+      detalle: { nombre: empresa.nombre, nit: empresa.nit, sector: empresa.sector },
+    })
 
     return c.json({ data: empresa }, 201)
   },
@@ -126,9 +139,12 @@ app.put(
     }
 
     if (body.nit && body.nit !== empresa.nit) {
-      const [duplicado] = await db.select().from(empresas).where(eq(empresas.nit, body.nit))
+      const [duplicado] = await db
+        .select()
+        .from(empresas)
+        .where(and(eq(empresas.nit, body.nit), eq(empresas.firmaId, firmaId)))
       if (duplicado) {
-        return c.json({ error: { code: 'NIT_DUPLICADO', message: 'Ya existe una empresa con ese NIT' } }, 409)
+        return c.json({ error: { code: 'NIT_DUPLICADO', message: 'Ya tienes una empresa con ese NIT' } }, 409)
       }
     }
 
@@ -162,6 +178,14 @@ app.put(
       .set(updates)
       .where(eq(empresas.id, id))
       .returning()
+
+    registrarEvento(c.get('user'), {
+      accion: 'empresa.editar',
+      entidad: 'empresa',
+      entidadId: id,
+      empresaId: id,
+      detalle: { campos: Object.keys(updates) },
+    })
 
     return c.json({ data: actualizada })
   },

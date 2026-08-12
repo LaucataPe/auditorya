@@ -25,21 +25,40 @@ import superadminRoutes from './routes/superadmin'
 const app = new Hono()
 
 app.use('*', logger())
+
+// CORS: solo el frontend configurado (con y sin www) y localhost en desarrollo.
+// Cualquier otro origen se deniega (sin header Access-Control-Allow-Origin).
+const FRONTEND = process.env.FRONTEND_URL ?? 'http://localhost:5173'
+const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+const ORIGEN_PERMITIDO = new RegExp(
+  `^https?://(www\\.)?${escapeRegex(FRONTEND.replace(/^https?:\/\/(www\.)?/, ''))}$`,
+)
 app.use(
   '*',
   cors({
     origin: (origin) => {
-      const allowed = process.env.FRONTEND_URL ?? 'http://localhost:5173'
-      // Acepta localhost en desarrollo
-      if (origin && /^http:\/\/localhost:\d+$/.test(origin)) return origin
-      // Acepta el dominio con y sin www
-      const base = allowed.replace(/^https?:\/\/(www\.)?/, '')
-      if (origin && new RegExp(`^https?://(www\\.)?${base.replace('.', '\\.')}$`).test(origin)) return origin
-      return allowed
+      if (!origin) return FRONTEND
+      if (/^http:\/\/localhost:\d+$/.test(origin)) return origin
+      if (ORIGEN_PERMITIDO.test(origin)) return origin
+      return ''
     },
     credentials: true,
   }),
 )
+
+// Contrato de error uniforme también para 404 y errores no manejados.
+app.notFound((c) => c.json({ error: { code: 'NOT_FOUND', message: 'Ruta no encontrada' } }, 404))
+app.onError((err, c) => {
+  // UUID malformado en un parámetro de ruta → error del cliente, no 500.
+  const pgCode =
+    (err as { code?: string }).code ?? ((err as { cause?: { code?: string } }).cause?.code)
+  if (pgCode === '22P02') {
+    return c.json({ error: { code: 'ID_INVALIDO', message: 'Identificador con formato inválido' } }, 400)
+  }
+  console.error(`[error] ${c.req.method} ${c.req.path}:`, err)
+  // Nunca se filtra el detalle interno al cliente.
+  return c.json({ error: { code: 'INTERNAL', message: 'Error interno del servidor' } }, 500)
+})
 
 app.get('/health', (c) => c.json({ status: 'ok' }))
 

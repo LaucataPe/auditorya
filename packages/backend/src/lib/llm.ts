@@ -24,27 +24,39 @@ export type MensajeChat = { role: 'user' | 'assistant'; content: string }
 
 type ChatMsg = { role: 'system' | 'user' | 'assistant'; content: string }
 
+// Una petición colgada a OpenRouter no puede bloquear la conexión HTTP indefinidamente.
+const TIMEOUT_MS = 60_000
+
 /** Llamada base al endpoint de chat de OpenRouter. Devuelve el texto del asistente. */
 async function chat(opts: { system: string; messages: MensajeChat[]; maxTokens?: number }): Promise<string> {
   if (!iaDisponible()) throw new Error('OPENROUTER_API_KEY no configurada')
 
   const messages: ChatMsg[] = [{ role: 'system', content: opts.system }, ...opts.messages]
 
-  const res = await fetch(`${BASE_URL}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
-      'Content-Type': 'application/json',
-      // Cabeceras de atribución recomendadas por OpenRouter (opcionales).
-      'HTTP-Referer': process.env.OPENROUTER_SITE_URL ?? 'https://auditorya.app',
-      'X-Title': 'AuditorYa',
-    },
-    body: JSON.stringify({
-      model: MODELO,
-      max_tokens: opts.maxTokens ?? 1500,
-      messages,
-    }),
-  })
+  let res: Response
+  try {
+    res = await fetch(`${BASE_URL}/chat/completions`, {
+      method: 'POST',
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+      headers: {
+        Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+        'Content-Type': 'application/json',
+        // Cabeceras de atribución recomendadas por OpenRouter (opcionales).
+        'HTTP-Referer': process.env.OPENROUTER_SITE_URL ?? 'https://auditorya.app',
+        'X-Title': 'AuditorYa',
+      },
+      body: JSON.stringify({
+        model: MODELO,
+        max_tokens: opts.maxTokens ?? 1500,
+        messages,
+      }),
+    })
+  } catch (err) {
+    if ((err as Error).name === 'TimeoutError' || (err as Error).name === 'AbortError') {
+      throw new Error(`OpenRouter no respondió en ${TIMEOUT_MS / 1000}s (timeout)`)
+    }
+    throw err
+  }
 
   if (!res.ok) {
     const detalle = await res.text().catch(() => '')

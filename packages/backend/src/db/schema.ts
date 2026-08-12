@@ -71,7 +71,9 @@ export const empresas = pgTable('empresas', {
   id: uuid('id').primaryKey().defaultRandom(),
   firmaId: uuid('firma_id').notNull().references(() => firmas.id),
   nombre: text('nombre').notNull(),
-  nit: text('nit').notNull().unique(),
+  // Único por firma (índice empresas_firma_nit_unq), no global: dos firmas pueden
+  // tener al mismo cliente sin filtrarse mutuamente la cartera.
+  nit: text('nit').notNull(),
   sector: text('sector').notNull(),
   // Entendimiento del cliente — identidad (NIA 315)
   ciiu: text('ciiu'),
@@ -88,7 +90,10 @@ export const empresas = pgTable('empresas', {
     .default('pendiente')
     .notNull(),
   createdAt: timestamp('created_at').defaultNow().notNull(),
-})
+},
+(t) => ({
+  firmaNitUnq: uniqueIndex('empresas_firma_nit_unq').on(t.firmaId, t.nit),
+}))
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Documentos legales del cliente (RUT, Cámara de Comercio, etc.) — archivo
@@ -515,12 +520,33 @@ export const eventos = pgTable('eventos', {
   id: uuid('id').primaryKey().defaultRandom(),
   firmaId: uuid('firma_id').notNull().references(() => firmas.id),
   usuarioId: uuid('usuario_id').notNull().references(() => usuarios.id),
-  auditoriaId: uuid('auditoria_id').references(() => auditorias.id),
+  // Sin FK a propósito: la pista debe sobrevivir al borrado del encargo (referencia histórica).
+  auditoriaId: uuid('auditoria_id'),
   empresaId: uuid('empresa_id').references(() => empresas.id),
   accion: text('accion').notNull(), // p. ej. 'papel.aprobar', 'materialidad.aprobar'
   entidad: text('entidad').notNull(), // 'papel_trabajo', 'informe', 'materialidad', ...
   entidadId: uuid('entidad_id'),
   detalle: jsonb('detalle').$type<Record<string, unknown>>(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Snapshot inmutable del papel de trabajo en el momento de su aprobación (NIA 230).
+// `contenido` congela el papel completo y la metadata de su evidencia; reabrir y
+// editar el papel no toca los snapshots ya tomados.
+// ─────────────────────────────────────────────────────────────────────────────
+export const papelesSnapshots = pgTable('papeles_snapshots', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  papelTrabajoId: uuid('papel_trabajo_id')
+    .notNull()
+    .references(() => papelesTrabajo.id),
+  auditoriaId: uuid('auditoria_id')
+    .notNull()
+    .references(() => auditorias.id),
+  contenido: jsonb('contenido').$type<Record<string, unknown>>().notNull(),
+  aprobadoPor: uuid('aprobado_por')
+    .notNull()
+    .references(() => usuarios.id),
   createdAt: timestamp('created_at').defaultNow().notNull(),
 })
 

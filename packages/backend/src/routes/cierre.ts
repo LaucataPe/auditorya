@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
-import { zValidator } from '@hono/zod-validator'
+import { zValidator } from '../lib/validacion'
 import { z } from 'zod'
-import { and, desc, eq } from 'drizzle-orm'
+import { and, desc, eq, ne } from 'drizzle-orm'
 import { db } from '../db/client'
 import {
   auditorias,
@@ -9,9 +9,11 @@ import {
   papelesTrabajo,
   notasRevision,
   cierresAuditoria,
+  informes,
 } from '../db/schema'
 import { authMiddleware } from '../middleware/auth'
 import { esSocioResponsable, ERROR_NO_SOCIO_RESPONSABLE } from '../lib/permisos'
+import { encargoCerrado, ERROR_ENCARGO_CERRADO } from '../lib/encargo'
 import { registrarEvento } from '../lib/eventos'
 import type { JwtPayload } from '../lib/jwt'
 
@@ -95,6 +97,7 @@ app.post(
 
     const papel = await cargarPapel(papelId, user.firmaId)
     if (!papel) return c.json({ error: { code: 'NOT_FOUND', message: 'Papel de trabajo no encontrado' } }, 404)
+    if (await encargoCerrado(papel.auditoriaId)) return c.json({ error: ERROR_ENCARGO_CERRADO }, 409)
 
     const [nota] = await db
       .insert(notasRevision)
@@ -131,6 +134,7 @@ app.put(
 
     const nota = await cargarNota(notaId, user.firmaId)
     if (!nota) return c.json({ error: { code: 'NOT_FOUND', message: 'Nota no encontrada' } }, 404)
+    if (await encargoCerrado(nota.auditoriaId)) return c.json({ error: ERROR_ENCARGO_CERRADO }, 409)
 
     const updates: Record<string, string | Date | null> = {}
     if (body.texto) updates.texto = body.texto
@@ -156,19 +160,39 @@ app.put(
       .where(eq(notasRevision.id, notaId))
       .returning()
 
+    if (body.estado && body.estado !== nota.estado) {
+      registrarEvento(user, {
+        accion: body.estado === 'resuelta' ? 'nota_revision.resolver' : 'nota_revision.reabrir',
+        entidad: 'nota_revision',
+        entidadId: notaId,
+        auditoriaId: nota.auditoriaId,
+        detalle: { papelId: nota.papelTrabajoId },
+      })
+    }
+
     return c.json({ data: actualizada })
   },
 )
 
 // DELETE /notas-revision/:id
 app.delete('/notas-revision/:id', async (c) => {
-  const { firmaId } = c.get('user')
+  const user = c.get('user')
   const notaId = c.req.param('id')
 
-  const nota = await cargarNota(notaId, firmaId)
+  const nota = await cargarNota(notaId, user.firmaId)
   if (!nota) return c.json({ error: { code: 'NOT_FOUND', message: 'Nota no encontrada' } }, 404)
+  if (await encargoCerrado(nota.auditoriaId)) return c.json({ error: ERROR_ENCARGO_CERRADO }, 409)
 
   await db.delete(notasRevision).where(eq(notasRevision.id, notaId))
+
+  registrarEvento(user, {
+    accion: 'nota_revision.eliminar',
+    entidad: 'nota_revision',
+    entidadId: notaId,
+    auditoriaId: nota.auditoriaId,
+    detalle: { papelId: nota.papelTrabajoId, estado: nota.estado },
+  })
+
   return c.json({ data: { id: notaId } })
 })
 
@@ -209,11 +233,11 @@ app.put(
     }),
   ),
   async (c) => {
-    const { firmaId } = c.get('user')
+    const user = c.get('user')
     const id = c.req.param('id')
     const body = c.req.valid('json')
 
-    if (!(await cargarAuditoria(id, firmaId))) {
+    if (!(await cargarAuditoria(id, user.firmaId))) {
       return c.json({ error: { code: 'NOT_FOUND', message: 'Auditoría no encontrada' } }, 404)
     }
 
@@ -240,11 +264,22 @@ app.put(
       .where(eq(cierresAuditoria.id, cierre.id))
       .returning()
 
+    registrarEvento(user, {
+      accion: 'cierre.checklist',
+      entidad: 'cierre_auditoria',
+      entidadId: cierre.id,
+      auditoriaId: id,
+      detalle: { campos: Object.keys(updates) },
+    })
+
     return c.json({ data: actualizado })
   },
 )
 
-// POST /auditorias/:id/cierre/cerrar — Regla: solo el socio; sin notas de revisión abiertas
+// POST /auditorias/:id/cierre/cerrar — Regla: solo el socio. Para cerrar se exige:
+// sin notas de revisión abiertas, todos los papeles aprobados (RF), checklist NIA
+// 560/570/220 completo y el informe final (dictamen / informe AI) aprobado.
+// Al cerrar, el encargo pasa a estado 'finalizada' y su archivo queda congelado.
 app.post('/auditorias/:id/cierre/cerrar', async (c) => {
   const user = c.get('user')
   const id = c.req.param('id')
@@ -267,19 +302,58 @@ app.post('/auditorias/:id/cierre/cerrar', async (c) => {
     )
   }
 
+  // Todos los papeles de trabajo deben estar aprobados antes de ensamblar el archivo (NIA 230).
+  const sinAprobar = await db
+    .select({ id: papelesTrabajo.id })
+    .from(papelesTrabajo)
+    .where(and(eq(papelesTrabajo.auditoriaId, id), ne(papelesTrabajo.estado, 'aprobado')))
+  if (sinAprobar.length > 0) {
+    return c.json(
+      { error: { code: 'PAPELES_SIN_APROBAR', message: `Hay ${sinAprobar.length} papel(es) de trabajo sin aprobar. Apruébalos o elimínalos antes de cerrar.` } },
+      409,
+    )
+  }
+
   const cierre = await obtenerCierre(id)
+  const faltantes: string[] = []
+  if (!cierre.hechosPosterioresEvaluado) faltantes.push('hechos posteriores (NIA 560)')
+  if (!cierre.negocioMarchaEvaluado) faltantes.push('negocio en marcha (NIA 570)')
+  if (!cierre.revisionCalidadCompleta) faltantes.push('revisión de calidad (NIA 220)')
+  if (faltantes.length > 0) {
+    return c.json(
+      { error: { code: 'CHECKLIST_INCOMPLETO', message: `Completa el checklist de cierre antes de cerrar: ${faltantes.join(', ')}.` } },
+      409,
+    )
+  }
+
+  // El informe final del encargo debe estar aprobado por el socio.
+  const tipoFinal = auditoria.tipoServicio === 'auditoria_interna' ? 'informe_ai' : 'dictamen'
+  const [informeFinal] = await db
+    .select({ estado: informes.estado })
+    .from(informes)
+    .where(and(eq(informes.auditoriaId, id), eq(informes.tipo, tipoFinal)))
+  if (informeFinal?.estado !== 'aprobado') {
+    const nombre = tipoFinal === 'dictamen' ? 'el dictamen (NIA 700)' : 'el informe de auditoría interna'
+    return c.json(
+      { error: { code: 'INFORME_NO_APROBADO', message: `No se puede cerrar el encargo sin aprobar ${nombre}.` } },
+      409,
+    )
+  }
+
   const [cerrado] = await db
     .update(cierresAuditoria)
     .set({ cerrado: true, cerradoPor: user.sub, cerradoAt: new Date() })
     .where(eq(cierresAuditoria.id, cierre.id))
     .returning()
 
+  await db.update(auditorias).set({ estado: 'finalizada' }).where(eq(auditorias.id, id))
+
   registrarEvento(user, {
     accion: 'cierre.cerrar',
     entidad: 'cierre_auditoria',
     entidadId: cierre.id,
     auditoriaId: id,
-    detalle: {},
+    detalle: { informeFinal: tipoFinal, estado: 'finalizada' },
   })
 
   return c.json({ data: cerrado })
@@ -304,12 +378,15 @@ app.post('/auditorias/:id/cierre/reabrir', async (c) => {
     .where(eq(cierresAuditoria.id, cierre.id))
     .returning()
 
+  // El encargo vuelve a revisión: dejó de ser un archivo cerrado.
+  await db.update(auditorias).set({ estado: 'revision' }).where(eq(auditorias.id, id))
+
   registrarEvento(user, {
     accion: 'cierre.reabrir',
     entidad: 'cierre_auditoria',
     entidadId: cierre.id,
     auditoriaId: id,
-    detalle: {},
+    detalle: { estado: 'revision' },
   })
 
   return c.json({ data: reabierto })

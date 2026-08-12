@@ -1,10 +1,12 @@
 import { Hono } from 'hono'
-import { zValidator } from '@hono/zod-validator'
+import { zValidator } from '../lib/validacion'
 import { z } from 'zod'
 import { and, eq } from 'drizzle-orm'
 import { db } from '../db/client'
 import { auditorias, empresas, programasAI, hallazgosAI, usuarios } from '../db/schema'
 import { authMiddleware } from '../middleware/auth'
+import { encargoCerrado, ERROR_ENCARGO_CERRADO } from '../lib/encargo'
+import { registrarEvento } from '../lib/eventos'
 import type { JwtPayload } from '../lib/jwt'
 
 const app = new Hono<{ Variables: { user: JwtPayload } }>()
@@ -55,12 +57,14 @@ app.post(
     }),
   ),
   async (c) => {
-    const { firmaId } = c.get('user')
+    const user = c.get('user')
+    const { firmaId } = user
     const id = c.req.param('id')
     const body = c.req.valid('json')
 
     const row = await cargarAuditoria(id, firmaId)
     if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Auditoría no encontrada' } }, 404)
+    if (await encargoCerrado(id)) return c.json({ error: ERROR_ENCARGO_CERRADO }, 409)
 
     if (body.asignadoA) {
       const [u] = await db
@@ -81,6 +85,14 @@ app.post(
       })
       .returning()
 
+    registrarEvento(user, {
+      accion: 'programa_ai.crear',
+      entidad: 'programa_ai',
+      entidadId: programa.id,
+      auditoriaId: id,
+      detalle: { area: programa.area },
+    })
+
     return c.json({ data: programa }, 201)
   },
 )
@@ -99,13 +111,15 @@ app.put(
     }),
   ),
   async (c) => {
-    const { firmaId } = c.get('user')
+    const user = c.get('user')
+    const { firmaId } = user
     const id = c.req.param('id')
     const programaId = c.req.param('programaId')
     const body = c.req.valid('json')
 
     const row = await cargarAuditoria(id, firmaId)
     if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Auditoría no encontrada' } }, 404)
+    if (await encargoCerrado(id)) return c.json({ error: ERROR_ENCARGO_CERRADO }, 409)
 
     const [programa] = await db
       .select()
@@ -134,18 +148,27 @@ app.put(
       .where(eq(programasAI.id, programaId))
       .returning()
 
+    registrarEvento(user, {
+      accion: 'programa_ai.editar',
+      entidad: 'programa_ai',
+      entidadId: programaId,
+      auditoriaId: id,
+      detalle: { campos: Object.keys(updates), estado: actualizado.estado },
+    })
+
     return c.json({ data: actualizado })
   },
 )
 
 // DELETE /auditorias/:id/ai/programas/:programaId
 app.delete('/auditorias/:id/ai/programas/:programaId', async (c) => {
-  const { firmaId } = c.get('user')
+  const user = c.get('user')
   const id = c.req.param('id')
   const programaId = c.req.param('programaId')
 
-  const row = await cargarAuditoria(id, firmaId)
+  const row = await cargarAuditoria(id, user.firmaId)
   if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Auditoría no encontrada' } }, 404)
+  if (await encargoCerrado(id)) return c.json({ error: ERROR_ENCARGO_CERRADO }, 409)
 
   const [deleted] = await db
     .delete(programasAI)
@@ -153,6 +176,15 @@ app.delete('/auditorias/:id/ai/programas/:programaId', async (c) => {
     .returning()
 
   if (!deleted) return c.json({ error: { code: 'NOT_FOUND', message: 'Programa no encontrado' } }, 404)
+
+  registrarEvento(user, {
+    accion: 'programa_ai.eliminar',
+    entidad: 'programa_ai',
+    entidadId: programaId,
+    auditoriaId: id,
+    detalle: { area: deleted.area },
+  })
+
   return c.json({ data: deleted })
 })
 
@@ -194,12 +226,13 @@ app.post(
   '/auditorias/:id/ai/hallazgos',
   zValidator('json', hallazgoSchema),
   async (c) => {
-    const { firmaId } = c.get('user')
+    const user = c.get('user')
     const id = c.req.param('id')
     const body = c.req.valid('json')
 
-    const row = await cargarAuditoria(id, firmaId)
+    const row = await cargarAuditoria(id, user.firmaId)
     if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Auditoría no encontrada' } }, 404)
+    if (await encargoCerrado(id)) return c.json({ error: ERROR_ENCARGO_CERRADO }, 409)
 
     const [hallazgo] = await db
       .insert(hallazgosAI)
@@ -220,6 +253,14 @@ app.post(
       })
       .returning()
 
+    registrarEvento(user, {
+      accion: 'hallazgo_ai.crear',
+      entidad: 'hallazgo_ai',
+      entidadId: hallazgo.id,
+      auditoriaId: id,
+      detalle: { titulo: hallazgo.titulo, nivelRiesgo: hallazgo.nivelRiesgo },
+    })
+
     return c.json({ data: hallazgo }, 201)
   },
 )
@@ -229,13 +270,14 @@ app.put(
   '/auditorias/:id/ai/hallazgos/:hallazgoId',
   zValidator('json', hallazgoSchema.partial()),
   async (c) => {
-    const { firmaId } = c.get('user')
+    const user = c.get('user')
     const id = c.req.param('id')
     const hallazgoId = c.req.param('hallazgoId')
     const body = c.req.valid('json')
 
-    const row = await cargarAuditoria(id, firmaId)
+    const row = await cargarAuditoria(id, user.firmaId)
     if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Auditoría no encontrada' } }, 404)
+    if (await encargoCerrado(id)) return c.json({ error: ERROR_ENCARGO_CERRADO }, 409)
 
     const [existente] = await db
       .select()
@@ -252,18 +294,27 @@ app.put(
       .where(eq(hallazgosAI.id, hallazgoId))
       .returning()
 
+    registrarEvento(user, {
+      accion: 'hallazgo_ai.editar',
+      entidad: 'hallazgo_ai',
+      entidadId: hallazgoId,
+      auditoriaId: id,
+      detalle: { campos: Object.keys(updates), estadoSeguimiento: actualizado.estadoSeguimiento },
+    })
+
     return c.json({ data: actualizado })
   },
 )
 
 // DELETE /auditorias/:id/ai/hallazgos/:hallazgoId
 app.delete('/auditorias/:id/ai/hallazgos/:hallazgoId', async (c) => {
-  const { firmaId } = c.get('user')
+  const user = c.get('user')
   const id = c.req.param('id')
   const hallazgoId = c.req.param('hallazgoId')
 
-  const row = await cargarAuditoria(id, firmaId)
+  const row = await cargarAuditoria(id, user.firmaId)
   if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Auditoría no encontrada' } }, 404)
+  if (await encargoCerrado(id)) return c.json({ error: ERROR_ENCARGO_CERRADO }, 409)
 
   const [deleted] = await db
     .delete(hallazgosAI)
@@ -271,6 +322,15 @@ app.delete('/auditorias/:id/ai/hallazgos/:hallazgoId', async (c) => {
     .returning()
 
   if (!deleted) return c.json({ error: { code: 'NOT_FOUND', message: 'Hallazgo no encontrado' } }, 404)
+
+  registrarEvento(user, {
+    accion: 'hallazgo_ai.eliminar',
+    entidad: 'hallazgo_ai',
+    entidadId: hallazgoId,
+    auditoriaId: id,
+    detalle: { titulo: deleted.titulo },
+  })
+
   return c.json({ data: deleted })
 })
 

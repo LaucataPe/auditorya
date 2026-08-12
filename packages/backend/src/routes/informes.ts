@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import { zValidator } from '@hono/zod-validator'
+import { zValidator } from '../lib/validacion'
 import { z } from 'zod'
 import { and, desc, eq, inArray } from 'drizzle-orm'
 import { db } from '../db/client'
@@ -20,6 +20,7 @@ import {
 } from '../db/schema'
 import { authMiddleware } from '../middleware/auth'
 import { esSocioResponsable, ERROR_NO_SOCIO_RESPONSABLE } from '../lib/permisos'
+import { encargoCerrado, ERROR_ENCARGO_CERRADO } from '../lib/encargo'
 import { registrarEvento } from '../lib/eventos'
 import { generarContenido } from '../lib/plantillas-informe'
 import type { JwtPayload } from '../lib/jwt'
@@ -95,7 +96,8 @@ app.post(
     }),
   ),
   async (c) => {
-    const { firmaId } = c.get('user')
+    const user = c.get('user')
+    const { firmaId } = user
     const id = c.req.param('id')
     const tipo = c.req.param('tipo') as (typeof TIPOS)[number]
     const { tipoOpinion } = c.req.valid('json')
@@ -106,6 +108,7 @@ app.post(
 
     const row = await cargarAuditoria(id, firmaId)
     if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Auditoría no encontrada' } }, 404)
+    if (await encargoCerrado(id)) return c.json({ error: ERROR_ENCARGO_CERRADO }, 409)
 
     // La gate de materialidad solo aplica a Revisoría Fiscal; los documentos de planeación
     // (carta de encargo, memo) se eximen porque se generan antes de aprobar la materialidad.
@@ -295,6 +298,14 @@ app.post(
         .returning()
     }
 
+    registrarEvento(user, {
+      accion: 'informe.generar',
+      entidad: 'informe',
+      entidadId: resultado.id,
+      auditoriaId: id,
+      detalle: { tipo, tipoOpinion: valores.tipoOpinion, regenerado: !!existente },
+    })
+
     return c.json({ data: resultado })
   },
 )
@@ -310,12 +321,13 @@ app.put(
     }),
   ),
   async (c) => {
-    const { firmaId } = c.get('user')
+    const user = c.get('user')
     const informeId = c.req.param('informeId')
     const body = c.req.valid('json')
 
-    const row = await cargarInforme(informeId, firmaId)
+    const row = await cargarInforme(informeId, user.firmaId)
     if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Informe no encontrado' } }, 404)
+    if (await encargoCerrado(row.informe.auditoriaId)) return c.json({ error: ERROR_ENCARGO_CERRADO }, 409)
 
     if (row.informe.estado === 'aprobado') {
       return c.json(
@@ -338,6 +350,14 @@ app.put(
       .where(eq(informes.id, informeId))
       .returning()
 
+    registrarEvento(user, {
+      accion: 'informe.editar',
+      entidad: 'informe',
+      entidadId: informeId,
+      auditoriaId: row.informe.auditoriaId,
+      detalle: { tipo: row.informe.tipo, campos: Object.keys(updates) },
+    })
+
     return c.json({ data: actualizado })
   },
 )
@@ -354,6 +374,7 @@ app.post('/informes/:informeId/aprobar', async (c) => {
   if (!esSocioResponsable(user, row.auditoria)) {
     return c.json({ error: ERROR_NO_SOCIO_RESPONSABLE }, 403)
   }
+  if (await encargoCerrado(row.informe.auditoriaId)) return c.json({ error: ERROR_ENCARGO_CERRADO }, 409)
 
   const [aprobado] = await db
     .update(informes)
@@ -384,6 +405,7 @@ app.post('/informes/:informeId/reabrir', async (c) => {
   if (!esSocioResponsable(user, row.auditoria)) {
     return c.json({ error: ERROR_NO_SOCIO_RESPONSABLE }, 403)
   }
+  if (await encargoCerrado(row.informe.auditoriaId)) return c.json({ error: ERROR_ENCARGO_CERRADO }, 409)
 
   const [reabierto] = await db
     .update(informes)

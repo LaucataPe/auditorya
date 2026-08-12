@@ -1,10 +1,11 @@
 import { Hono } from 'hono'
-import { zValidator } from '@hono/zod-validator'
+import { zValidator } from '../lib/validacion'
 import { z } from 'zod'
 import { and, desc, eq } from 'drizzle-orm'
 import { db } from '../db/client'
 import { auditorias, empresas, papelesTrabajo, hallazgos, ajustes } from '../db/schema'
 import { authMiddleware } from '../middleware/auth'
+import { encargoCerrado, ERROR_ENCARGO_CERRADO } from '../lib/encargo'
 import { registrarEvento } from '../lib/eventos'
 import type { JwtPayload } from '../lib/jwt'
 
@@ -23,12 +24,12 @@ async function cargarAuditoria(auditoriaId: string, firmaId: string) {
 
 async function cargarPapel(papelId: string, firmaId: string) {
   const [row] = await db
-    .select({ papel: papelesTrabajo })
+    .select({ papel: papelesTrabajo, auditoria: auditorias })
     .from(papelesTrabajo)
     .innerJoin(auditorias, eq(papelesTrabajo.auditoriaId, auditorias.id))
     .innerJoin(empresas, eq(auditorias.empresaId, empresas.id))
     .where(and(eq(papelesTrabajo.id, papelId), eq(empresas.firmaId, firmaId)))
-  return row?.papel ?? null
+  return row ?? null
 }
 
 async function cargarHallazgo(hallazgoId: string, firmaId: string) {
@@ -114,8 +115,18 @@ app.post(
     const papelId = c.req.param('papelId')
     const body = c.req.valid('json')
 
-    const papel = await cargarPapel(papelId, user.firmaId)
-    if (!papel) return c.json({ error: { code: 'NOT_FOUND', message: 'Papel no encontrado' } }, 404)
+    const row = await cargarPapel(papelId, user.firmaId)
+    if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Papel no encontrado' } }, 404)
+    const papel = row.papel
+    if (await encargoCerrado(papel.auditoriaId)) return c.json({ error: ERROR_ENCARGO_CERRADO }, 409)
+
+    // Los hallazgos se evalúan frente a la materialidad: sin aprobarla no hay ejecución.
+    if (!row.auditoria.materialidadAprobada) {
+      return c.json(
+        { error: { code: 'MATERIALIDAD_NO_APROBADA', message: 'No se pueden registrar hallazgos sin aprobar la materialidad' } },
+        409,
+      )
+    }
 
     const [creado] = await db
       .insert(hallazgos)
@@ -166,12 +177,13 @@ app.put(
     }),
   ),
   async (c) => {
-    const { firmaId } = c.get('user')
+    const user = c.get('user')
     const hallazgoId = c.req.param('id')
     const body = c.req.valid('json')
 
-    const row = await cargarHallazgo(hallazgoId, firmaId)
+    const row = await cargarHallazgo(hallazgoId, user.firmaId)
     if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Hallazgo no encontrado' } }, 404)
+    if (await encargoCerrado(row.hallazgo.auditoriaId)) return c.json({ error: ERROR_ENCARGO_CERRADO }, 409)
 
     const updates: Record<string, unknown> = {}
     if (body.descripcion !== undefined) updates.descripcion = body.descripcion
@@ -193,6 +205,15 @@ app.put(
     }
 
     const [actualizado] = await db.update(hallazgos).set(updates).where(eq(hallazgos.id, hallazgoId)).returning()
+
+    registrarEvento(user, {
+      accion: 'hallazgo.editar',
+      entidad: 'hallazgo',
+      entidadId: hallazgoId,
+      auditoriaId: row.hallazgo.auditoriaId,
+      detalle: { campos: Object.keys(updates), estado: actualizado.estado },
+    })
+
     return c.json({ data: actualizado })
   },
 )
@@ -205,6 +226,14 @@ app.post('/hallazgos/:id/llevar-a-ajuste', async (c) => {
   const row = await cargarHallazgo(hallazgoId, user.firmaId)
   if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Hallazgo no encontrado' } }, 404)
   const h = row.hallazgo
+  if (await encargoCerrado(h.auditoriaId)) return c.json({ error: ERROR_ENCARGO_CERRADO }, 409)
+
+  if (!row.auditoria.materialidadAprobada) {
+    return c.json(
+      { error: { code: 'MATERIALIDAD_NO_APROBADA', message: 'La hoja de ajustes se evalúa frente a la materialidad: apruébala primero' } },
+      409,
+    )
+  }
 
   if (h.tipo !== 'incorreccion') {
     return c.json({ error: { code: 'NO_APLICA', message: 'Solo las incorrecciones se llevan a la hoja de ajustes. Las deficiencias de control van a la carta de control interno.' } }, 409)
@@ -248,13 +277,23 @@ app.post('/hallazgos/:id/llevar-a-ajuste', async (c) => {
 
 // DELETE /hallazgos/:id
 app.delete('/hallazgos/:id', async (c) => {
-  const { firmaId } = c.get('user')
+  const user = c.get('user')
   const hallazgoId = c.req.param('id')
 
-  const row = await cargarHallazgo(hallazgoId, firmaId)
+  const row = await cargarHallazgo(hallazgoId, user.firmaId)
   if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Hallazgo no encontrado' } }, 404)
+  if (await encargoCerrado(row.hallazgo.auditoriaId)) return c.json({ error: ERROR_ENCARGO_CERRADO }, 409)
 
   await db.delete(hallazgos).where(eq(hallazgos.id, hallazgoId))
+
+  registrarEvento(user, {
+    accion: 'hallazgo.eliminar',
+    entidad: 'hallazgo',
+    entidadId: hallazgoId,
+    auditoriaId: row.hallazgo.auditoriaId,
+    detalle: { descripcion: row.hallazgo.descripcion, tipo: row.hallazgo.tipo, teniaAjuste: !!row.hallazgo.ajusteId },
+  })
+
   return c.json({ data: { id: hallazgoId } })
 })
 

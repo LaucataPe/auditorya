@@ -13,11 +13,11 @@ const VENTANA_MS = 15 * 60 * 1000 // 15 minutos
 const MAX_INTENTOS = 10
 
 /** Devuelve true si la clave superó el límite (y registra el intento). */
-export function excedeLimite(clave: string): boolean {
+export function excedeLimite(clave: string, maxIntentos = MAX_INTENTOS, ventanaMs = VENTANA_MS): boolean {
   const ahora = Date.now()
   const reg = registros.get(clave) ?? { intentos: [] }
-  reg.intentos = reg.intentos.filter((t) => ahora - t < VENTANA_MS)
-  if (reg.intentos.length >= MAX_INTENTOS) {
+  reg.intentos = reg.intentos.filter((t) => ahora - t < ventanaMs)
+  if (reg.intentos.length >= maxIntentos) {
     registros.set(clave, reg)
     return true
   }

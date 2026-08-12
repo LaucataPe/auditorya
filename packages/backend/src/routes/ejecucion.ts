@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import { zValidator } from '@hono/zod-validator'
+import { zValidator } from '../lib/validacion'
 import { z } from 'zod'
 import { and, desc, eq } from 'drizzle-orm'
 import { db } from '../db/client'
@@ -16,9 +16,11 @@ import {
   notasRevision,
   muestras,
   hallazgos,
+  papelesSnapshots,
 } from '../db/schema'
 import { authMiddleware } from '../middleware/auth'
 import { esSocioResponsable, ERROR_NO_SOCIO_RESPONSABLE } from '../lib/permisos'
+import { encargoCerrado, ERROR_ENCARGO_CERRADO } from '../lib/encargo'
 import { registrarEvento } from '../lib/eventos'
 import { storage, firmarDescarga } from '../lib/storage'
 import { createHash, randomUUID } from 'node:crypto'
@@ -170,6 +172,7 @@ app.post(
 
     const row = await cargarAuditoria(id, firmaId)
     if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Auditoría no encontrada' } }, 404)
+    if (await encargoCerrado(id)) return c.json({ error: ERROR_ENCARGO_CERRADO }, 409)
 
     if (!row.auditoria.materialidadAprobada) {
       return c.json(
@@ -237,6 +240,14 @@ app.post(
       )
     }
 
+    registrarEvento(c.get('user'), {
+      accion: 'papel.crear',
+      entidad: 'papel_trabajo',
+      entidadId: papel.id,
+      auditoriaId: id,
+      detalle: { titulo: papel.titulo, area: papel.area, riesgoId: papel.riesgoId },
+    })
+
     return c.json({ data: papel }, 201)
   },
 )
@@ -283,6 +294,7 @@ app.put(
 
     const row = await cargarPapel(papelId, firmaId)
     if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Papel de trabajo no encontrado' } }, 404)
+    if (await encargoCerrado(row.papel.auditoriaId)) return c.json({ error: ERROR_ENCARGO_CERRADO }, 409)
 
     if (row.papel.estado === 'aprobado') {
       return c.json(
@@ -325,6 +337,14 @@ app.put(
       .where(eq(papelesTrabajo.id, papelId))
       .returning()
 
+    registrarEvento(c.get('user'), {
+      accion: 'papel.editar',
+      entidad: 'papel_trabajo',
+      entidadId: papelId,
+      auditoriaId: row.papel.auditoriaId,
+      detalle: { titulo: actualizado.titulo, campos: Object.keys(updates) },
+    })
+
     return c.json({ data: actualizado })
   },
 )
@@ -348,6 +368,7 @@ app.patch(
 
     const row = await cargarPapel(papelId, firmaId)
     if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Papel de trabajo no encontrado' } }, 404)
+    if (await encargoCerrado(row.papel.auditoriaId)) return c.json({ error: ERROR_ENCARGO_CERRADO }, 409)
 
     if (row.papel.estado === 'aprobado') {
       return c.json(
@@ -374,7 +395,10 @@ app.patch(
   },
 )
 
-// POST /papeles/:papelId/aprobar — Regla: solo el socio responsable
+// POST /papeles/:papelId/aprobar — Regla: solo el socio responsable. Para aprobar
+// se exige: papel en revisión, conclusión escrita, evidencia real (archivo o enlace)
+// y notas de revisión resueltas (NIA 220/230/500). Al aprobar se toma un snapshot
+// inmutable del papel y su evidencia: reabrir y editar ya no destruye el rastro.
 app.post('/papeles/:papelId/aprobar', async (c) => {
   const user = c.get('user')
   const { firmaId, sub } = user
@@ -386,19 +410,102 @@ app.post('/papeles/:papelId/aprobar', async (c) => {
   if (!esSocioResponsable(user, row.auditoria)) {
     return c.json({ error: ERROR_NO_SOCIO_RESPONSABLE }, 403)
   }
+  if (await encargoCerrado(row.papel.auditoriaId)) return c.json({ error: ERROR_ENCARGO_CERRADO }, 409)
 
-  const [aprobado] = await db
-    .update(papelesTrabajo)
-    .set({ estado: 'aprobado', aprobadoPor: sub, aprobadoAt: new Date() })
-    .where(eq(papelesTrabajo.id, papelId))
-    .returning()
+  if (row.papel.estado !== 'en_revision') {
+    return c.json(
+      {
+        error: {
+          code: 'PAPEL_NO_EN_REVISION',
+          message: 'El papel debe enviarse a revisión antes de aprobarse (NIA 220).',
+        },
+      },
+      409,
+    )
+  }
+
+  if (!(row.papel.conclusion ?? '').trim()) {
+    return c.json(
+      { error: { code: 'SIN_CONCLUSION', message: 'El papel necesita una conclusión documentada antes de aprobarse (NIA 230).' } },
+      409,
+    )
+  }
+
+  const evidenciasPapel = await db
+    .select()
+    .from(evidencias)
+    .where(eq(evidencias.papelTrabajoId, papelId))
+  const conSoporte = evidenciasPapel.filter((e) => e.archivoKey || e.enlaceExterno)
+  if (conSoporte.length === 0) {
+    return c.json(
+      {
+        error: {
+          code: 'SIN_EVIDENCIA',
+          message: 'El papel necesita al menos una evidencia con archivo adjunto o enlace antes de aprobarse (NIA 500).',
+        },
+      },
+      409,
+    )
+  }
+
+  const notasAbiertas = await db
+    .select({ id: notasRevision.id })
+    .from(notasRevision)
+    .where(and(eq(notasRevision.papelTrabajoId, papelId), eq(notasRevision.estado, 'abierta')))
+  if (notasAbiertas.length > 0) {
+    return c.json(
+      { error: { code: 'NOTAS_ABIERTAS', message: `El papel tiene ${notasAbiertas.length} nota(s) de revisión sin resolver.` } },
+      409,
+    )
+  }
+
+  // Aprobación + snapshot en la misma transacción: o quedan ambos, o ninguno.
+  const aprobado = await db.transaction(async (tx) => {
+    const [p] = await tx
+      .update(papelesTrabajo)
+      .set({ estado: 'aprobado', aprobadoPor: sub, aprobadoAt: new Date() })
+      .where(eq(papelesTrabajo.id, papelId))
+      .returning()
+
+    await tx.insert(papelesSnapshots).values({
+      papelTrabajoId: papelId,
+      auditoriaId: p.auditoriaId,
+      aprobadoPor: sub,
+      contenido: {
+        papel: {
+          titulo: p.titulo,
+          area: p.area,
+          riesgoId: p.riesgoId,
+          procedimiento: p.procedimiento,
+          alcance: p.alcance,
+          hallazgos: p.hallazgos,
+          conclusion: p.conclusion,
+          pasosEstado: p.pasosEstado,
+          preparadoPor: p.preparadoPor,
+          aprobadoAt: p.aprobadoAt,
+        },
+        evidencias: evidenciasPapel.map((e) => ({
+          id: e.id,
+          nombre: e.nombre,
+          tipo: e.tipo,
+          descripcion: e.descripcion,
+          enlaceExterno: e.enlaceExterno,
+          archivoNombre: e.archivoNombre,
+          archivoHash: e.archivoHash,
+          archivoTamano: e.archivoTamano,
+        })),
+      },
+    })
+
+    return p
+  })
 
   registrarEvento(user, {
     accion: 'papel.aprobar',
     entidad: 'papel_trabajo',
     entidadId: papelId,
     auditoriaId: row.papel.auditoriaId,
-    detalle: { titulo: row.papel.titulo, area: row.papel.area },
+    detalle: { titulo: row.papel.titulo, area: row.papel.area, evidencias: conSoporte.length },
   })
 
   return c.json({ data: aprobado })
@@ -416,7 +523,9 @@ app.post('/papeles/:papelId/reabrir', async (c) => {
   if (!esSocioResponsable(user, row.auditoria)) {
     return c.json({ error: ERROR_NO_SOCIO_RESPONSABLE }, 403)
   }
+  if (await encargoCerrado(row.papel.auditoriaId)) return c.json({ error: ERROR_ENCARGO_CERRADO }, 409)
 
+  // El snapshot tomado al aprobar se conserva: la reapertura no borra el rastro.
   const [reabierto] = await db
     .update(papelesTrabajo)
     .set({ estado: 'borrador', aprobadoPor: null, aprobadoAt: null })
@@ -436,11 +545,13 @@ app.post('/papeles/:papelId/reabrir', async (c) => {
 
 // DELETE /papeles/:papelId — borra el papel y sus evidencias
 app.delete('/papeles/:papelId', async (c) => {
-  const { firmaId } = c.get('user')
+  const user = c.get('user')
+  const { firmaId } = user
   const papelId = c.req.param('papelId')
 
   const row = await cargarPapel(papelId, firmaId)
   if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Papel de trabajo no encontrado' } }, 404)
+  if (await encargoCerrado(row.papel.auditoriaId)) return c.json({ error: ERROR_ENCARGO_CERRADO }, 409)
 
   if (row.papel.estado === 'aprobado') {
     return c.json(
@@ -465,6 +576,7 @@ app.delete('/papeles/:papelId', async (c) => {
     await tx.delete(evidencias).where(eq(evidencias.papelTrabajoId, papelId))
     await tx.delete(notasRevision).where(eq(notasRevision.papelTrabajoId, papelId))
     await tx.delete(muestras).where(eq(muestras.papelTrabajoId, papelId)) // los ítems caen por cascade
+    await tx.delete(papelesSnapshots).where(eq(papelesSnapshots.papelTrabajoId, papelId))
     // Las tareas y hallazgos se conservan como sueltos (no se pierde el trabajo).
     await tx.update(tareas).set({ papelTrabajoId: null }).where(eq(tareas.papelTrabajoId, papelId))
     await tx.update(hallazgos).set({ papelTrabajoId: null }).where(eq(hallazgos.papelTrabajoId, papelId))
@@ -473,6 +585,14 @@ app.delete('/papeles/:papelId', async (c) => {
 
   // Limpieza best-effort de los archivos en disco/S3 (fuera de la transacción).
   for (const key of claves) await storage.eliminar(key).catch(() => {})
+
+  registrarEvento(user, {
+    accion: 'papel.eliminar',
+    entidad: 'papel_trabajo',
+    entidadId: papelId,
+    auditoriaId: row.papel.auditoriaId,
+    detalle: { titulo: row.papel.titulo, area: row.papel.area, estado: row.papel.estado },
+  })
 
   return c.json({ data: { id: papelId } })
 })
@@ -492,12 +612,20 @@ app.post(
     }),
   ),
   async (c) => {
-    const { firmaId } = c.get('user')
+    const user = c.get('user')
     const papelId = c.req.param('papelId')
     const body = c.req.valid('json')
 
-    const row = await cargarPapel(papelId, firmaId)
+    const row = await cargarPapel(papelId, user.firmaId)
     if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Papel de trabajo no encontrado' } }, 404)
+    if (await encargoCerrado(row.papel.auditoriaId)) return c.json({ error: ERROR_ENCARGO_CERRADO }, 409)
+
+    if (row.papel.estado === 'aprobado') {
+      return c.json(
+        { error: { code: 'PAPEL_APROBADO', message: 'No se puede modificar la evidencia de un papel aprobado' } },
+        409,
+      )
+    }
 
     const [evidencia] = await db
       .insert(evidencias)
@@ -510,18 +638,34 @@ app.post(
       })
       .returning()
 
+    registrarEvento(user, {
+      accion: 'evidencia.crear',
+      entidad: 'evidencia',
+      entidadId: evidencia.id,
+      auditoriaId: row.papel.auditoriaId,
+      detalle: { nombre: body.nombre, tipo: body.tipo, papelId },
+    })
+
     return c.json({ data: evidencia }, 201)
   },
 )
 
 // DELETE /papeles/:papelId/evidencias/:evidenciaId
 app.delete('/papeles/:papelId/evidencias/:evidenciaId', async (c) => {
-  const { firmaId } = c.get('user')
+  const user = c.get('user')
   const papelId = c.req.param('papelId')
   const evidenciaId = c.req.param('evidenciaId')
 
-  const row = await cargarPapel(papelId, firmaId)
+  const row = await cargarPapel(papelId, user.firmaId)
   if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Papel de trabajo no encontrado' } }, 404)
+  if (await encargoCerrado(row.papel.auditoriaId)) return c.json({ error: ERROR_ENCARGO_CERRADO }, 409)
+
+  if (row.papel.estado === 'aprobado') {
+    return c.json(
+      { error: { code: 'PAPEL_APROBADO', message: 'No se puede modificar la evidencia de un papel aprobado' } },
+      409,
+    )
+  }
 
   const [eliminada] = await db
     .delete(evidencias)
@@ -532,6 +676,14 @@ app.delete('/papeles/:papelId/evidencias/:evidenciaId', async (c) => {
 
   // Borra también el archivo físico, si lo había.
   if (eliminada.archivoKey) await storage.eliminar(eliminada.archivoKey)
+
+  registrarEvento(user, {
+    accion: 'evidencia.eliminar',
+    entidad: 'evidencia',
+    entidadId: evidenciaId,
+    auditoriaId: row.papel.auditoriaId,
+    detalle: { nombre: eliminada.nombre, teniaArchivo: !!eliminada.archivoKey, papelId },
+  })
 
   return c.json({ data: { id: evidenciaId } })
 })
@@ -559,6 +711,7 @@ app.post('/evidencias/:evidenciaId/archivo', async (c) => {
 
   const row = await cargarEvidencia(evidenciaId, user.firmaId)
   if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Evidencia no encontrada' } }, 404)
+  if (await encargoCerrado(row.papel.auditoriaId)) return c.json({ error: ERROR_ENCARGO_CERRADO }, 409)
 
   if (row.papel.estado === 'aprobado') {
     return c.json(
@@ -661,7 +814,7 @@ app.put(
     }),
   ),
   async (c) => {
-    const { firmaId } = c.get('user')
+    const user = c.get('user')
     const id = c.req.param('id')
     const componente = c.req.param('componente') as (typeof COMPONENTES)[number]
     const body = c.req.valid('json')
@@ -670,8 +823,9 @@ app.put(
       return c.json({ error: { code: 'COMPONENTE_INVALIDO', message: 'Componente COSO no válido' } }, 400)
     }
 
-    const row = await cargarAuditoria(id, firmaId)
+    const row = await cargarAuditoria(id, user.firmaId)
     if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Auditoría no encontrada' } }, 404)
+    if (await encargoCerrado(id)) return c.json({ error: ERROR_ENCARGO_CERRADO }, 409)
 
     const [existente] = await db
       .select()
@@ -696,6 +850,14 @@ app.put(
         })
         .returning()
     }
+
+    registrarEvento(user, {
+      accion: 'coso.evaluar',
+      entidad: 'control_coso',
+      entidadId: resultado.id,
+      auditoriaId: id,
+      detalle: { componente, calificacion: body.calificacion },
+    })
 
     return c.json({ data: resultado })
   },
@@ -743,6 +905,7 @@ app.post(
 
     const row = await cargarAuditoria(id, firmaId)
     if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Auditoría no encontrada' } }, 404)
+    if (await encargoCerrado(id)) return c.json({ error: ERROR_ENCARGO_CERRADO }, 409)
 
     if (!row.auditoria.materialidadAprobada) {
       return c.json(
@@ -777,6 +940,14 @@ app.post(
         vencimiento: body.vencimiento ? new Date(body.vencimiento) : null,
       })
       .returning()
+
+    registrarEvento(c.get('user'), {
+      accion: 'tarea.crear',
+      entidad: 'tarea',
+      entidadId: tarea.id,
+      auditoriaId: id,
+      detalle: { titulo: tarea.titulo, area: tarea.area, asignadoA: tarea.asignadoA },
+    })
 
     return c.json({ data: tarea }, 201)
   },
@@ -821,6 +992,7 @@ app.put(
 
     const tarea = await cargarTarea(tareaId, firmaId)
     if (!tarea) return c.json({ error: { code: 'NOT_FOUND', message: 'Tarea no encontrada' } }, 404)
+    if (await encargoCerrado(tarea.auditoriaId)) return c.json({ error: ERROR_ENCARGO_CERRADO }, 409)
 
     if (body.asignadoA && !(await usuarioDeFirma(body.asignadoA, firmaId))) {
       return c.json(
@@ -851,6 +1023,14 @@ app.put(
       .set(updates)
       .where(eq(tareas.id, tareaId))
       .returning()
+
+    registrarEvento(c.get('user'), {
+      accion: 'tarea.editar',
+      entidad: 'tarea',
+      entidadId: tareaId,
+      auditoriaId: tarea.auditoriaId,
+      detalle: { campos: Object.keys(updates) },
+    })
 
     return c.json({ data: actualizada })
   },
@@ -911,13 +1091,23 @@ app.get('/riesgos/:riesgoId/respuestas', async (c) => {
 
 // DELETE /tareas/:tareaId
 app.delete('/tareas/:tareaId', async (c) => {
-  const { firmaId } = c.get('user')
+  const user = c.get('user')
   const tareaId = c.req.param('tareaId')
 
-  const tarea = await cargarTarea(tareaId, firmaId)
+  const tarea = await cargarTarea(tareaId, user.firmaId)
   if (!tarea) return c.json({ error: { code: 'NOT_FOUND', message: 'Tarea no encontrada' } }, 404)
+  if (await encargoCerrado(tarea.auditoriaId)) return c.json({ error: ERROR_ENCARGO_CERRADO }, 409)
 
   await db.delete(tareas).where(eq(tareas.id, tareaId))
+
+  registrarEvento(user, {
+    accion: 'tarea.eliminar',
+    entidad: 'tarea',
+    entidadId: tareaId,
+    auditoriaId: tarea.auditoriaId,
+    detalle: { titulo: tarea.titulo, estado: tarea.estado },
+  })
+
   return c.json({ data: { id: tareaId } })
 })
 
