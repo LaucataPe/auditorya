@@ -24,6 +24,15 @@ export type SignalsProgreso = {
   tareasCompletadas: number
   informes: Record<string, 'borrador' | 'aprobado'>
   opinionSugerida: OpinionSugerida
+  // PBC (documentos solicitados al cliente)
+  pbcTotal: number
+  pbcPendientes: number
+  // Cronograma (tareas + pruebas con fechas asignadas)
+  cronogramaItems: number
+  cronogramaProgramados: number
+  // Cierre del encargo (NIA 560/570/220)
+  cierreChecklistCompleto: boolean
+  cierreCerrado: boolean
   // Auditoría interna
   programasTotal: number
   programasCompletados: number
@@ -64,12 +73,16 @@ function fasesRevisoriaFiscal(s: SignalsProgreso): FaseDef[] {
       id: 'planificacion',
       label: 'Planificación',
       items: [
+        { label: 'Carta de encargo emitida', hecho: !!inf.carta_encargo, requerido: true, tab: 'carta_encargo', hint: 'NIA 210' },
         { label: 'Entendimiento del período confirmado', hecho: s.entendimientoConfirmado, requerido: true, tab: 'entendimiento', hint: 'Base para los riesgos' },
         { label: 'Balance de prueba cargado', hecho: s.balanceCargado, requerido: false, tab: 'balance', hint: 'Habilita los analíticos' },
         { label: 'Riesgos identificados', hecho: s.riesgosTotal > 0, requerido: true, tab: 'riesgos', hint: `${s.riesgosTotal} riesgos` },
         { label: 'Riesgos altos con respuesta planeada', hecho: s.riesgosAltosSinRespuesta === 0, requerido: false, tab: 'riesgos', hint: s.riesgosAltos > 0 ? `${s.riesgosAltos} altos` : undefined },
+        { label: 'Control interno COSO evaluado', hecho: s.cosoEvaluados >= 5, requerido: true, tab: 'control_interno', hint: `${s.cosoEvaluados}/5 · NIA 315` },
         { label: 'Materialidad calculada', hecho: s.materialidadCalculada, requerido: true, tab: 'materialidad' },
         { label: 'Materialidad aprobada por el socio', hecho: s.materialidadAprobada, requerido: true, tab: 'materialidad', hint: 'Desbloquea ejecución' },
+        { label: 'Cronograma con fechas asignadas', hecho: s.cronogramaItems > 0 && s.cronogramaProgramados > 0, requerido: false, tab: 'cronograma', hint: s.cronogramaItems > 0 ? `${s.cronogramaProgramados}/${s.cronogramaItems} agendados` : 'NIA 300 — oportunidad' },
+        { label: 'Memo de planeación generado', hecho: !!inf.memo_planeacion, requerido: true, tab: 'memo', hint: 'NIA 300 — consolida la planeación' },
       ],
     },
     {
@@ -78,22 +91,24 @@ function fasesRevisoriaFiscal(s: SignalsProgreso): FaseDef[] {
       items: [
         { label: 'Papeles de trabajo creados', hecho: s.papelesTotal > 0, requerido: true, tab: 'papeles', hint: `${s.papelesTotal}` },
         { label: 'Riesgos altos con prueba diseñada', hecho: s.riesgosAltosSinPrueba === 0, requerido: false, tab: 'riesgos', hint: s.riesgosAltosSinPrueba > 0 ? `${s.riesgosAltosSinPrueba} sin prueba` : undefined },
+        { label: 'Documentos del cliente recibidos (PBC)', hecho: s.pbcPendientes === 0, requerido: false, tab: 'pbc', hint: s.pbcTotal > 0 ? `${s.pbcTotal - s.pbcPendientes}/${s.pbcTotal}` : undefined },
         { label: 'Papeles con evidencia', hecho: s.papelesSinEvidencia === 0, requerido: false, tab: 'papeles', hint: s.papelesSinEvidencia > 0 ? `${s.papelesSinEvidencia} sin evidencia` : undefined },
         { label: 'Hallazgos comunicados atendidos', hecho: s.hallazgosSinResolver === 0, requerido: false, tab: 'papeles', hint: s.hallazgosSinResolver > 0 ? `${s.hallazgosSinResolver} sin resolver` : undefined },
-        { label: 'Control interno COSO evaluado', hecho: s.cosoEvaluados >= 5, requerido: true, tab: 'control_interno', hint: `${s.cosoEvaluados}/5` },
         { label: 'Papeles aprobados por el socio', hecho: s.papelesTotal > 0 && s.papelesAprobados === s.papelesTotal, requerido: true, tab: 'papeles', hint: `${s.papelesAprobados}/${s.papelesTotal}` },
         { label: 'Tareas completadas', hecho: s.tareasTotal === 0 ? true : s.tareasCompletadas === s.tareasTotal, requerido: false, tab: 'tareas', hint: s.tareasTotal > 0 ? `${s.tareasCompletadas}/${s.tareasTotal}` : undefined },
       ],
     },
     {
       id: 'informes',
-      label: 'Informes',
+      label: 'Informes y cierre',
       items: [
         { label: 'Hoja de ajustes evaluada (opinión)', hecho: s.opinionSugerida !== 'sin_base', requerido: false, tab: 'cierre', hint: s.opinionSugerida !== 'sin_base' ? OPINION_LABEL[s.opinionSugerida] : 'Calcula la materialidad' },
         { label: 'Dictamen generado', hecho: !!inf.dictamen, requerido: true, tab: 'informes' },
         { label: 'Dictamen aprobado por el socio', hecho: inf.dictamen === 'aprobado', requerido: true, tab: 'informes' },
         { label: 'Carta de control interno', hecho: !!inf.carta_control_interno, requerido: false, tab: 'informes' },
         { label: 'Carta de representaciones', hecho: !!inf.carta_representaciones, requerido: false, tab: 'informes' },
+        { label: 'Checklist de cierre completo', hecho: s.cierreChecklistCompleto, requerido: true, tab: 'cierre', hint: 'NIA 560 · 570 · 220' },
+        { label: 'Encargo cerrado por el socio', hecho: s.cierreCerrado, requerido: true, tab: 'cierre', hint: 'Congela el archivo' },
       ],
     },
   ]
@@ -152,11 +167,15 @@ export function construirGuia(s: SignalsProgreso): Guia {
     return { id: f.id, label: f.label, items: f.items, estado, progreso: base.length ? hechos / base.length : 1 }
   })
 
-  // Siguiente paso = primer item requerido no hecho, en orden de fases.
+  // Siguiente paso = primer item pendiente (requerido u opcional) de la fase actual,
+  // en el mismo orden que ve el usuario en el checklist. Se limita a la fase actual
+  // para que un item opcional que se decida saltar (p. ej. cargar el balance) no
+  // quede clavado como "siguiente paso" una vez superada su fase — la fase actual
+  // siempre tiene al menos un requerido pendiente, así que completa ⇔ sin siguiente.
   let siguientePaso: Guia['siguientePaso'] = null
-  for (const f of defs) {
-    const pend = f.items.find((i) => i.requerido && !i.hecho)
-    if (pend) { siguientePaso = { label: pend.label, tab: pend.tab }; break }
+  if (idxActual < defs.length) {
+    const pend = defs[idxActual].items.find((i) => !i.hecho)
+    if (pend) siguientePaso = { label: pend.label, tab: pend.tab }
   }
 
   const totReq = defs.flatMap((f) => requeridos(f.items))

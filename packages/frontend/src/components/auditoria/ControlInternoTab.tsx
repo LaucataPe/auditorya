@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Lock, ShieldCheck } from 'lucide-react'
+import { ShieldCheck } from 'lucide-react'
 import { Button } from '../ui/Button'
 import { Textarea } from '../ui/Textarea'
 import { api } from '../../lib/api'
@@ -38,30 +38,13 @@ const CALIF_BADGE: Record<Calificacion, string> = {
   deficiente: 'bg-red-50 text-red-700 border-red-200',
 }
 
-export function ControlInternoTab({
-  auditoriaId,
-  materialidadAprobada,
-}: {
-  auditoriaId: string
-  materialidadAprobada: boolean
-}) {
+// La evaluación COSO es parte del entendimiento de la entidad (NIA 315), un paso
+// de PLANIFICACIÓN: no se bloquea por materialidad.
+export function ControlInternoTab({ auditoriaId }: { auditoriaId: string }) {
   const { data: controles = [], isLoading } = useQuery<Control[]>({
     queryKey: ['coso', auditoriaId],
     queryFn: () => api.get<Control[]>(`/auditorias/${auditoriaId}/coso`),
-    enabled: materialidadAprobada,
   })
-
-  if (!materialidadAprobada) {
-    return (
-      <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-gray-200 bg-white py-16 text-center max-w-2xl">
-        <Lock size={32} className="text-gray-300 mb-3" />
-        <p className="text-sm font-medium text-gray-500">Ejecución bloqueada</p>
-        <p className="text-xs text-gray-400 mt-1 max-w-sm">
-          Aprueba la materialidad para habilitar la evaluación de control interno.
-        </p>
-      </div>
-    )
-  }
 
   const evaluados = controles.length
   const byId = (id: Componente) => controles.find((c) => c.componente === id)

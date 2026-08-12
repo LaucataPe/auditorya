@@ -1,10 +1,14 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Inbox, Lock, Check, X, Clock } from 'lucide-react'
+import { Inbox, Check, X, Clock, Printer, FileText } from 'lucide-react'
+import { BloqueoMaterialidad } from './BloqueoMaterialidad'
 import { ESTADO_PBC_LABEL, type EstadoPbc, type SolicitudPbcConPapel } from '@auditorya/types'
 import { PbcArchivo } from './pbc-archivo'
+import { Button } from '../ui/Button'
 import { api } from '../../lib/api'
 import { cn } from '../../lib/cn'
+import { useAuthStore } from '../../store/auth.store'
+import { construirHtmlListaPbc, imprimirInforme } from '../../lib/informe-export'
 
 const AREA_LABEL: Record<string, string> = {
   efectivo: 'Efectivo', cartera: 'Cartera', inventarios: 'Inventarios',
@@ -24,11 +28,16 @@ type Filtro = 'todos' | EstadoPbc
 export function PbcTab({
   auditoriaId,
   materialidadAprobada,
+  empresaNombre,
+  periodo,
 }: {
   auditoriaId: string
   materialidadAprobada: boolean
+  empresaNombre: string
+  periodo: string
 }) {
   const queryClient = useQueryClient()
+  const { firma } = useAuthStore()
   const [filtro, setFiltro] = useState<Filtro>('todos')
 
   const { data: items = [], isLoading } = useQuery<SolicitudPbcConPapel[]>({
@@ -50,18 +59,31 @@ export function PbcTab({
 
   if (!materialidadAprobada) {
     return (
-      <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-gray-200 bg-white py-16 text-center max-w-2xl">
-        <Lock size={32} className="text-gray-300 mb-3" />
-        <p className="text-sm font-medium text-gray-500">Documentos no disponibles</p>
-        <p className="text-xs text-gray-400 mt-1 max-w-sm">
-          Aprueba la materialidad para habilitar la ejecución y la solicitud de documentos al cliente.
-        </p>
-      </div>
+      <BloqueoMaterialidad
+        titulo="Documentos no disponibles"
+        descripcion="Aprueba la materialidad para habilitar la ejecución y la solicitud de documentos al cliente."
+      />
     )
   }
 
   const cuenta = (e: EstadoPbc) => items.filter((s) => s.estado === e).length
   const visibles = filtro === 'todos' ? items : items.filter((s) => s.estado === filtro)
+
+  // El PDF para el cliente relaciona solo lo que falta por recibir.
+  const pendientes = items.filter((s) => s.estado === 'solicitado')
+  const pdfCliente = () =>
+    imprimirInforme(construirHtmlListaPbc({
+      empresaNombre,
+      periodo,
+      firma,
+      items: pendientes.map((s) => ({
+        descripcion: s.descripcion,
+        area: s.papelArea ? (AREA_LABEL[s.papelArea] ?? s.papelArea) : null,
+        papelTitulo: s.papelTitulo,
+        fechaLimite: s.fechaLimite,
+        notas: s.notas,
+      })),
+    }))
 
   const FILTROS: { key: Filtro; label: string }[] = [
     { key: 'todos', label: `Todos (${items.length})` },
@@ -72,6 +94,26 @@ export function PbcTab({
 
   return (
     <div className="space-y-5">
+
+      {/* Relación de documentos para el cliente */}
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm px-5 py-4 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600 shrink-0">
+            <FileText size={16} />
+          </div>
+          <div>
+            <p className="font-semibold text-gray-900">Relación de documentos para el cliente</p>
+            <p className="text-xs text-gray-500 mt-0.5">
+              {pendientes.length === 0
+                ? 'No hay documentos pendientes de recibir'
+                : `${pendientes.length} documento${pendientes.length !== 1 ? 's' : ''} pendiente${pendientes.length !== 1 ? 's' : ''} — genera el PDF y envíaselo al cliente`}
+            </p>
+          </div>
+        </div>
+        <Button size="sm" variant="secondary" className="gap-1.5 shrink-0" disabled={pendientes.length === 0} onClick={pdfCliente}>
+          <Printer size={13} /> PDF
+        </Button>
+      </div>
 
       {/* Resumen */}
       <div className="grid grid-cols-3 gap-3">

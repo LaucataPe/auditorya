@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { SECCIONES_INFORME, TIPO_INFORME_LABEL } from '@auditorya/types'
-import { FileCheck, Sparkles, CheckCircle, ShieldCheck, Printer, FileDown } from 'lucide-react'
+import { FileCheck, FilePlus2, RefreshCw, CheckCircle, ShieldCheck, Printer, FileDown } from 'lucide-react'
 import { Button } from '../../ui/Button'
 import { Textarea } from '../../ui/Textarea'
 import { api } from '../../../lib/api'
@@ -102,7 +102,7 @@ export function InformeAITab({
             loading={generarMutation.isPending}
             onClick={() => generarMutation.mutate()}
           >
-            <Sparkles size={14} /> Generar informe de auditoría
+            <FilePlus2 size={14} /> Generar informe de auditoría
           </Button>
           {generarMutation.isError && (
             <p className="text-sm text-red-600 mt-3">
@@ -155,7 +155,7 @@ export function InformeAITab({
                   loading={generarMutation.isPending}
                   onClick={() => generarMutation.mutate()}
                 >
-                  <Sparkles size={13} className="mr-1" /> Regenerar
+                  <RefreshCw size={13} className="mr-1" /> Regenerar
                 </Button>
               )}
               {user?.rol === 'socio' && (

@@ -3,10 +3,11 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { type ColumnDef } from '@tanstack/react-table'
 import {
-  FileText, Plus, Lock, CheckCircle, Trash2, ShieldCheck, Paperclip, Link2,
+  FileText, Plus, CheckCircle, Trash2, ShieldCheck, Paperclip, Link2,
   Sparkles, Upload, Download, Inbox, Check, X, Clock, MessageSquare,
   Target, Flag, RefreshCw, AlertTriangle, Send, ArrowRightCircle, ListTodo, Pencil,
 } from 'lucide-react'
+import { BloqueoMaterialidad } from './BloqueoMaterialidad'
 import {
   ESTADO_PBC_LABEL, PROGRAMA_AUDITORIA, COBERTURA_OBJETIVO_DEFECTO,
   TIPO_HALLAZGO_LABEL, SEVERIDAD_HALLAZGO_LABEL, ESTADO_HALLAZGO_LABEL,
@@ -25,6 +26,7 @@ import { Textarea } from '../ui/Textarea'
 import { DataTable } from '../ui/DataTable'
 import { api, BASE_URL } from '../../lib/api'
 import { useAuthStore } from '../../store/auth.store'
+import { toast } from '../../store/toast.store'
 import { cn } from '../../lib/cn'
 
 type Area =
@@ -112,6 +114,7 @@ export function PapelesTab({
   const [nuevoOpen, setNuevoOpen] = useState(false)
   const [editTarget, setEditTarget] = useState<Papel | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<Papel | null>(null)
+  const [filtro, setFiltro] = useState<EstadoPapel | 'todos'>('todos')
   const irAlPapel = (papelId: string) => navigate(`/empresas/${empresaId}/encargos/${auditoriaId}/papeles/${papelId}`)
 
   const { data: papeles = [], isLoading } = useQuery<Papel[]>({
@@ -160,24 +163,36 @@ export function PapelesTab({
 
   if (!materialidadAprobada) {
     return (
-      <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-gray-200 bg-white py-16 text-center max-w-2xl">
-        <Lock size={32} className="text-gray-300 mb-3" />
-        <p className="text-sm font-medium text-gray-500">Ejecución bloqueada</p>
-        <p className="text-xs text-gray-400 mt-1 max-w-sm">
-          Aprueba la materialidad en la pestaña de planificación para habilitar los papeles de trabajo.
-        </p>
-      </div>
+      <BloqueoMaterialidad
+        titulo="Ejecución bloqueada"
+        descripcion="Aprueba la materialidad en planificación para habilitar los papeles de trabajo."
+      />
     )
   }
+
+  const filtrados = filtro === 'todos' ? papeles : papeles.filter((p) => p.estado === filtro)
 
   return (
     <div className="space-y-5">
 
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-gray-500">
-          {papeles.length} papel{papeles.length !== 1 ? 'es' : ''} de trabajo
-        </p>
-        <Button size="sm" className="gap-1.5" onClick={() => setNuevoOpen(true)}>
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 flex-wrap">
+          {(['todos', 'borrador', 'en_revision', 'aprobado'] as const).map((f) => (
+            <button
+              key={f}
+              onClick={() => setFiltro(f)}
+              className={cn(
+                'px-3 py-1.5 rounded-lg text-xs font-medium transition-colors',
+                filtro === f ? 'bg-indigo-600 text-white' : 'bg-white border border-gray-200 text-gray-500 hover:bg-gray-50',
+              )}
+            >
+              {f === 'todos'
+                ? `Todos (${papeles.length})`
+                : `${ESTADO_LABEL[f]} (${papeles.filter((p) => p.estado === f).length})`}
+            </button>
+          ))}
+        </div>
+        <Button size="sm" className="gap-1.5 shrink-0" onClick={() => setNuevoOpen(true)}>
           <Plus size={14} /> Nuevo papel
         </Button>
       </div>
@@ -188,14 +203,16 @@ export function PapelesTab({
         <div className="flex justify-center py-16">
           <div className="h-6 w-6 animate-spin rounded-full border-2 border-indigo-600 border-t-transparent" />
         </div>
-      ) : papeles.length === 0 ? (
+      ) : filtrados.length === 0 ? (
         <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-gray-200 bg-white py-14 text-center">
           <FileText size={32} className="text-gray-300 mb-3" />
-          <p className="text-sm font-medium text-gray-400">Aún no hay papeles de trabajo</p>
+          <p className="text-sm font-medium text-gray-400">
+            {papeles.length === 0 ? 'Aún no hay papeles de trabajo' : 'Sin papeles en este filtro'}
+          </p>
         </div>
       ) : (
         <div className="space-y-3">
-          {papeles.map((p) => (
+          {filtrados.map((p) => (
             <div
               key={p.id}
               onClick={() => irAlPapel(p.id)}
@@ -1190,7 +1207,11 @@ export function PapelPanel({
 
   const saveMutation = useMutation({
     mutationFn: () => api.put(`/papeles/${papelId}`, form),
-    onSuccess: invalidate,
+    onSuccess: () => {
+      invalidate()
+      toast.success('Papel de trabajo guardado')
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : 'No se pudo guardar el papel'),
   })
   // Aplica la conclusión sugerida por la proyección del muestreo al campo del papel.
   // Persiste solo `conclusion` (no pisa procedimiento/alcance) y actualiza la caché
@@ -1207,7 +1228,11 @@ export function PapelPanel({
   })
   const aprobarMutation = useMutation({
     mutationFn: () => api.post(`/papeles/${papelId}/aprobar`, {}),
-    onSuccess: invalidate,
+    onSuccess: () => {
+      invalidate()
+      toast.success('Papel aprobado')
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : 'No se pudo aprobar el papel'),
   })
   const reabrirMutation = useMutation({
     mutationFn: () => api.post(`/papeles/${papelId}/reabrir`, {}),
@@ -1250,6 +1275,24 @@ export function PapelPanel({
 
   const aprobado = papel?.estado === 'aprobado'
 
+  // Cambios sin guardar en los campos de texto del papel (procedimiento/alcance/hallazgos/conclusión).
+  const dirty =
+    !!papel &&
+    (form.procedimiento !== (papel.procedimiento ?? '') ||
+      form.alcance !== (papel.alcance ?? '') ||
+      form.hallazgos !== (papel.hallazgos ?? '') ||
+      form.conclusion !== (papel.conclusion ?? ''))
+
+  // Evita perder trabajo al recargar o cerrar la pestaña con cambios pendientes.
+  useEffect(() => {
+    if (!dirty) return
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault()
+    }
+    window.addEventListener('beforeunload', handler)
+    return () => window.removeEventListener('beforeunload', handler)
+  }, [dirty])
+
   if (isLoading || !papel) {
     return (
       <div className="flex justify-center py-24">
@@ -1270,6 +1313,9 @@ export function PapelPanel({
           {ESTADO_LABEL[papel.estado]}
         </span>
         <div className="ml-auto flex items-center gap-2">
+          {!aprobado && dirty && (
+            <span className="text-[11px] font-medium text-amber-600">● Cambios sin guardar</span>
+          )}
           {!aprobado && (
             <Button size="sm" loading={saveMutation.isPending} onClick={() => saveMutation.mutate()}>Guardar</Button>
           )}

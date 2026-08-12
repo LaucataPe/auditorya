@@ -8,7 +8,9 @@ export function estadoPaso(id: string, s: SignalsProgreso): EstadoPaso {
     case 'carta_encargo':
       if (!s.informes.carta_encargo) return 'none'
       return s.informes.carta_encargo === 'aprobado' ? 'done' : 'partial'
-    case 'cierre': return 'none' // sin señal de completitud propia
+    case 'cierre':
+      if (s.cierreCerrado) return 'done'
+      return s.cierreChecklistCompleto ? 'partial' : 'none'
     case 'entendimiento': return s.entendimientoConfirmado ? 'done' : 'none'
     case 'balance': return s.balanceCargado ? 'done' : 'none'
     case 'riesgos':
@@ -20,15 +22,21 @@ export function estadoPaso(id: string, s: SignalsProgreso): EstadoPaso {
     case 'materialidad':
       if (s.materialidadAprobada) return 'done'
       return s.materialidadCalculada ? 'partial' : 'none'
-    case 'cronograma': return 'none' // sin señal de completitud propia
-    case 'memo': return 'none' // sin señal de completitud propia
+    case 'cronograma':
+      if (s.cronogramaItems === 0 || s.cronogramaProgramados === 0) return 'none'
+      return s.cronogramaProgramados === s.cronogramaItems ? 'done' : 'partial'
+    case 'memo':
+      if (!s.informes.memo_planeacion) return 'none'
+      return s.informes.memo_planeacion === 'aprobado' ? 'done' : 'partial'
     case 'tareas':
       if (s.tareasTotal === 0) return 'none'
       return s.tareasCompletadas === s.tareasTotal ? 'done' : 'partial'
     case 'papeles':
       if (s.papelesTotal === 0) return 'none'
       return s.papelesAprobados === s.papelesTotal ? 'done' : 'partial'
-    case 'pbc': return 'none' // sin señal de completitud propia
+    case 'pbc':
+      if (s.pbcTotal === 0) return 'none'
+      return s.pbcPendientes === 0 ? 'done' : 'partial'
     case 'informes':
       if (!s.informes.dictamen) return 'none'
       return s.informes.dictamen === 'aprobado' ? 'done' : 'partial'

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Lock, Plus, Trash2, CalendarClock, User } from 'lucide-react'
+import { Plus, Trash2, CalendarClock, User } from 'lucide-react'
+import { BloqueoMaterialidad } from './BloqueoMaterialidad'
 import { Button } from '../ui/Button'
 import { Modal } from '../ui/Modal'
 import { Input } from '../ui/Input'
@@ -93,13 +94,10 @@ export function TareasTab({
 
   if (!materialidadAprobada) {
     return (
-      <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-gray-200 bg-white py-16 text-center max-w-2xl">
-        <Lock size={32} className="text-gray-300 mb-3" />
-        <p className="text-sm font-medium text-gray-500">Ejecución bloqueada</p>
-        <p className="text-xs text-gray-400 mt-1 max-w-sm">
-          Aprueba la materialidad en planificación para habilitar la asignación de tareas.
-        </p>
-      </div>
+      <BloqueoMaterialidad
+        titulo="Ejecución bloqueada"
+        descripcion="Aprueba la materialidad en planificación para habilitar la asignación de tareas."
+      />
     )
   }
 

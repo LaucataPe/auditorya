@@ -38,12 +38,23 @@ type TipoServicio = 'revisoria_fiscal' | 'auditoria_interna'
 
 type Auditoria = {
   id: string
-  periodo: string
+  fechaInicio: string
+  fechaFin: string
   tipoServicio: TipoServicio
   tipo: TipoAuditoria | null
   estado: FaseAuditoria
   materialidadAprobada: boolean
   empresa: { id: string; nombre: string; sector: string }
+}
+
+/** Texto del período del encargo a partir de sus fechas, p. ej. "01 ene. 2025 – 31 dic. 2025". */
+function formatearPeriodo(fechaInicio?: string | null, fechaFin?: string | null): string {
+  if (!fechaInicio || !fechaFin) return ''
+  const f = (d: string) =>
+    new Date(d.slice(0, 10) + 'T00:00:00').toLocaleDateString('es-CO', {
+      day: '2-digit', month: 'short', year: 'numeric',
+    })
+  return `${f(fechaInicio)} – ${f(fechaFin)}`
 }
 
 const FASE_LABEL: Record<FaseAuditoria, string> = {
@@ -142,6 +153,8 @@ export function EmpresaAuditoria() {
     ? TIPO_LABEL[auditoria.tipo]
     : SERVICIO_LABEL[auditoria.tipoServicio ?? 'revisoria_fiscal']
 
+  const periodo = formatearPeriodo(auditoria.fechaInicio, auditoria.fechaFin)
+
   return (
     <div className="p-8 space-y-6">
       {/* Actividad (pista de auditoría) */}
@@ -159,7 +172,7 @@ export function EmpresaAuditoria() {
       <div className="flex items-start justify-between">
         <div>
           <div className="flex items-center gap-2 mb-1">
-            <span className="text-xs text-gray-400 font-medium">Período {auditoria.periodo}</span>
+            <span className="text-xs text-gray-400 font-medium">Período {periodo}</span>
             <span className={cn('text-xs font-medium px-2 py-0.5 rounded-full', FASE_BADGE[auditoria.estado])}>
               {FASE_LABEL[auditoria.estado]}
             </span>
@@ -235,7 +248,7 @@ export function EmpresaAuditoria() {
             <CartaEncargoTab
               auditoriaId={auditoria.id}
               empresaNombre={auditoria.empresa.nombre}
-              periodo={auditoria.periodo}
+              periodo={periodo}
             />
           )}
           {!esAI && tabActivo === 'entendimiento' && (
@@ -253,27 +266,32 @@ export function EmpresaAuditoria() {
             <PapelesTab auditoriaId={auditoria.id} materialidadAprobada={auditoria.materialidadAprobada} />
           )}
           {!esAI && tabActivo === 'pbc' && (
-            <PbcTab auditoriaId={auditoria.id} materialidadAprobada={auditoria.materialidadAprobada} />
+            <PbcTab
+              auditoriaId={auditoria.id}
+              materialidadAprobada={auditoria.materialidadAprobada}
+              empresaNombre={auditoria.empresa.nombre}
+              periodo={periodo}
+            />
           )}
           {!esAI && tabActivo === 'cronograma' && (
-            <CronogramaTab auditoriaId={auditoria.id} materialidadAprobada={auditoria.materialidadAprobada} />
+            <CronogramaTab auditoriaId={auditoria.id} />
           )}
           {!esAI && tabActivo === 'memo' && (
             <MemoPlaneacionTab
               auditoriaId={auditoria.id}
               empresaNombre={auditoria.empresa.nombre}
-              periodo={auditoria.periodo}
+              periodo={periodo}
             />
           )}
           {!esAI && tabActivo === 'control_interno' && (
-            <ControlInternoTab auditoriaId={auditoria.id} materialidadAprobada={auditoria.materialidadAprobada} />
+            <ControlInternoTab auditoriaId={auditoria.id} />
           )}
           {!esAI && tabActivo === 'informes' && (
             <InformesTab
               auditoriaId={auditoria.id}
               materialidadAprobada={auditoria.materialidadAprobada}
               empresaNombre={auditoria.empresa.nombre}
-              periodo={auditoria.periodo}
+              periodo={periodo}
             />
           )}
           {!esAI && tabActivo === 'cierre' && (
@@ -288,7 +306,7 @@ export function EmpresaAuditoria() {
             <InformeAITab
               auditoriaId={auditoria.id}
               empresaNombre={auditoria.empresa.nombre}
-              periodo={auditoria.periodo}
+              periodo={periodo}
             />
           )}
         </div>

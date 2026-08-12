@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Lock, ListTodo, FileText, CalendarClock, AlertTriangle } from 'lucide-react'
+import { ListTodo, FileText, CalendarClock, AlertTriangle } from 'lucide-react'
 import type { ItemCronograma, EstadoCronograma } from '@auditorya/types'
 import { api } from '../../lib/api'
 import { cn } from '../../lib/cn'
@@ -37,19 +37,14 @@ function estaVencido(item: ItemCronograma): boolean {
   return !!item.fechaFin && item.estado !== 'completado' && new Date(item.fechaFin).getTime() < Date.now()
 }
 
-export function CronogramaTab({
-  auditoriaId,
-  materialidadAprobada,
-}: {
-  auditoriaId: string
-  materialidadAprobada: boolean
-}) {
+// El cronograma es un paso de PLANIFICACIÓN (NIA 300 — oportunidad): no se bloquea
+// por materialidad. Antes de la ejecución simplemente estará vacío.
+export function CronogramaTab({ auditoriaId }: { auditoriaId: string }) {
   const queryClient = useQueryClient()
 
   const { data: items = [], isLoading } = useQuery<ItemCronograma[]>({
     queryKey: ['cronograma', auditoriaId],
     queryFn: () => api.get<ItemCronograma[]>(`/auditorias/${auditoriaId}/cronograma`),
-    enabled: materialidadAprobada,
   })
 
   const { data: usuarios = [] } = useQuery<Usuario[]>({
@@ -99,19 +94,6 @@ export function CronogramaTab({
     }
     return { min, span, meses }
   }, [agendados])
-
-  if (!materialidadAprobada) {
-    return (
-      <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-gray-200 bg-white py-16 text-center max-w-2xl">
-        <Lock size={32} className="text-gray-300 mb-3" />
-        <p className="text-sm font-medium text-gray-500">Cronograma no disponible</p>
-        <p className="text-xs text-gray-400 mt-1 max-w-sm">
-          Aprueba la materialidad para habilitar la ejecución. La hoja de ruta se arma con las tareas
-          y pruebas del encargo.
-        </p>
-      </div>
-    )
-  }
 
   return (
     <div className="space-y-5">

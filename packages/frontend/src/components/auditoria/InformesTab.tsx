@@ -6,7 +6,8 @@ import {
   type TipoInforme, type TipoOpinion, type EvaluacionOpinion, type OpinionSugerida,
   type HallazgoConPapel,
 } from '@auditorya/types'
-import { Lock, FileText, CheckCircle, Printer, FileDown, Sparkles, ShieldCheck, Mail } from 'lucide-react'
+import { FileText, CheckCircle, Printer, FileDown, ShieldCheck, Mail, FilePlus2, RefreshCw } from 'lucide-react'
+import { BloqueoMaterialidad } from './BloqueoMaterialidad'
 import { Button } from '../ui/Button'
 import { Modal } from '../ui/Modal'
 import { Select } from '../ui/Select'
@@ -91,13 +92,10 @@ export function InformesTab({
 
   if (!materialidadAprobada) {
     return (
-      <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-gray-200 bg-white py-16 text-center max-w-2xl">
-        <Lock size={32} className="text-gray-300 mb-3" />
-        <p className="text-sm font-medium text-gray-500">Informes no disponibles</p>
-        <p className="text-xs text-gray-400 mt-1 max-w-sm">
-          Completa la planificación (materialidad aprobada) para habilitar la generación de informes.
-        </p>
-      </div>
+      <BloqueoMaterialidad
+        titulo="Informes no disponibles"
+        descripcion="Completa la planificación (materialidad aprobada) para habilitar la generación de informes."
+      />
     )
   }
 
@@ -334,7 +332,7 @@ function InformeEditor({
               </div>
             )}
             <Button className="gap-1.5" loading={generar.isPending} onClick={() => generar.mutate()}>
-              <Sparkles size={14} /> Generar borrador
+              <FilePlus2 size={14} /> Generar borrador
             </Button>
             {generar.isError && (
               <p className="text-sm text-red-600">
@@ -370,7 +368,7 @@ function InformeEditor({
                   {!aprobado && (
                     <Button size="sm" variant="secondary" className="gap-1.5"
                       loading={generar.isPending} onClick={() => generar.mutate()}>
-                      <Sparkles size={13} /> Regenerar
+                      <RefreshCw size={13} /> Regenerar
                     </Button>
                   )}
                 </div>

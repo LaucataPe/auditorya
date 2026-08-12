@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { SECCIONES_INFORME, TIPO_INFORME_LABEL } from '@auditorya/types'
-import { FileSignature, Sparkles, CheckCircle, ShieldCheck, Printer, FileDown } from 'lucide-react'
+import { FileSignature, FilePlus2, RefreshCw, CheckCircle, ShieldCheck, Printer, FileDown } from 'lucide-react'
 import { Button } from '../ui/Button'
 import { Textarea } from '../ui/Textarea'
 import { api } from '../../lib/api'
@@ -93,7 +93,7 @@ export function CartaEncargoTab({
             planeación. Genera el borrador estándar y ajústalo.
           </p>
           <Button size="sm" className="mt-5 gap-2" loading={generarMutation.isPending} onClick={() => generarMutation.mutate()}>
-            <Sparkles size={14} /> Generar carta de encargo
+            <FilePlus2 size={14} /> Generar carta de encargo
           </Button>
           {generarMutation.isError && (
             <p className="text-sm text-red-600 mt-3">
@@ -126,7 +126,7 @@ export function CartaEncargoTab({
               </Button>
               {!aprobado && (
                 <Button size="sm" variant="secondary" loading={generarMutation.isPending} onClick={() => generarMutation.mutate()}>
-                  <Sparkles size={13} className="mr-1" /> Regenerar
+                  <RefreshCw size={13} className="mr-1" /> Regenerar
                 </Button>
               )}
               {user?.rol === 'socio' && (
