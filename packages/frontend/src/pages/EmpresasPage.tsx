@@ -274,10 +274,14 @@ function NuevaEmpresaModal({
     ciudad: '',
     marcoContable: 'NIIF',
   })
+  const [aviso, setAviso] = useState<string | null>(null)
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (!form.nombre || !form.nit || (!form.sector && !form.ciiu)) return
+    if (!form.nombre.trim()) return setAviso('Escribe la razón social del cliente')
+    if (!form.nit.trim()) return setAviso('Escribe el NIT del cliente')
+    if (!form.sector && !form.ciiu) return setAviso('Indica el sector económico o un código CIIU')
+    setAviso(null)
     onSubmit(form)
   }
 
@@ -319,8 +323,8 @@ function NuevaEmpresaModal({
           options={MARCO_OPTS}
         />
 
-        {error && (
-          <p className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{error}</p>
+        {(aviso ?? error) && (
+          <p className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{aviso ?? error}</p>
         )}
 
         <div className="flex justify-end gap-3 pt-2">
@@ -350,10 +354,14 @@ function EditarEmpresaModal({
     ciudad: empresa.ciudad ?? '',
     marcoContable: empresa.marcoContable,
   })
+  const [aviso, setAviso] = useState<string | null>(null)
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (!form.nombre.trim() || !form.nit.trim() || (!form.sector && !form.ciiu)) return
+    if (!form.nombre.trim()) return setAviso('Escribe la razón social del cliente')
+    if (!form.nit.trim()) return setAviso('Escribe el NIT del cliente')
+    if (!form.sector && !form.ciiu) return setAviso('Indica el sector económico o un código CIIU')
+    setAviso(null)
     onSubmit(form)
   }
 
@@ -392,8 +400,8 @@ function EditarEmpresaModal({
           options={MARCO_OPTS}
         />
 
-        {error && (
-          <p className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{error}</p>
+        {(aviso ?? error) && (
+          <p className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{aviso ?? error}</p>
         )}
 
         <div className="flex justify-end gap-3 pt-2">

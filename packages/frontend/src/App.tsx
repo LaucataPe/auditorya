@@ -1,6 +1,10 @@
 import { useEffect } from 'react'
-import { Navigate, Route, Routes } from 'react-router-dom'
+import { Navigate, Route, Routes, useNavigate } from 'react-router-dom'
 import { useAuthStore } from './store/auth.store'
+import { EVENTO_SESION_EXPIRADA } from './lib/api'
+import { toast } from './store/toast.store'
+import { Toaster } from './components/ui/Toaster'
+import { ErrorBoundary } from './components/ui/ErrorBoundary'
 
 // Guards & layouts
 import { AppLayout } from './components/layout/AppLayout'
@@ -38,8 +42,23 @@ function OnboardingGuard({ children }: { children: React.ReactNode }) {
   return <>{children}</>
 }
 
+/** Al expirar la sesión (401 en cualquier petición), limpia el estado y vuelve al login. */
+function useSesionExpirada() {
+  const navigate = useNavigate()
+  useEffect(() => {
+    const handler = () => {
+      useAuthStore.setState({ isAuthenticated: false, onboardingComplete: false, user: null, firma: null })
+      toast.error('Tu sesión expiró. Inicia sesión de nuevo.')
+      navigate('/login', { replace: true })
+    }
+    window.addEventListener(EVENTO_SESION_EXPIRADA, handler)
+    return () => window.removeEventListener(EVENTO_SESION_EXPIRADA, handler)
+  }, [navigate])
+}
+
 export default function App() {
   const { checkSession, sessionChecked } = useAuthStore()
+  useSesionExpirada()
 
   useEffect(() => {
     checkSession()
@@ -55,6 +74,8 @@ export default function App() {
   }
 
   return (
+    <ErrorBoundary>
+    <Toaster />
     <Routes>
       {/* Public */}
       <Route path="/login" element={<LoginPage />} />
@@ -97,5 +118,6 @@ export default function App() {
 
       <Route path="*" element={<Navigate to="/login" replace />} />
     </Routes>
+    </ErrorBoundary>
   )
 }
