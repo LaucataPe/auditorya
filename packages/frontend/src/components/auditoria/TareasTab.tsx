@@ -9,10 +9,11 @@ import { Select } from '../ui/Select'
 import { Textarea } from '../ui/Textarea'
 import { api } from '../../lib/api'
 import { cn } from '../../lib/cn'
+import { useAreas } from '../../hooks/useAreas'
+import { CrearCicloInline } from './CrearCicloInline'
 
-type Area =
-  | 'efectivo' | 'cartera' | 'inventarios' | 'propiedad_planta_equipo' | 'proveedores'
-  | 'nomina' | 'impuestos' | 'ingresos' | 'gastos' | 'patrimonio' | 'otro'
+// Clave de área: catálogo base o ciclo propio de la firma (ver useAreas).
+type Area = string
 type EstadoTarea = 'pendiente' | 'en_progreso' | 'completada'
 
 type Tarea = {
@@ -26,20 +27,6 @@ type Tarea = {
 }
 type Usuario = { id: string; nombre: string }
 
-const AREA_LABEL: Record<Area, string> = {
-  efectivo: 'Efectivo y equivalentes',
-  cartera: 'Cartera / Clientes',
-  inventarios: 'Inventarios',
-  propiedad_planta_equipo: 'Propiedad, planta y equipo',
-  proveedores: 'Proveedores',
-  nomina: 'Nómina',
-  impuestos: 'Impuestos',
-  ingresos: 'Ingresos',
-  gastos: 'Gastos',
-  patrimonio: 'Patrimonio',
-  otro: 'Otro',
-}
-const AREA_OPTS = (Object.keys(AREA_LABEL) as Area[]).map((a) => ({ value: a, label: AREA_LABEL[a] }))
 
 const ESTADO_OPTS = [
   { value: 'pendiente', label: 'Pendiente' },
@@ -59,6 +46,7 @@ export function TareasTab({
   auditoriaId: string
   materialidadAprobada: boolean
 }) {
+  const { areaLabel } = useAreas()
   const queryClient = useQueryClient()
   const [nuevoOpen, setNuevoOpen] = useState(false)
   const [filtro, setFiltro] = useState<EstadoTarea | 'todas'>('todas')
@@ -152,7 +140,7 @@ export function TareasTab({
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <div className="flex items-center gap-2 mb-0.5">
-                      <span className="text-xs text-gray-400 font-medium">{AREA_LABEL[t.area]}</span>
+                      <span className="text-xs text-gray-400 font-medium">{areaLabel(t.area)}</span>
                       <span className={cn('text-xs font-medium px-2 py-0.5 rounded-full', ESTADO_BADGE[t.estado])}>
                         {ESTADO_OPTS.find((o) => o.value === t.estado)?.label}
                       </span>
@@ -227,8 +215,9 @@ function NuevaTareaModal({
   error: string | null
   onCreate: (b: { area: Area; titulo: string; descripcion?: string; asignadoA: string; fechaInicio?: string; vencimiento?: string }) => void
 }) {
+  const { opciones } = useAreas()
   const [form, setForm] = useState({
-    area: 'efectivo' as Area,
+    area: 'bancos' as Area,
     titulo: '',
     descripcion: '',
     asignadoA: '',
@@ -263,13 +252,16 @@ function NuevaTareaModal({
           onChange={(e) => setForm({ ...form, titulo: e.target.value })}
         />
         <div className="grid grid-cols-2 gap-3">
-          <Select
-            id="nt-area"
-            label="Área / Ciclo"
-            value={form.area}
-            onChange={(e) => setForm({ ...form, area: e.target.value as Area })}
-            options={AREA_OPTS}
-          />
+          <div>
+            <Select
+              id="nt-area"
+              label="Área / Ciclo"
+              value={form.area}
+              onChange={(e) => setForm({ ...form, area: e.target.value as Area })}
+              options={opciones}
+            />
+            <CrearCicloInline onCreado={(clave) => setForm((f) => ({ ...f, area: clave }))} />
+          </div>
           <Select
             id="nt-asignado"
             label="Responsable"

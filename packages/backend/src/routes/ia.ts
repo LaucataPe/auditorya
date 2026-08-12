@@ -18,7 +18,7 @@ import {
   auditorias, empresas, materialidades, riesgos, papelesTrabajo,
   cuentasBalance, cuentasBalanceComparativo, balanceMeta, entendimientoPeriodo,
 } from '../db/schema'
-import { esClaseBalance } from '@auditorya/types'
+import { esClaseBalance, AREAS_BASE_CLAVES } from '@auditorya/types'
 import { authMiddleware } from '../middleware/auth'
 import { iaDisponible, completarJSON, completarTexto, MODELO, type MensajeChat } from '../lib/llm'
 import { sugerirRiesgos } from '../lib/ia'
@@ -30,10 +30,8 @@ const app = new Hono<{ Variables: { user: JwtPayload } }>()
 
 app.use('*', authMiddleware)
 
-const AREAS = [
-  'efectivo', 'cartera', 'inventarios', 'propiedad_planta_equipo', 'proveedores',
-  'nomina', 'impuestos', 'ingresos', 'gastos', 'patrimonio', 'otro',
-] as const
+// Solo claves del catálogo base: las sugerencias de IA no usan ciclos propios de la firma.
+const AREAS = AREAS_BASE_CLAVES as [string, ...string[]]
 
 const ERROR_IA = {
   code: 'IA_NO_DISPONIBLE',

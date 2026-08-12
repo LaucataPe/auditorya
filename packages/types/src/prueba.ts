@@ -26,7 +26,17 @@ export type PruebaEstandar = {
  * ofrece los pasos del procedimiento.
  */
 export const PROGRAMA_AUDITORIA: Record<AreaRiesgo, PruebaEstandar[]> = {
-  efectivo: [
+  caja: [
+    {
+      titulo: 'Arqueo de caja y fondos',
+      aserciones: ['existencia'],
+      tipo: 'detalle',
+      procedimiento: 'Realizar arqueo de caja menor y fondos fijos, y conciliar con los registros.',
+      documentosRequeridos: ['Relación de cajas menores y fondos fijos', 'Auxiliar contable de caja'],
+      guia: ['Realizar el conteo físico del efectivo en presencia del responsable', 'Conciliar el conteo con el saldo contable', 'Verificar los soportes de reembolso pendientes', 'Documentar diferencias y firmar el acta de arqueo'],
+    },
+  ],
+  bancos: [
     {
       titulo: 'Confirmación bancaria',
       aserciones: ['existencia', 'derechos'],
@@ -44,14 +54,6 @@ export const PROGRAMA_AUDITORIA: Record<AreaRiesgo, PruebaEstandar[]> = {
       guia: ['Obtener las conciliaciones preparadas por la entidad', 'Verificar la aritmética y el amarre saldo banco vs. saldo libros', 'Analizar la antigüedad de las partidas conciliatorias', 'Revisar la depuración de partidas antiguas'],
     },
     {
-      titulo: 'Arqueo de caja y fondos',
-      aserciones: ['existencia'],
-      tipo: 'detalle',
-      procedimiento: 'Realizar arqueo de caja menor y fondos fijos, y conciliar con los registros.',
-      documentosRequeridos: ['Relación de cajas menores y fondos fijos', 'Auxiliar contable de caja'],
-      guia: ['Realizar el conteo físico del efectivo en presencia del responsable', 'Conciliar el conteo con el saldo contable', 'Verificar los soportes de reembolso pendientes', 'Documentar diferencias y firmar el acta de arqueo'],
-    },
-    {
       titulo: 'Corte de movimientos de tesorería',
       aserciones: ['corte'],
       tipo: 'detalle',
@@ -60,7 +62,7 @@ export const PROGRAMA_AUDITORIA: Record<AreaRiesgo, PruebaEstandar[]> = {
       guia: ['Seleccionar los movimientos de los días previos y posteriores al cierre', 'Cotejar la fecha de registro contra la fecha de la transacción bancaria', 'Confirmar que quedaron en el período correcto'],
     },
   ],
-  cartera: [
+  cuentas_por_cobrar: [
     {
       titulo: 'Circularización a clientes',
       aserciones: ['existencia', 'derechos'],
@@ -188,7 +190,7 @@ export const PROGRAMA_AUDITORIA: Record<AreaRiesgo, PruebaEstandar[]> = {
       guia: ['Seleccionar las últimas y primeras compras del corte', 'Cotejar la fecha de recepción contra la de registro', 'Confirmar el período correcto'],
     },
   ],
-  nomina: [
+  obligaciones_laborales: [
     {
       titulo: 'Recálculo de nómina y prestaciones',
       aserciones: ['exactitud', 'integridad'],
@@ -214,7 +216,7 @@ export const PROGRAMA_AUDITORIA: Record<AreaRiesgo, PruebaEstandar[]> = {
       guia: ['Seleccionar una muestra de la nómina', 'Verificar la existencia real del empleado (contrato, soportes)', 'Descartar empleados ficticios'],
     },
   ],
-  impuestos: [
+  impuestos_por_pagar: [
     {
       titulo: 'Recálculo de impuestos',
       aserciones: ['exactitud'],
@@ -240,7 +242,7 @@ export const PROGRAMA_AUDITORIA: Record<AreaRiesgo, PruebaEstandar[]> = {
       guia: ['Verificar la correcta práctica de retenciones sobre una muestra de pagos', 'Cotejar con las declaraciones presentadas', 'Confirmar el pago oportuno'],
     },
   ],
-  ingresos: [
+  ingresos_operacionales: [
     {
       titulo: 'Pruebas de corte de ingresos',
       aserciones: ['corte'],
@@ -266,7 +268,7 @@ export const PROGRAMA_AUDITORIA: Record<AreaRiesgo, PruebaEstandar[]> = {
       guia: ['Comparar ingresos y márgenes contra períodos anteriores y el presupuesto', 'Identificar variaciones inusuales', 'Obtener y corroborar las explicaciones de la administración'],
     },
   ],
-  gastos: [
+  gastos_de_administracion: [
     {
       titulo: 'Pruebas de soporte de gastos',
       aserciones: ['ocurrencia', 'exactitud'],
@@ -310,7 +312,7 @@ export const PROGRAMA_AUDITORIA: Record<AreaRiesgo, PruebaEstandar[]> = {
       guia: ['Obtener las actas del período', 'Verificar que las decisiones sobre el patrimonio quedaron autorizadas', 'Cotejar contra los registros contables'],
     },
   ],
-  otro: [
+  otros_activos: [
     {
       titulo: 'Procedimiento sustantivo a la medida',
       aserciones: ['valuación'],
@@ -321,3 +323,22 @@ export const PROGRAMA_AUDITORIA: Record<AreaRiesgo, PruebaEstandar[]> = {
     },
   ],
 }
+
+// Áreas afines comparten programa; las que no tienen uno específico usan la
+// revisión sustantiva genérica de otros_activos como punto de partida.
+Object.assign(PROGRAMA_AUDITORIA, {
+  cuentas_por_pagar: PROGRAMA_AUDITORIA.proveedores,
+  impuestos_por_cobrar: PROGRAMA_AUDITORIA.impuestos_por_pagar,
+  provisiones_nomina: PROGRAMA_AUDITORIA.obligaciones_laborales,
+  apropiaciones_nomina: PROGRAMA_AUDITORIA.obligaciones_laborales,
+  ingresos_no_operacionales: PROGRAMA_AUDITORIA.ingresos_operacionales,
+  gastos_de_ventas: PROGRAMA_AUDITORIA.gastos_de_administracion,
+  gastos_no_operacionales: PROGRAMA_AUDITORIA.gastos_de_administracion,
+  inversiones: PROGRAMA_AUDITORIA.otros_activos,
+  intangibles: PROGRAMA_AUDITORIA.otros_activos,
+  obligaciones_financieras: PROGRAMA_AUDITORIA.otros_activos,
+  diferidos: PROGRAMA_AUDITORIA.otros_activos,
+  otros_pasivos: PROGRAMA_AUDITORIA.otros_activos,
+  costo_de_ventas: PROGRAMA_AUDITORIA.otros_activos,
+  costos_de_produccion: PROGRAMA_AUDITORIA.otros_activos,
+})

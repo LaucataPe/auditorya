@@ -71,9 +71,14 @@ export type MatrizAserciones = {
 }
 
 const PESO_NIVEL: Record<NivelRiesgo, number> = { bajo: 1, medio: 2, alto: 3 }
+// Catálogo base en orden de estados financieros.
 const ORDEN_AREA: AreaRiesgo[] = [
-  'efectivo', 'cartera', 'inventarios', 'propiedad_planta_equipo', 'proveedores',
-  'nomina', 'impuestos', 'ingresos', 'gastos', 'patrimonio', 'otro',
+  'caja', 'bancos', 'inversiones', 'cuentas_por_cobrar', 'impuestos_por_cobrar', 'inventarios',
+  'propiedad_planta_equipo', 'intangibles', 'otros_activos', 'obligaciones_financieras',
+  'proveedores', 'cuentas_por_pagar', 'impuestos_por_pagar', 'obligaciones_laborales',
+  'provisiones_nomina', 'apropiaciones_nomina', 'diferidos', 'otros_pasivos', 'patrimonio',
+  'ingresos_operacionales', 'ingresos_no_operacionales', 'gastos_de_administracion',
+  'gastos_de_ventas', 'gastos_no_operacionales', 'costo_de_ventas', 'costos_de_produccion',
 ]
 
 function ordenarAserciones(set: Set<string>): string[] {
@@ -109,8 +114,13 @@ export function construirMatrizAserciones(
   let descubiertas = 0
   let relevantesTotal = 0
 
-  for (const area of ORDEN_AREA) {
-    if (!areas.has(area)) continue
+  // Áreas base en su orden canónico + ciclos propios de la firma al final (alfabético).
+  const areasOrdenadas = [
+    ...ORDEN_AREA.filter((a) => areas.has(a)),
+    ...[...areas].filter((a) => !ORDEN_AREA.includes(a)).sort(),
+  ]
+
+  for (const area of areasOrdenadas) {
 
     const relevantesSet = asercionesRelevantes(area)
     const relevantes = ordenarAserciones(relevantesSet)

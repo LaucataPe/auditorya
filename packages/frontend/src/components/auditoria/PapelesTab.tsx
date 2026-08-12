@@ -28,10 +28,11 @@ import { api, BASE_URL } from '../../lib/api'
 import { useAuthStore } from '../../store/auth.store'
 import { toast } from '../../store/toast.store'
 import { cn } from '../../lib/cn'
+import { useAreas } from '../../hooks/useAreas'
+import { CrearCicloInline } from './CrearCicloInline'
 
-type Area =
-  | 'efectivo' | 'cartera' | 'inventarios' | 'propiedad_planta_equipo' | 'proveedores'
-  | 'nomina' | 'impuestos' | 'ingresos' | 'gastos' | 'patrimonio' | 'otro'
+// Clave de área: catálogo base o ciclo propio de la firma (ver useAreas).
+type Area = string
 type EstadoPapel = 'borrador' | 'en_revision' | 'aprobado'
 type TipoEvidencia = 'documento' | 'confirmacion' | 'conciliacion' | 'calculo' | 'foto' | 'otro'
 
@@ -66,20 +67,6 @@ type Papel = {
 type PapelDetalle = Papel & { evidencias: Evidencia[] }
 type Usuario = { id: string; nombre: string }
 
-const AREA_LABEL: Record<Area, string> = {
-  efectivo: 'Efectivo y equivalentes',
-  cartera: 'Cartera / Clientes',
-  inventarios: 'Inventarios',
-  propiedad_planta_equipo: 'Propiedad, planta y equipo',
-  proveedores: 'Proveedores',
-  nomina: 'Nómina',
-  impuestos: 'Impuestos',
-  ingresos: 'Ingresos',
-  gastos: 'Gastos',
-  patrimonio: 'Patrimonio',
-  otro: 'Otro',
-}
-const AREA_OPTS = (Object.keys(AREA_LABEL) as Area[]).map((a) => ({ value: a, label: AREA_LABEL[a] }))
 
 const ESTADO_BADGE: Record<EstadoPapel, string> = {
   borrador: 'bg-gray-100 text-gray-600',
@@ -108,6 +95,7 @@ export function PapelesTab({
   auditoriaId: string
   materialidadAprobada: boolean
 }) {
+  const { areaLabel } = useAreas()
   const queryClient = useQueryClient()
   const navigate = useNavigate()
   const { id: empresaId } = useParams<{ id: string }>()
@@ -221,7 +209,7 @@ export function PapelesTab({
               <div className="flex items-start justify-between">
                 <div>
                   <div className="flex items-center gap-2 mb-0.5">
-                    <span className="text-xs text-gray-400 font-medium">{AREA_LABEL[p.area]}</span>
+                    <span className="text-xs text-gray-400 font-medium">{areaLabel(p.area)}</span>
                     <span className={cn('text-xs font-medium px-2 py-0.5 rounded-full', ESTADO_BADGE[p.estado])}>
                       {ESTADO_LABEL[p.estado]}
                     </span>
@@ -294,7 +282,8 @@ function NuevoPapelModal({
   error: string | null
   onCreate: (b: { area: Area; titulo: string }) => void
 }) {
-  const [form, setForm] = useState({ area: 'efectivo' as Area, titulo: '' })
+  const { opciones } = useAreas()
+  const [form, setForm] = useState({ area: 'bancos' as Area, titulo: '' })
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -305,13 +294,16 @@ function NuevoPapelModal({
   return (
     <Modal open={open} onClose={onClose} title="Nuevo papel de trabajo">
       <form onSubmit={handleSubmit} className="space-y-4">
-        <Select
-          id="np-area"
-          label="Área / Ciclo"
-          value={form.area}
-          onChange={(e) => setForm({ ...form, area: e.target.value as Area })}
-          options={AREA_OPTS}
-        />
+        <div>
+          <Select
+            id="np-area"
+            label="Área / Ciclo"
+            value={form.area}
+            onChange={(e) => setForm({ ...form, area: e.target.value as Area })}
+            options={opciones}
+          />
+          <CrearCicloInline onCreado={(clave) => setForm((f) => ({ ...f, area: clave }))} />
+        </div>
         <Input
           id="np-titulo"
           label="Título del papel"
@@ -342,7 +334,8 @@ function EditarPapelModal({
   error: string | null
   onSave: (b: { area: Area; titulo: string }) => void
 }) {
-  const [form, setForm] = useState({ area: 'efectivo' as Area, titulo: '' })
+  const { opciones } = useAreas()
+  const [form, setForm] = useState({ area: 'bancos' as Area, titulo: '' })
 
   useEffect(() => {
     if (papel) setForm({ area: papel.area, titulo: papel.titulo })
@@ -362,7 +355,7 @@ function EditarPapelModal({
           label="Área / Ciclo"
           value={form.area}
           onChange={(e) => setForm({ ...form, area: e.target.value as Area })}
-          options={AREA_OPTS}
+          options={opciones}
         />
         <Input
           id="ep-titulo"
@@ -397,12 +390,13 @@ function EliminarPapelModal({
   error: string | null
   onConfirm: () => void
 }) {
+  const { areaLabel } = useAreas()
   return (
     <Modal open={!!papel} onClose={onClose} title="Eliminar papel de trabajo">
       <div className="space-y-4">
         {papel && (
           <div className="rounded-xl bg-gray-50 border border-gray-100 px-4 py-3">
-            <p className="text-xs text-gray-400 mb-0.5">{AREA_LABEL[papel.area]}</p>
+            <p className="text-xs text-gray-400 mb-0.5">{areaLabel(papel.area)}</p>
             <p className="text-sm font-medium text-gray-800">{papel.titulo}</p>
           </div>
         )}
@@ -818,6 +812,7 @@ function CuentasSeccion({
   area: Area
   aprobado: boolean
 }) {
+  const { areaLabel } = useAreas()
   const queryClient = useQueryClient()
   const prefijo = AREA_CUENTA[area] ?? ''
   const [terceroDe, setTerceroDe] = useState<string | null>(null)
@@ -943,7 +938,7 @@ function CuentasSeccion({
   return (
     <div className="space-y-3">
       <p className="text-xs text-gray-400">
-        Cuentas de detalle de {AREA_LABEL[area]}{prefijo ? ` (PUC ${prefijo}…)` : ''} con movimiento por tercero. Abre "Terceros" para agregarlos a la muestra, o registra un hallazgo desde la cuenta.
+        Cuentas de detalle de {areaLabel(area)}{prefijo ? ` (PUC ${prefijo}…)` : ''} con movimiento por tercero. Abre "Terceros" para agregarlos a la muestra, o registra un hallazgo desde la cuenta.
       </p>
 
       <DataTable
@@ -1157,6 +1152,7 @@ export function PapelPanel({
   papelId: string
   auditoriaId: string
 }) {
+  const { areaLabel } = useAreas()
   const queryClient = useQueryClient()
   const { user } = useAuthStore()
   const esSocio = user?.rol === 'socio'
@@ -1306,7 +1302,7 @@ export function PapelPanel({
       {/* Encabezado */}
       <div className="border-b border-gray-100 py-3 flex items-center gap-3 flex-wrap">
         <div className="min-w-0">
-          <p className="text-[11px] text-gray-400">{AREA_LABEL[papel.area]}</p>
+          <p className="text-[11px] text-gray-400">{areaLabel(papel.area)}</p>
           <h2 className="text-base font-semibold text-gray-900 truncate">{papel.titulo}</h2>
         </div>
         <span className={cn('text-xs font-medium px-2 py-0.5 rounded-full', ESTADO_BADGE[papel.estado])}>

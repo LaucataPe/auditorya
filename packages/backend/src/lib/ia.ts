@@ -20,7 +20,7 @@ function normalizar(sector: string): string {
 
 const CATALOGO_GENERAL: RiesgoSugerido[] = [
   {
-    area: 'ingresos',
+    area: 'ingresos_operacionales',
     descripcion:
       'Reconocimiento de ingresos en el período incorrecto (corte de ventas) para inflar resultados.',
     riesgoInherente: 'alto',
@@ -28,13 +28,13 @@ const CATALOGO_GENERAL: RiesgoSugerido[] = [
       'Pruebas de corte de ingresos alrededor del cierre; revisión de notas crédito posteriores.',
   },
   {
-    area: 'efectivo',
+    area: 'bancos',
     descripcion: 'Saldos de efectivo y bancos no conciliados o sobreestimados.',
     riesgoInherente: 'medio',
     respuestaPlaneada: 'Confirmación bancaria directa y revisión de conciliaciones.',
   },
   {
-    area: 'cartera',
+    area: 'cuentas_por_cobrar',
     descripcion:
       'Cuentas por cobrar incobrables sin deterioro reconocido; antigüedad no analizada.',
     riesgoInherente: 'alto',
@@ -42,13 +42,13 @@ const CATALOGO_GENERAL: RiesgoSugerido[] = [
       'Circularización a clientes, análisis de antigüedad y suficiencia del deterioro.',
   },
   {
-    area: 'impuestos',
+    area: 'impuestos_por_pagar',
     descripcion: 'Provisiones y pasivos tributarios mal estimados; cumplimiento DIAN.',
     riesgoInherente: 'medio',
     respuestaPlaneada: 'Recálculo de impuestos y conciliación entre contabilidad y declaraciones.',
   },
   {
-    area: 'nomina',
+    area: 'obligaciones_laborales',
     descripcion: 'Seguridad social y prestaciones sociales no causadas o subestimadas.',
     riesgoInherente: 'medio',
     respuestaPlaneada: 'Recálculo de prestaciones y verificación de pagos de seguridad social.',
@@ -66,13 +66,13 @@ const CATALOGO_POR_SECTOR: Record<string, RiesgoSugerido[]> = {
         'Observación de toma física de inventario y pruebas de valuación (costo vs. NRV).',
     },
     {
-      area: 'ingresos',
+      area: 'ingresos_operacionales',
       descripcion: 'Ventas en efectivo no registradas; corte de ventas en el cierre.',
       riesgoInherente: 'alto',
       respuestaPlaneada: 'Pruebas de corte y análisis de márgenes por línea de producto.',
     },
     {
-      area: 'cartera',
+      area: 'cuentas_por_cobrar',
       descripcion: 'Cartera de clientes con alta morosidad sin deterioro adecuado.',
       riesgoInherente: 'medio',
       respuestaPlaneada: 'Circularización y análisis de antigüedad de cartera.',
@@ -80,7 +80,7 @@ const CATALOGO_POR_SECTOR: Record<string, RiesgoSugerido[]> = {
   ],
   construccion: [
     {
-      area: 'ingresos',
+      area: 'ingresos_operacionales',
       descripcion:
         'Reconocimiento de ingresos por avance de obra (grado de avance) mal estimado.',
       riesgoInherente: 'alto',
@@ -124,7 +124,7 @@ const CATALOGO_POR_SECTOR: Record<string, RiesgoSugerido[]> = {
       respuestaPlaneada: 'Inspección física de la flota y recálculo de depreciación.',
     },
     {
-      area: 'gastos',
+      area: 'gastos_de_administracion',
       descripcion: 'Gastos de combustible y mantenimiento sin soporte o mal clasificados.',
       riesgoInherente: 'medio',
       respuestaPlaneada: 'Pruebas de soporte de gastos y análisis de razonabilidad.',
@@ -147,14 +147,14 @@ const CATALOGO_POR_SECTOR: Record<string, RiesgoSugerido[]> = {
   ],
   servicios: [
     {
-      area: 'ingresos',
+      area: 'ingresos_operacionales',
       descripcion:
         'Reconocimiento de ingresos por servicios prestados pero aún no facturados (o viceversa).',
       riesgoInherente: 'alto',
       respuestaPlaneada: 'Revisión de contratos de servicio y pruebas de corte de ingresos.',
     },
     {
-      area: 'cartera',
+      area: 'cuentas_por_cobrar',
       descripcion: 'Honorarios por cobrar con riesgo de incobrabilidad.',
       riesgoInherente: 'medio',
       respuestaPlaneada: 'Circularización y análisis de antigüedad.',
@@ -175,7 +175,7 @@ const CATALOGO_POR_SECTOR: Record<string, RiesgoSugerido[]> = {
       respuestaPlaneada: 'Pruebas de costos de producción y observación de la medición de existencias.',
     },
     {
-      area: 'impuestos',
+      area: 'impuestos_por_pagar',
       descripcion: 'Regalías y obligaciones tributarias del sector minero mal estimadas.',
       riesgoInherente: 'medio',
       respuestaPlaneada: 'Recálculo de regalías e impuestos y conciliación con las liquidaciones.',

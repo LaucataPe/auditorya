@@ -4,15 +4,10 @@ import { ListTodo, FileText, CalendarClock, AlertTriangle } from 'lucide-react'
 import type { ItemCronograma, EstadoCronograma } from '@auditorya/types'
 import { api } from '../../lib/api'
 import { cn } from '../../lib/cn'
+import { useAreas } from '../../hooks/useAreas'
 
 type Usuario = { id: string; nombre: string }
 
-const AREA_LABEL: Record<string, string> = {
-  efectivo: 'Efectivo', cartera: 'Cartera', inventarios: 'Inventarios',
-  propiedad_planta_equipo: 'PP&E', proveedores: 'Proveedores', nomina: 'Nómina',
-  impuestos: 'Impuestos', ingresos: 'Ingresos', gastos: 'Gastos',
-  patrimonio: 'Patrimonio', otro: 'Otro',
-}
 
 const ESTADO_LABEL: Record<EstadoCronograma, string> = {
   pendiente: 'Pendiente', en_progreso: 'En progreso', completado: 'Completado',
@@ -40,6 +35,7 @@ function estaVencido(item: ItemCronograma): boolean {
 // El cronograma es un paso de PLANIFICACIÓN (NIA 300 — oportunidad): no se bloquea
 // por materialidad. Antes de la ejecución simplemente estará vacío.
 export function CronogramaTab({ auditoriaId }: { auditoriaId: string }) {
+  const { areaLabel } = useAreas()
   const queryClient = useQueryClient()
 
   const { data: items = [], isLoading } = useQuery<ItemCronograma[]>({
@@ -183,7 +179,7 @@ export function CronogramaTab({ auditoriaId }: { auditoriaId: string }) {
                           <div className="min-w-0">
                             <p className="text-gray-800 truncate">{it.titulo}</p>
                             <p className="text-[11px] text-gray-400">
-                              {AREA_LABEL[it.area] ?? it.area} · {ESTADO_LABEL[it.estado]}
+                              {areaLabel(it.area)} · {ESTADO_LABEL[it.estado]}
                               {vencido && <span className="text-red-500 inline-flex items-center gap-0.5 ml-1"><AlertTriangle size={10} /> vencido</span>}
                             </p>
                           </div>

@@ -5,11 +5,11 @@ import { Button } from '../ui/Button'
 import { Modal } from '../ui/Modal'
 import { api } from '../../lib/api'
 import { cn } from '../../lib/cn'
+import { useAreas } from '../../hooks/useAreas'
 
 type Nivel = 'bajo' | 'medio' | 'alto'
-type Area =
-  | 'efectivo' | 'cartera' | 'inventarios' | 'propiedad_planta_equipo' | 'proveedores'
-  | 'nomina' | 'impuestos' | 'ingresos' | 'gastos' | 'patrimonio' | 'otro'
+// Clave de área: catálogo base o ciclo propio de la firma (ver useAreas).
+type Area = string
 
 type Sugerencia = {
   area: Area
@@ -20,19 +20,6 @@ type Sugerencia = {
 
 type RespuestaIA = { fuente: 'ia' | 'catalogo'; riesgos: Sugerencia[] }
 
-const AREA_LABEL: Record<Area, string> = {
-  efectivo: 'Efectivo y equivalentes',
-  cartera: 'Cartera / Clientes',
-  inventarios: 'Inventarios',
-  propiedad_planta_equipo: 'Propiedad, planta y equipo',
-  proveedores: 'Proveedores',
-  nomina: 'Nómina',
-  impuestos: 'Impuestos',
-  ingresos: 'Ingresos',
-  gastos: 'Gastos',
-  patrimonio: 'Patrimonio',
-  otro: 'Otro',
-}
 
 const NIVEL_BADGE: Record<Nivel, string> = {
   bajo: 'bg-emerald-50 text-emerald-700 border-emerald-200',
@@ -52,6 +39,7 @@ export function SugerenciasIAModal({
   onClose: () => void
   onAgregados: () => void
 }) {
+  const { areaLabel } = useAreas()
   const { data, isLoading, isError, error } = useQuery<RespuestaIA>({
     queryKey: ['ia-sugerencias', auditoriaId],
     queryFn: () => api.post<RespuestaIA>(`/auditorias/${auditoriaId}/ia/sugerir-riesgos`, {}),
@@ -147,7 +135,7 @@ export function SugerenciasIAModal({
                   />
                   <div className="min-w-0">
                     <div className="mb-0.5 flex items-center gap-2">
-                      <span className="text-xs font-medium text-slate-900">{AREA_LABEL[s.area]}</span>
+                      <span className="text-xs font-medium text-slate-900">{areaLabel(s.area)}</span>
                       <span className={cn('rounded-full border px-2 py-0.5 text-xs font-semibold capitalize', NIVEL_BADGE[s.riesgoInherente])}>
                         {s.riesgoInherente}
                       </span>

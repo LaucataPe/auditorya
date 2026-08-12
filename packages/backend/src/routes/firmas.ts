@@ -3,7 +3,8 @@ import { zValidator } from '../lib/validacion'
 import { z } from 'zod'
 import { and, desc, eq, sql } from 'drizzle-orm'
 import { db } from '../db/client'
-import { firmas, empresas, auditorias, informes } from '../db/schema'
+import { firmas, empresas, auditorias, informes, areasFirma, riesgos, papelesTrabajo, tareas, hallazgos } from '../db/schema'
+import { claveDeArea, AREAS_BASE_CLAVES } from '@auditorya/types'
 import { authMiddleware } from '../middleware/auth'
 import type { JwtPayload } from '../lib/jwt'
 import { registrarEvento } from '../lib/eventos'
@@ -112,5 +113,115 @@ app.put(
     return c.json({ data: firma })
   },
 )
+
+/* ── Ciclos/áreas propios de la firma ─────────────────────────────────────
+   Complementan el catálogo base fijo (AREAS_BASE en @auditorya/types). */
+
+// GET /firmas/mia/areas — ciclos propios (el frontend los une al catálogo base)
+app.get('/mia/areas', async (c) => {
+  const { firmaId } = c.get('user')
+  const rows = await db
+    .select()
+    .from(areasFirma)
+    .where(eq(areasFirma.firmaId, firmaId))
+    .orderBy(areasFirma.nombre)
+  return c.json({ data: rows })
+})
+
+// POST /firmas/mia/areas — crear ciclo propio. Regla: socio o gerente.
+app.post(
+  '/mia/areas',
+  zValidator('json', z.object({ nombre: z.string().min(3).max(60) })),
+  async (c) => {
+    const user = c.get('user')
+    if (user.rol !== 'socio' && user.rol !== 'gerente') {
+      return c.json({ error: { code: 'FORBIDDEN', message: 'Solo socio o gerente pueden crear ciclos' } }, 403)
+    }
+
+    const nombre = c.req.valid('json').nombre.trim()
+    const clave = claveDeArea(nombre)
+    if (!clave) {
+      return c.json({ error: { code: 'BAD_REQUEST', message: 'El nombre del ciclo no es válido' } }, 400)
+    }
+    if (AREAS_BASE_CLAVES.includes(clave)) {
+      return c.json({ error: { code: 'AREA_DUPLICADA', message: 'Ese ciclo ya existe en el catálogo base' } }, 409)
+    }
+    const [existente] = await db
+      .select({ id: areasFirma.id })
+      .from(areasFirma)
+      .where(and(eq(areasFirma.firmaId, user.firmaId), eq(areasFirma.clave, clave)))
+    if (existente) {
+      return c.json({ error: { code: 'AREA_DUPLICADA', message: 'Tu firma ya tiene un ciclo con ese nombre' } }, 409)
+    }
+
+    const [area] = await db
+      .insert(areasFirma)
+      .values({ firmaId: user.firmaId, clave, nombre })
+      .returning()
+
+    registrarEvento(user, {
+      accion: 'firma.area_crear',
+      entidad: 'area_firma',
+      entidadId: area.id,
+      detalle: { clave, nombre },
+    })
+
+    return c.json({ data: area }, 201)
+  },
+)
+
+// DELETE /firmas/mia/areas/:id — eliminar ciclo propio. Regla: socio o gerente, y sin uso.
+app.delete('/mia/areas/:id', async (c) => {
+  const user = c.get('user')
+  if (user.rol !== 'socio' && user.rol !== 'gerente') {
+    return c.json({ error: { code: 'FORBIDDEN', message: 'Solo socio o gerente pueden eliminar ciclos' } }, 403)
+  }
+
+  const [area] = await db
+    .select()
+    .from(areasFirma)
+    .where(and(eq(areasFirma.id, c.req.param('id')), eq(areasFirma.firmaId, user.firmaId)))
+  if (!area) {
+    return c.json({ error: { code: 'NOT_FOUND', message: 'Ciclo no encontrado' } }, 404)
+  }
+
+  // No se elimina un ciclo con registros: dejaría claves huérfanas en los encargos.
+  const tablasConArea = [
+    { tabla: riesgos, nombre: 'riesgos' },
+    { tabla: papelesTrabajo, nombre: 'papeles de trabajo' },
+    { tabla: tareas, nombre: 'tareas' },
+    { tabla: hallazgos, nombre: 'hallazgos' },
+  ] as const
+  for (const { tabla, nombre } of tablasConArea) {
+    const [row] = await db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(tabla)
+      .innerJoin(auditorias, eq(tabla.auditoriaId, auditorias.id))
+      .innerJoin(empresas, eq(auditorias.empresaId, empresas.id))
+      .where(and(eq(empresas.firmaId, user.firmaId), eq(tabla.area, area.clave)))
+    if (Number(row?.n ?? 0) > 0) {
+      return c.json(
+        {
+          error: {
+            code: 'AREA_EN_USO',
+            message: `No se puede eliminar: el ciclo "${area.nombre}" tiene ${nombre} asociados`,
+          },
+        },
+        409,
+      )
+    }
+  }
+
+  await db.delete(areasFirma).where(eq(areasFirma.id, area.id))
+
+  registrarEvento(user, {
+    accion: 'firma.area_eliminar',
+    entidad: 'area_firma',
+    entidadId: area.id,
+    detalle: { clave: area.clave, nombre: area.nombre },
+  })
+
+  return c.json({ data: { ok: true } })
+})
 
 export default app

@@ -70,6 +70,22 @@ export const rolPermisos = pgTable(
   }),
 )
 
+// Ciclos/áreas propios de la firma. Complementan el catálogo base (AREAS_BASE en
+// @auditorya/types): la `clave` convive con las claves base en las columnas `area`.
+export const areasFirma = pgTable(
+  'areas_firma',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    firmaId: uuid('firma_id').notNull().references(() => firmas.id),
+    clave: text('clave').notNull(),
+    nombre: text('nombre').notNull(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (t) => ({
+    firmaClaveUnq: uniqueIndex('areas_firma_firma_clave_unq').on(t.firmaId, t.clave),
+  }),
+)
+
 export const empresas = pgTable('empresas', {
   id: uuid('id').primaryKey().defaultRandom(),
   firmaId: uuid('firma_id').notNull().references(() => firmas.id),
@@ -310,21 +326,8 @@ export const riesgos = pgTable('riesgos', {
   auditoriaId: uuid('auditoria_id')
     .notNull()
     .references(() => auditorias.id),
-  area: text('area', {
-    enum: [
-      'efectivo',
-      'cartera',
-      'inventarios',
-      'propiedad_planta_equipo',
-      'proveedores',
-      'nomina',
-      'impuestos',
-      'ingresos',
-      'gastos',
-      'patrimonio',
-      'otro',
-    ],
-  }).notNull(),
+  // Clave del catálogo base (AREAS_BASE) o de un ciclo propio de la firma (areas_firma).
+  area: text('area').notNull(),
   descripcion: text('descripcion').notNull(),
   riesgoInherente: text('riesgo_inherente', { enum: ['bajo', 'medio', 'alto'] }).notNull(),
   riesgoControl: text('riesgo_control', { enum: ['bajo', 'medio', 'alto'] }).notNull(),
@@ -343,21 +346,8 @@ export const papelesTrabajo = pgTable('papeles_trabajo', {
   auditoriaId: uuid('auditoria_id')
     .notNull()
     .references(() => auditorias.id),
-  area: text('area', {
-    enum: [
-      'efectivo',
-      'cartera',
-      'inventarios',
-      'propiedad_planta_equipo',
-      'proveedores',
-      'nomina',
-      'impuestos',
-      'ingresos',
-      'gastos',
-      'patrimonio',
-      'otro',
-    ],
-  }).notNull(),
+  // Clave del catálogo base (AREAS_BASE) o de un ciclo propio de la firma (areas_firma).
+  area: text('area').notNull(),
   titulo: text('titulo').notNull(),
   // Riesgo (NIA 315) que este papel atiende, si aplica.
   riesgoId: uuid('riesgo_id').references(() => riesgos.id),
@@ -453,21 +443,8 @@ export const tareas = pgTable('tareas', {
   auditoriaId: uuid('auditoria_id')
     .notNull()
     .references(() => auditorias.id),
-  area: text('area', {
-    enum: [
-      'efectivo',
-      'cartera',
-      'inventarios',
-      'propiedad_planta_equipo',
-      'proveedores',
-      'nomina',
-      'impuestos',
-      'ingresos',
-      'gastos',
-      'patrimonio',
-      'otro',
-    ],
-  }).notNull(),
+  // Clave del catálogo base (AREAS_BASE) o de un ciclo propio de la firma (areas_firma).
+  area: text('area').notNull(),
   titulo: text('titulo').notNull(),
   descripcion: text('descripcion'),
   // Riesgo (NIA 315) que esta tarea atiende, si aplica.
@@ -690,14 +667,8 @@ export const hallazgos = pgTable('hallazgos', {
     .notNull()
     .references(() => auditorias.id),
   papelTrabajoId: uuid('papel_trabajo_id').references(() => papelesTrabajo.id),
-  area: text('area', {
-    enum: [
-      'efectivo', 'cartera', 'inventarios', 'propiedad_planta_equipo', 'proveedores',
-      'nomina', 'impuestos', 'ingresos', 'gastos', 'patrimonio', 'otro',
-    ],
-  })
-    .default('otro')
-    .notNull(),
+  // Clave del catálogo base (AREAS_BASE) o de un ciclo propio de la firma (areas_firma).
+  area: text('area').notNull(),
   cuentaCodigo: text('cuenta_codigo'),
   // `descripcion` es la condición (situación encontrada). Los tres campos siguientes
   // completan la estructura del hallazgo (condición/criterio/causa/efecto + recomendación).

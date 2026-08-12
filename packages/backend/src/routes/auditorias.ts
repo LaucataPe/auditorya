@@ -14,6 +14,7 @@ import {
 import { authMiddleware } from '../middleware/auth'
 import { esSocioResponsable, ERROR_NO_SOCIO_RESPONSABLE } from '../lib/permisos'
 import { encargoCerrado, ERROR_ENCARGO_CERRADO } from '../lib/encargo'
+import { areaValidaParaFirma, ERROR_AREA_INVALIDA } from '../lib/areas'
 import { registrarEvento } from '../lib/eventos'
 import { storage } from '../lib/storage'
 import { sugerirRiesgos } from '../lib/ia'
@@ -1256,20 +1257,6 @@ app.post('/auditorias/:id/materialidad/aprobar', async (c) => {
 
 // ─── Riesgos (NIA 315) ───────────────────────────────────────────────────────
 
-const AREAS = [
-  'efectivo',
-  'cartera',
-  'inventarios',
-  'propiedad_planta_equipo',
-  'proveedores',
-  'nomina',
-  'impuestos',
-  'ingresos',
-  'gastos',
-  'patrimonio',
-  'otro',
-] as const
-
 // GET /auditorias/:id/riesgos
 app.get('/auditorias/:id/riesgos', async (c) => {
   const { firmaId } = c.get('user')
@@ -1295,7 +1282,7 @@ app.post(
   zValidator(
     'json',
     z.object({
-      area: z.enum(AREAS),
+      area: z.string().min(2).max(80),
       descripcion: z.string().min(3),
       riesgoInherente: z.enum(['bajo', 'medio', 'alto']),
       riesgoControl: z.enum(['bajo', 'medio', 'alto']),
@@ -1312,6 +1299,9 @@ app.post(
       return c.json({ error: { code: 'NOT_FOUND', message: 'Auditoría no encontrada' } }, 404)
     }
     if (await encargoCerrado(id)) return c.json({ error: ERROR_ENCARGO_CERRADO }, 409)
+    if (!(await areaValidaParaFirma(user.firmaId, body.area))) {
+      return c.json({ error: ERROR_AREA_INVALIDA }, 400)
+    }
 
     const [riesgo] = await db
       .insert(riesgos)
@@ -1345,7 +1335,7 @@ app.put(
   zValidator(
     'json',
     z.object({
-      area: z.enum(AREAS).optional(),
+      area: z.string().min(2).max(80).optional(),
       descripcion: z.string().min(3).optional(),
       riesgoInherente: z.enum(['bajo', 'medio', 'alto']).optional(),
       riesgoControl: z.enum(['bajo', 'medio', 'alto']).optional(),
@@ -1371,6 +1361,9 @@ app.put(
 
     if (!existente) {
       return c.json({ error: { code: 'NOT_FOUND', message: 'Riesgo no encontrado' } }, 404)
+    }
+    if (body.area && !(await areaValidaParaFirma(user.firmaId, body.area))) {
+      return c.json({ error: ERROR_AREA_INVALIDA }, 400)
     }
 
     const inherente = body.riesgoInherente ?? existente.riesgoInherente
@@ -1523,40 +1516,74 @@ app.post('/auditorias/:id/riesgos/sugerir', async (c) => {
 
 // ─── Riesgos candidatos desde el balance (analíticos) ────────────────────────
 
-type AreaR = (typeof AREAS)[number]
+// Mapeos por código PUC → siempre claves del catálogo base.
+type AreaR = string
 
 const AREA_POR_GRUPO: Record<string, AreaR> = {
-  '11': 'efectivo', '13': 'cartera', '14': 'inventarios', '15': 'propiedad_planta_equipo',
-  '22': 'proveedores', '23': 'proveedores', '24': 'impuestos', '25': 'nomina',
-  '41': 'ingresos', '42': 'ingresos', '51': 'gastos', '52': 'gastos', '53': 'gastos',
-  '54': 'impuestos', '61': 'gastos', '62': 'gastos',
+  '11': 'bancos', '12': 'inversiones', '13': 'cuentas_por_cobrar', '14': 'inventarios',
+  '15': 'propiedad_planta_equipo', '16': 'intangibles', '17': 'diferidos', '18': 'otros_activos',
+  '19': 'otros_activos', '21': 'obligaciones_financieras', '22': 'proveedores',
+  '23': 'cuentas_por_pagar', '24': 'impuestos_por_pagar', '25': 'obligaciones_laborales',
+  '26': 'otros_pasivos', '27': 'diferidos', '28': 'otros_pasivos',
+  '41': 'ingresos_operacionales', '42': 'ingresos_no_operacionales',
+  '51': 'gastos_de_administracion', '52': 'gastos_de_ventas', '53': 'gastos_no_operacionales',
+  '54': 'impuestos_por_pagar', '61': 'costo_de_ventas', '62': 'costo_de_ventas',
 }
-const AREA_POR_CLASE: Record<string, AreaR> = { '3': 'patrimonio', '4': 'ingresos', '5': 'gastos', '6': 'gastos', '7': 'gastos' }
+const AREA_POR_CLASE: Record<string, AreaR> = {
+  '1': 'otros_activos', '2': 'otros_pasivos', '3': 'patrimonio', '4': 'ingresos_operacionales',
+  '5': 'gastos_de_administracion', '6': 'costo_de_ventas', '7': 'costos_de_produccion',
+}
 
 function areaDesdeCodigo(cod: string): AreaR {
+  // PUC 1105 = caja; el resto del grupo 11 (disponible) va a bancos.
+  if (cod.startsWith('1105')) return 'caja'
   const g = cod.slice(0, 2)
   if (AREA_POR_GRUPO[g]) return AREA_POR_GRUPO[g]
-  return AREA_POR_CLASE[cod[0]] ?? 'otro'
+  return AREA_POR_CLASE[cod[0]] ?? 'otros_activos'
 }
 
 const ASERCION: Record<AreaR, string> = {
-  efectivo: 'existencia', cartera: 'valuación y existencia', inventarios: 'valuación y existencia',
-  propiedad_planta_equipo: 'existencia y valuación', proveedores: 'integridad', impuestos: 'exactitud',
-  nomina: 'integridad', ingresos: 'ocurrencia y corte', gastos: 'integridad y exactitud',
-  patrimonio: 'exactitud', otro: 'valuación',
+  caja: 'existencia', bancos: 'existencia', inversiones: 'existencia y valuación',
+  cuentas_por_cobrar: 'valuación y existencia', impuestos_por_cobrar: 'existencia y exactitud',
+  inventarios: 'valuación y existencia', propiedad_planta_equipo: 'existencia y valuación',
+  intangibles: 'existencia y valuación', otros_activos: 'valuación',
+  obligaciones_financieras: 'integridad y exactitud', proveedores: 'integridad',
+  cuentas_por_pagar: 'integridad', impuestos_por_pagar: 'exactitud',
+  obligaciones_laborales: 'integridad', provisiones_nomina: 'integridad y exactitud',
+  apropiaciones_nomina: 'integridad y exactitud', diferidos: 'valuación y corte',
+  otros_pasivos: 'integridad', patrimonio: 'exactitud',
+  ingresos_operacionales: 'ocurrencia y corte', ingresos_no_operacionales: 'ocurrencia',
+  gastos_de_administracion: 'integridad y exactitud', gastos_de_ventas: 'integridad y exactitud',
+  gastos_no_operacionales: 'ocurrencia y exactitud', costo_de_ventas: 'exactitud y corte',
+  costos_de_produccion: 'exactitud e integridad',
 }
 const RESPUESTA: Record<AreaR, string> = {
-  efectivo: 'Confirmación bancaria y revisión de conciliaciones.',
-  cartera: 'Circularización a clientes y análisis de antigüedad.',
+  caja: 'Arqueo de caja y fondos fijos, y conciliación con registros.',
+  bancos: 'Confirmación bancaria y revisión de conciliaciones.',
+  inversiones: 'Confirmación de custodios y verificación de valoración a mercado.',
+  cuentas_por_cobrar: 'Circularización a clientes y análisis de antigüedad.',
+  impuestos_por_cobrar: 'Conciliación de saldos a favor con declaraciones presentadas.',
   inventarios: 'Observación de toma física y pruebas de valuación.',
   propiedad_planta_equipo: 'Inspección física y recálculo de depreciación.',
+  intangibles: 'Revisión de soportes de adquisición y recálculo de amortización.',
+  otros_activos: 'Revisión de composición y soportes de las partidas.',
+  obligaciones_financieras: 'Confirmación con entidades financieras y recálculo de intereses.',
   proveedores: 'Confirmación a proveedores y pruebas de corte de pasivos.',
-  impuestos: 'Recálculo y conciliación con las declaraciones tributarias.',
-  nomina: 'Recálculo de prestaciones y verificación de seguridad social.',
-  ingresos: 'Pruebas de corte de ingresos y análisis de márgenes.',
-  gastos: 'Pruebas de soporte y razonabilidad de gastos.',
+  cuentas_por_pagar: 'Búsqueda de pasivos omitidos y revisión de pagos posteriores.',
+  impuestos_por_pagar: 'Recálculo y conciliación con las declaraciones tributarias.',
+  obligaciones_laborales: 'Recálculo de prestaciones y verificación de seguridad social.',
+  provisiones_nomina: 'Recálculo de provisiones laborales y revisión de consolidación.',
+  apropiaciones_nomina: 'Recálculo de aportes y verificación de planillas de seguridad social.',
+  diferidos: 'Revisión de la causación y amortización de diferidos.',
+  otros_pasivos: 'Revisión de composición y soportes de las partidas.',
   patrimonio: 'Revisión de movimientos del patrimonio y actas.',
-  otro: 'Procedimientos sustantivos acordes a la naturaleza de la cuenta.',
+  ingresos_operacionales: 'Pruebas de corte de ingresos y análisis de márgenes.',
+  ingresos_no_operacionales: 'Revisión de soportes de la ocurrencia y clasificación.',
+  gastos_de_administracion: 'Pruebas de soporte y razonabilidad de gastos.',
+  gastos_de_ventas: 'Pruebas de soporte y razonabilidad de gastos.',
+  gastos_no_operacionales: 'Revisión de soportes de la ocurrencia y clasificación.',
+  costo_de_ventas: 'Pruebas de corte y análisis de margen bruto contra el sector.',
+  costos_de_produccion: 'Revisión del costeo y análisis de variaciones de producción.',
 }
 
 const copCO = (n: number) =>
@@ -1640,7 +1667,7 @@ app.post(
       candidatos: z
         .array(
           z.object({
-            area: z.enum(AREAS),
+            area: z.string().min(2).max(80),
             descripcion: z.string().min(3),
             riesgoInherente: z.enum(['bajo', 'medio', 'alto']),
             respuestaPlaneada: z.string().optional(),
@@ -1660,6 +1687,12 @@ app.post(
     const row = await cargarAuditoria(id, user.firmaId)
     if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Auditoría no encontrada' } }, 404)
     if (await encargoCerrado(id)) return c.json({ error: ERROR_ENCARGO_CERRADO }, 409)
+
+    for (const area of new Set(candidatos.map((s) => s.area))) {
+      if (!(await areaValidaParaFirma(user.firmaId, area))) {
+        return c.json({ error: ERROR_AREA_INVALIDA }, 400)
+      }
+    }
 
     const insertados = await db
       .insert(riesgos)

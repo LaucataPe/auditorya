@@ -9,13 +9,8 @@ import { api } from '../../lib/api'
 import { cn } from '../../lib/cn'
 import { useAuthStore } from '../../store/auth.store'
 import { construirHtmlListaPbc, imprimirInforme } from '../../lib/informe-export'
+import { useAreas } from '../../hooks/useAreas'
 
-const AREA_LABEL: Record<string, string> = {
-  efectivo: 'Efectivo', cartera: 'Cartera', inventarios: 'Inventarios',
-  propiedad_planta_equipo: 'Propiedad, planta y equipo', proveedores: 'Proveedores',
-  nomina: 'Nómina', impuestos: 'Impuestos', ingresos: 'Ingresos', gastos: 'Gastos',
-  patrimonio: 'Patrimonio', otro: 'Otro',
-}
 
 const BADGE: Record<EstadoPbc, string> = {
   solicitado: 'bg-amber-50 text-amber-700',
@@ -36,6 +31,7 @@ export function PbcTab({
   empresaNombre: string
   periodo: string
 }) {
+  const { areaLabel } = useAreas()
   const queryClient = useQueryClient()
   const { firma } = useAuthStore()
   const [filtro, setFiltro] = useState<Filtro>('todos')
@@ -78,7 +74,7 @@ export function PbcTab({
       firma,
       items: pendientes.map((s) => ({
         descripcion: s.descripcion,
-        area: s.papelArea ? (AREA_LABEL[s.papelArea] ?? s.papelArea) : null,
+        area: s.papelArea ? areaLabel(s.papelArea) : null,
         papelTitulo: s.papelTitulo,
         fechaLimite: s.fechaLimite,
         notas: s.notas,
@@ -167,7 +163,7 @@ export function PbcTab({
                 </div>
                 <p className="text-xs text-gray-400 mt-0.5">
                   {s.papelTitulo ? (
-                    <>Papel: {s.papelTitulo}{s.papelArea ? ` · ${AREA_LABEL[s.papelArea] ?? s.papelArea}` : ''}</>
+                    <>Papel: {s.papelTitulo}{s.papelArea ? ` · ${areaLabel(s.papelArea)}` : ''}</>
                   ) : (
                     'Sin papel asociado'
                   )}

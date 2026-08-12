@@ -1,9 +1,10 @@
 import { useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Building2, ImagePlus, MapPin, Pencil, Plus, Trash2, UserCheck } from 'lucide-react'
+import { Building2, ImagePlus, MapPin, Pencil, Plus, Trash2, UserCheck, X } from 'lucide-react'
 import { api } from '../lib/api'
 import { useAuthStore } from '../store/auth.store'
 import { toast } from '../store/toast.store'
+import { useAreas } from '../hooks/useAreas'
 import { Button } from '../components/ui/Button'
 import { Input } from '../components/ui/Input'
 import { Select } from '../components/ui/Select'
@@ -28,7 +29,7 @@ type RolFirma = {
   nivel: string
 }
 
-const tabs = ['Información', 'Equipo', 'Roles', 'Control de calidad'] as const
+const tabs = ['Información', 'Equipo', 'Roles', 'Control de calidad', 'Configuración'] as const
 type Tab = (typeof tabs)[number]
 
 const ROL_LABEL: Record<string, string> = {
@@ -91,6 +92,7 @@ export function FirmaPage() {
       {activeTab === 'Equipo' && <EquipoTab />}
       {activeTab === 'Roles' && <RolesTab />}
       {activeTab === 'Control de calidad' && <CalidadTab />}
+      {activeTab === 'Configuración' && <ConfiguracionTab />}
     </div>
   )
 }
@@ -164,6 +166,104 @@ function InfoTab() {
         />
       )}
     </>
+  )
+}
+
+/* ── Configuración de la firma ───────────────────────────────────────────── */
+
+function ConfiguracionTab() {
+  return (
+    <div className="space-y-6">
+      <CiclosCard />
+    </div>
+  )
+}
+
+/* ── Ciclos/áreas de auditoría de la firma ───────────────────────────────── */
+
+function CiclosCard() {
+  const { user } = useAuthStore()
+  const queryClient = useQueryClient()
+  const { areas, propias } = useAreas()
+  const [nombre, setNombre] = useState('')
+  const canManage = user?.rol === 'socio' || user?.rol === 'gerente'
+
+  const invalidate = () => queryClient.invalidateQueries({ queryKey: ['areas-firma'] })
+
+  const crear = useMutation({
+    mutationFn: () => api.post('/firmas/mia/areas', { nombre: nombre.trim() }),
+    onSuccess: () => {
+      toast.success('Ciclo creado')
+      setNombre('')
+      invalidate()
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : 'Error al crear el ciclo'),
+  })
+
+  const eliminar = useMutation({
+    mutationFn: (id: string) => api.delete(`/firmas/mia/areas/${id}`),
+    onSuccess: () => { toast.success('Ciclo eliminado'); invalidate() },
+    onError: (e) => toast.error(e instanceof Error ? e.message : 'Error al eliminar el ciclo'),
+  })
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
+      <p className="text-sm font-medium text-gray-700 mb-1">Ciclos de auditoría</p>
+      <p className="text-xs text-gray-400 mb-4">
+        Áreas/ciclos disponibles al crear riesgos, papeles y tareas en todos los encargos. Los del
+        catálogo base son fijos; tu firma puede añadir ciclos propios.
+      </p>
+
+      <div className="flex flex-wrap gap-1.5">
+        {areas.map((a) => (
+          <span
+            key={a.clave}
+            className={cn(
+              'inline-flex items-center gap-1 text-xs font-medium px-2.5 py-1 rounded-full',
+              a.propia ? 'bg-indigo-50 text-indigo-700' : 'bg-gray-100 text-gray-600',
+            )}
+          >
+            {a.nombre}
+            {a.propia && canManage && (
+              <button
+                onClick={() => eliminar.mutate(a.id!)}
+                disabled={eliminar.isPending}
+                className="text-indigo-300 hover:text-red-500 transition-colors"
+                title="Eliminar ciclo (solo si no tiene registros)"
+              >
+                <X size={12} />
+              </button>
+            )}
+          </span>
+        ))}
+        {propias.length === 0 && (
+          <span className="text-xs text-gray-400 self-center">— aún sin ciclos propios</span>
+        )}
+      </div>
+
+      {canManage && (
+        <form
+          className="mt-4 flex items-end gap-2 max-w-sm"
+          onSubmit={(e) => {
+            e.preventDefault()
+            if (nombre.trim().length >= 3 && !crear.isPending) crear.mutate()
+          }}
+        >
+          <div className="flex-1">
+            <Input
+              id="ciclo-nombre"
+              label="Nuevo ciclo"
+              placeholder="p. ej. Fiducias, Cartera hipotecaria…"
+              value={nombre}
+              onChange={(e) => setNombre(e.target.value)}
+            />
+          </div>
+          <Button type="submit" size="sm" className="gap-1.5" disabled={nombre.trim().length < 3} loading={crear.isPending}>
+            <Plus size={13} /> Añadir
+          </Button>
+        </form>
+      )}
+    </div>
   )
 }
 

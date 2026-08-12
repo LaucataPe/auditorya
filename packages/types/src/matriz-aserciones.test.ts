@@ -6,9 +6,9 @@ import { construirMatrizAserciones, type PapelMatriz, type RiesgoMatriz } from '
 
 describe('construirMatrizAserciones', () => {
   it('un papel aprobado marca sus aserciones como cubiertas y el resto como descubiertas', () => {
-    const papeles: PapelMatriz[] = [{ area: 'cartera', titulo: 'Circularización a clientes', estado: 'aprobado' }]
+    const papeles: PapelMatriz[] = [{ area: 'cuentas_por_cobrar', titulo: 'Circularización a clientes', estado: 'aprobado' }]
     const m = construirMatrizAserciones(papeles, [])
-    const cartera = m.filas.find((f) => f.area === 'cartera')!
+    const cartera = m.filas.find((f) => f.area === 'cuentas_por_cobrar')!
     expect(cartera.celdas['existencia']).toBe('cubierta')
     expect(cartera.celdas['derechos']).toBe('cubierta')
     expect(cartera.celdas['valuación']).toBe('descubierta')
@@ -17,9 +17,9 @@ describe('construirMatrizAserciones', () => {
   })
 
   it('un papel sin aprobar deja sus aserciones en proceso', () => {
-    const papeles: PapelMatriz[] = [{ area: 'cartera', titulo: 'Circularización a clientes', estado: 'borrador' }]
+    const papeles: PapelMatriz[] = [{ area: 'cuentas_por_cobrar', titulo: 'Circularización a clientes', estado: 'borrador' }]
     const m = construirMatrizAserciones(papeles, [])
-    const cartera = m.filas.find((f) => f.area === 'cartera')!
+    const cartera = m.filas.find((f) => f.area === 'cuentas_por_cobrar')!
     expect(cartera.celdas['existencia']).toBe('en_proceso')
     expect(cartera.celdas['derechos']).toBe('en_proceso')
   })
@@ -34,28 +34,28 @@ describe('construirMatrizAserciones', () => {
   })
 
   it('los papeles a la medida (sin match en el catálogo) no aportan cobertura', () => {
-    const papeles: PapelMatriz[] = [{ area: 'cartera', titulo: 'Prueba especial a la medida', estado: 'aprobado' }]
+    const papeles: PapelMatriz[] = [{ area: 'cuentas_por_cobrar', titulo: 'Prueba especial a la medida', estado: 'aprobado' }]
     const m = construirMatrizAserciones(papeles, [])
-    const cartera = m.filas.find((f) => f.area === 'cartera')!
+    const cartera = m.filas.find((f) => f.area === 'cuentas_por_cobrar')!
     expect(Object.values(cartera.celdas).every((c) => c === 'descubierta')).toBe(true)
   })
 
   it('solo incluye áreas en alcance (con riesgo o papel)', () => {
     const m = construirMatrizAserciones(
-      [{ area: 'cartera', titulo: 'Circularización a clientes', estado: 'aprobado' }],
-      [{ area: 'efectivo', riesgoCombinado: 'medio' }],
+      [{ area: 'cuentas_por_cobrar', titulo: 'Circularización a clientes', estado: 'aprobado' }],
+      [{ area: 'bancos', riesgoCombinado: 'medio' }],
     )
     const areas = m.filas.map((f) => f.area)
-    expect(areas).toContain('cartera')
-    expect(areas).toContain('efectivo')
-    expect(areas).not.toContain('nomina')
+    expect(areas).toContain('cuentas_por_cobrar')
+    expect(areas).toContain('bancos')
+    expect(areas).not.toContain('obligaciones_laborales')
   })
 
   it('prioriza las filas de mayor riesgo primero', () => {
     const m = construirMatrizAserciones(
       [],
       [
-        { area: 'efectivo', riesgoCombinado: 'bajo' },
+        { area: 'bancos', riesgoCombinado: 'bajo' },
         { area: 'inventarios', riesgoCombinado: 'alto' },
       ],
     )
@@ -64,8 +64,8 @@ describe('construirMatrizAserciones', () => {
 
   it('el resumen cuadra con las celdas', () => {
     const papeles: PapelMatriz[] = [
-      { area: 'cartera', titulo: 'Circularización a clientes', estado: 'aprobado' }, // existencia, derechos → cubiertas
-      { area: 'cartera', titulo: 'Análisis de antigüedad y deterioro', estado: 'borrador' }, // valuación → en_proceso
+      { area: 'cuentas_por_cobrar', titulo: 'Circularización a clientes', estado: 'aprobado' }, // existencia, derechos → cubiertas
+      { area: 'cuentas_por_cobrar', titulo: 'Análisis de antigüedad y deterioro', estado: 'borrador' }, // valuación → en_proceso
     ]
     const m = construirMatrizAserciones(papeles, [])
     // cartera relevantes: existencia, derechos, valuación, corte

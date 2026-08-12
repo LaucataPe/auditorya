@@ -7,16 +7,11 @@ import {
 import { api } from '../../lib/api'
 import { cn } from '../../lib/cn'
 import type { SubTab } from '../../lib/etapas-encargo'
+import { useAreas } from '../../hooks/useAreas'
 
 type PapelFila = { area: string; titulo: string; estado: 'borrador' | 'en_revision' | 'aprobado' }
 type RiesgoFila = { area: string; riesgoCombinado: NivelRiesgo }
 
-const AREA_LABEL: Record<string, string> = {
-  efectivo: 'Efectivo', cartera: 'Cartera', inventarios: 'Inventarios',
-  propiedad_planta_equipo: 'Propiedad, planta y equipo', proveedores: 'Proveedores',
-  nomina: 'Nómina', impuestos: 'Impuestos', ingresos: 'Ingresos', gastos: 'Gastos',
-  patrimonio: 'Patrimonio', otro: 'Otro',
-}
 
 const NIVEL_DOT: Record<NivelRiesgo, string> = {
   alto: 'bg-red-500', medio: 'bg-amber-400', bajo: 'bg-emerald-400',
@@ -35,6 +30,7 @@ export function MatrizAsercionesPanel({
   auditoriaId: string
   onIr: (paso: SubTab) => void
 }) {
+  const { areaLabel } = useAreas()
   const { data: papeles = [] } = useQuery<PapelFila[]>({
     queryKey: ['papeles', auditoriaId],
     queryFn: () => api.get<PapelFila[]>(`/auditorias/${auditoriaId}/papeles`),
@@ -99,7 +95,7 @@ export function MatrizAsercionesPanel({
                     <td className="sticky left-0 bg-white px-2 py-1.5 whitespace-nowrap">
                       <button onClick={() => onIr('papeles')} className="flex items-center gap-1.5 hover:text-indigo-600 text-gray-700">
                         {f.nivelMax && <span className={cn('h-1.5 w-1.5 rounded-full shrink-0', NIVEL_DOT[f.nivelMax])} title={`Riesgo ${f.nivelMax}`} />}
-                        <span className="truncate max-w-[160px]">{AREA_LABEL[f.area] ?? f.area}</span>
+                        <span className="truncate max-w-[160px]">{areaLabel(f.area)}</span>
                       </button>
                     </td>
                     {m.columnas.map((a) => {

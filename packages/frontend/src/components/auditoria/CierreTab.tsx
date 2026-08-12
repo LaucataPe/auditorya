@@ -11,6 +11,7 @@ import { Textarea } from '../ui/Textarea'
 import { api } from '../../lib/api'
 import { useAuthStore } from '../../store/auth.store'
 import { cn } from '../../lib/cn'
+import { useAreas } from '../../hooks/useAreas'
 
 type HojaAjustesResp = { ajustes: Ajuste[]; materialidad: number | null; evaluacion: EvaluacionOpinion }
 
@@ -26,12 +27,6 @@ const OPINION_STYLE: Record<OpinionSugerida, string> = {
   sin_base: 'border-gray-200 bg-gray-50 text-gray-600',
 }
 
-const AREA_LABEL: Record<string, string> = {
-  efectivo: 'Efectivo', cartera: 'Cartera', inventarios: 'Inventarios',
-  propiedad_planta_equipo: 'PP&E', proveedores: 'Proveedores', nomina: 'Nómina',
-  impuestos: 'Impuestos', ingresos: 'Ingresos', gastos: 'Gastos',
-  patrimonio: 'Patrimonio', otro: 'Otro',
-}
 
 type ChecklistState = {
   hechosPosteriores: string
@@ -43,6 +38,7 @@ type ChecklistState = {
 }
 
 export function CierreTab({ auditoriaId }: { auditoriaId: string }) {
+  const { areaLabel } = useAreas()
   const { user } = useAuthStore()
   const esSocio = user?.rol === 'socio'
   const queryClient = useQueryClient()
@@ -201,7 +197,7 @@ export function CierreTab({ auditoriaId }: { auditoriaId: string }) {
                 <div className="min-w-0">
                   <p className="text-sm text-gray-800">{n.texto}</p>
                   <p className="text-xs text-gray-400 mt-0.5">
-                    {n.papelTitulo ? `${n.papelTitulo}${n.papelArea ? ` · ${AREA_LABEL[n.papelArea] ?? n.papelArea}` : ''}` : 'Papel'}
+                    {n.papelTitulo ? `${n.papelTitulo}${n.papelArea ? ` · ${areaLabel(n.papelArea)}` : ''}` : 'Papel'}
                   </p>
                 </div>
                 <button

@@ -1,15 +1,8 @@
-export type AreaRiesgo =
-  | 'efectivo'
-  | 'cartera'
-  | 'inventarios'
-  | 'propiedad_planta_equipo'
-  | 'proveedores'
-  | 'nomina'
-  | 'impuestos'
-  | 'ingresos'
-  | 'gastos'
-  | 'patrimonio'
-  | 'otro'
+/**
+ * Clave del área/ciclo: una del catálogo base (AREAS_BASE en areas.ts) o una
+ * propia de la firma (tabla areas_firma). Abierta a string por los ciclos propios.
+ */
+export type AreaRiesgo = string
 
 export type NivelRiesgo = 'bajo' | 'medio' | 'alto'
 

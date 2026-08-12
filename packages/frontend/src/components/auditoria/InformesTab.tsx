@@ -16,6 +16,7 @@ import { api } from '../../lib/api'
 import { useAuthStore } from '../../store/auth.store'
 import { cn } from '../../lib/cn'
 import { construirHtmlInforme, imprimirInforme, descargarDocx } from '../../lib/informe-export'
+import { useAreas } from '../../hooks/useAreas'
 
 type EstadoInforme = 'borrador' | 'aprobado'
 type Informe = {
@@ -161,11 +162,6 @@ export function InformesTab({
   )
 }
 
-const AREA_LABEL_CARTA: Record<string, string> = {
-  efectivo: 'Efectivo', cartera: 'Cartera', inventarios: 'Inventarios',
-  propiedad_planta_equipo: 'Propiedad, planta y equipo', proveedores: 'Proveedores', nomina: 'Nómina',
-  impuestos: 'Impuestos', ingresos: 'Ingresos', gastos: 'Gastos', patrimonio: 'Patrimonio', otro: 'Otros',
-}
 
 function CartaRecomendaciones({
   auditoriaId, empresaNombre, periodo,
@@ -174,6 +170,7 @@ function CartaRecomendaciones({
   empresaNombre: string
   periodo: string
 }) {
+  const { areaLabel } = useAreas()
   const { firma } = useAuthStore()
 
   const { data: hallazgos = [] } = useQuery<HallazgoConPapel[]>({
@@ -187,7 +184,7 @@ function CartaRecomendaciones({
   function secciones() {
     const areas = Array.from(new Set(pendientes.map((h) => h.area)))
     return areas.map((area) => ({
-      label: AREA_LABEL_CARTA[area] ?? area,
+      label: areaLabel(area),
       contenido: pendientes
         .filter((h) => h.area === area)
         .map((h) => {

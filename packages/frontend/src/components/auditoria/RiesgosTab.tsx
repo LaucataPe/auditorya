@@ -9,11 +9,12 @@ import { Select } from '../ui/Select'
 import { SugerenciasIAModal } from './SugerenciasIAModal'
 import { api } from '../../lib/api'
 import { cn } from '../../lib/cn'
+import { useAreas } from '../../hooks/useAreas'
+import { CrearCicloInline } from './CrearCicloInline'
 
 type Nivel = 'bajo' | 'medio' | 'alto'
-type Area =
-  | 'efectivo' | 'cartera' | 'inventarios' | 'propiedad_planta_equipo' | 'proveedores'
-  | 'nomina' | 'impuestos' | 'ingresos' | 'gastos' | 'patrimonio' | 'otro'
+// Clave de área: catálogo base o ciclo propio de la firma (ver useAreas).
+type Area = string
 
 type Riesgo = {
   id: string
@@ -36,21 +37,7 @@ type Candidato = {
   motivo: 'significativa' | 'anomalia' | 'ambas'
 }
 
-const AREA_LABEL: Record<Area, string> = {
-  efectivo: 'Efectivo y equivalentes',
-  cartera: 'Cartera / Clientes',
-  inventarios: 'Inventarios',
-  propiedad_planta_equipo: 'Propiedad, planta y equipo',
-  proveedores: 'Proveedores',
-  nomina: 'Nómina',
-  impuestos: 'Impuestos',
-  ingresos: 'Ingresos',
-  gastos: 'Gastos',
-  patrimonio: 'Patrimonio',
-  otro: 'Otro',
-}
 
-const AREA_OPTS = (Object.keys(AREA_LABEL) as Area[]).map((a) => ({ value: a, label: AREA_LABEL[a] }))
 const NIVEL_OPTS = [
   { value: 'bajo', label: 'Bajo' },
   { value: 'medio', label: 'Medio' },
@@ -80,6 +67,7 @@ export function RiesgosTab({
   sector?: string
   materialidadAprobada?: boolean
 }) {
+  const { areaLabel } = useAreas()
   const queryClient = useQueryClient()
   const [modalOpen, setModalOpen] = useState(false)
   const [balanceOpen, setBalanceOpen] = useState(false)
@@ -183,7 +171,7 @@ export function RiesgosTab({
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <div className="flex items-center gap-2 mb-1">
-                    <span className="text-xs font-medium text-gray-900">{AREA_LABEL[r.area]}</span>
+                    <span className="text-xs font-medium text-gray-900">{areaLabel(r.area)}</span>
                     {r.origen === 'sugerido' && (
                       <span className="text-xs text-violet-600 bg-violet-50 px-2 py-0.5 rounded-full flex items-center gap-1">
                         <Sparkles size={10} /> IA
@@ -337,9 +325,10 @@ function ResponderRiesgoModal({
   onClose: () => void
   onCambio: () => void
 }) {
+  const { areaLabel } = useAreas()
   const queryClient = useQueryClient()
 
-  const [titulo, setTitulo] = useState(`Respuesta al riesgo de ${AREA_LABEL[riesgo.area]}`)
+  const [titulo, setTitulo] = useState(`Respuesta al riesgo de ${areaLabel(riesgo.area)}`)
   const pruebas = PROGRAMA_AUDITORIA[riesgo.area] ?? []
   const [selPruebas, setSelPruebas] = useState<Set<number>>(new Set())
   const togglePrueba = (i: number) =>
@@ -404,7 +393,7 @@ function ResponderRiesgoModal({
     <Modal open onClose={onClose} title="Responder al riesgo" size="lg">
       <div className="space-y-4 max-h-[70vh] overflow-y-auto pr-1">
         <div className="rounded-xl bg-gray-50 border border-gray-100 px-4 py-3">
-          <p className="text-xs text-gray-400 mb-0.5">{AREA_LABEL[riesgo.area]}</p>
+          <p className="text-xs text-gray-400 mb-0.5">{areaLabel(riesgo.area)}</p>
           <p className="text-sm text-gray-700">{riesgo.descripcion}</p>
           {riesgo.respuestaPlaneada && (
             <p className="text-xs text-gray-500 mt-1"><span className="font-medium text-gray-600">Respuesta planeada:</span> {riesgo.respuestaPlaneada}</p>
@@ -444,7 +433,7 @@ function ResponderRiesgoModal({
         {pruebas.length > 0 && (
           <div className="border-t border-gray-100 pt-4">
             <p className="text-xs text-gray-500 mb-2">
-              Programa de {AREA_LABEL[riesgo.area]} — selecciona las pruebas que aplican. Se crea un
+              Programa de {areaLabel(riesgo.area)} — selecciona las pruebas que aplican. Se crea un
               papel por prueba (con su guía) y se genera la lista de documentos a solicitar al cliente. Las tareas se
               asignan dentro de cada papel.
             </p>
@@ -539,6 +528,7 @@ function CandidatosModal({
   onClose: () => void
   onAgregados: () => void
 }) {
+  const { areaLabel } = useAreas()
   const { data: candidatos = [], isLoading } = useQuery<Candidato[]>({
     queryKey: ['riesgos-candidatos', auditoriaId],
     queryFn: () => api.get<Candidato[]>(`/auditorias/${auditoriaId}/riesgos/candidatos`),
@@ -614,7 +604,7 @@ function CandidatosModal({
                   />
                   <div className="min-w-0">
                     <div className="flex items-center gap-2 mb-0.5">
-                      <span className="text-xs font-medium text-gray-900">{AREA_LABEL[c.area]}</span>
+                      <span className="text-xs font-medium text-gray-900">{areaLabel(c.area)}</span>
                       <span className="text-xs text-gray-400">{MOTIVO_LABEL[c.motivo]}</span>
                       <NivelChip nivel={c.riesgoInherente} />
                     </div>
@@ -652,8 +642,9 @@ function NuevoRiesgoModal({
   error: string | null
   onCreate: (b: { area: Area; descripcion: string; riesgoInherente: Nivel; riesgoControl: Nivel; respuestaPlaneada?: string }) => void
 }) {
+  const { opciones } = useAreas()
   const [form, setForm] = useState({
-    area: 'ingresos' as Area,
+    area: 'ingresos_operacionales' as Area,
     descripcion: '',
     riesgoInherente: 'alto' as Nivel,
     riesgoControl: 'medio' as Nivel,
@@ -675,13 +666,16 @@ function NuevoRiesgoModal({
   return (
     <Modal open={open} onClose={onClose} title="Nuevo riesgo">
       <form onSubmit={handleSubmit} className="space-y-4">
-        <Select
-          id="r-area"
-          label="Área / Ciclo"
-          value={form.area}
-          onChange={(e) => setForm({ ...form, area: e.target.value as Area })}
-          options={AREA_OPTS}
-        />
+        <div>
+          <Select
+            id="r-area"
+            label="Área / Ciclo"
+            value={form.area}
+            onChange={(e) => setForm({ ...form, area: e.target.value as Area })}
+            options={opciones}
+          />
+          <CrearCicloInline onCreado={(clave) => setForm((f) => ({ ...f, area: clave }))} />
+        </div>
         <Input
           id="r-desc"
           label="Descripción del riesgo"
@@ -745,6 +739,7 @@ function EditarRiesgoModal({
   error: string | null
   onSave: (b: EditarRiesgoBody) => void
 }) {
+  const { opciones } = useAreas()
   const [form, setForm] = useState<EditarRiesgoBody>({
     area: 'ingresos', descripcion: '', riesgoInherente: 'alto', riesgoControl: 'medio', respuestaPlaneada: '',
   })
@@ -775,7 +770,7 @@ function EditarRiesgoModal({
           label="Área / Ciclo"
           value={form.area}
           onChange={(e) => setForm({ ...form, area: e.target.value as Area })}
-          options={AREA_OPTS}
+          options={opciones}
         />
         <Input
           id="er-desc"
@@ -832,6 +827,7 @@ function EliminarRiesgoModal({
   error: string | null
   onConfirm: () => void
 }) {
+  const { areaLabel } = useAreas()
   const [texto, setTexto] = useState('')
 
   useEffect(() => { if (riesgo) setTexto('') }, [riesgo])
@@ -853,7 +849,7 @@ function EliminarRiesgoModal({
       <div className="space-y-4">
         {riesgo && (
           <div className="rounded-xl bg-gray-50 border border-gray-100 px-4 py-3">
-            <p className="text-xs text-gray-400 mb-0.5">{AREA_LABEL[riesgo.area]}</p>
+            <p className="text-xs text-gray-400 mb-0.5">{areaLabel(riesgo.area)}</p>
             <p className="text-sm text-gray-700">{riesgo.descripcion}</p>
           </div>
         )}

@@ -218,6 +218,20 @@
       "when": 1785100000000,
       "tag": "0030_marca_firma",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1785200000000,
+      "tag": "0031_areas_firma",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1785300000000,
+      "tag": "0032_homologar_areas",
+      "breakpoints": true
     }
   ]
 }

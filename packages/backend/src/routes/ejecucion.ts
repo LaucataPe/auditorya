@@ -21,6 +21,7 @@ import {
 import { authMiddleware } from '../middleware/auth'
 import { esSocioResponsable, ERROR_NO_SOCIO_RESPONSABLE } from '../lib/permisos'
 import { encargoCerrado, ERROR_ENCARGO_CERRADO } from '../lib/encargo'
+import { areaValidaParaFirma, ERROR_AREA_INVALIDA } from '../lib/areas'
 import { registrarEvento } from '../lib/eventos'
 import { storage, firmarDescarga } from '../lib/storage'
 import { createHash, randomUUID } from 'node:crypto'
@@ -29,11 +30,6 @@ import type { JwtPayload } from '../lib/jwt'
 const app = new Hono<{ Variables: { user: JwtPayload } }>()
 
 app.use('*', authMiddleware)
-
-const AREAS = [
-  'efectivo', 'cartera', 'inventarios', 'propiedad_planta_equipo', 'proveedores',
-  'nomina', 'impuestos', 'ingresos', 'gastos', 'patrimonio', 'otro',
-] as const
 
 const COMPONENTES = [
   'ambiente_control', 'evaluacion_riesgos', 'actividades_control',
@@ -150,7 +146,7 @@ app.post(
   zValidator(
     'json',
     z.object({
-      area: z.enum(AREAS),
+      area: z.string().min(2).max(80),
       titulo: z.string().min(3),
       procedimiento: z.string().optional(),
       alcance: z.string().optional(),
@@ -191,6 +187,10 @@ app.post(
         { error: { code: 'USUARIO_INVALIDO', message: 'El responsable no pertenece a la firma' } },
         400,
       )
+    }
+
+    if (!(await areaValidaParaFirma(firmaId, body.area))) {
+      return c.json({ error: ERROR_AREA_INVALIDA }, 400)
     }
 
     // Anti-duplicado: no crear el mismo papel (mismo título) dos veces para un riesgo.
@@ -275,7 +275,7 @@ app.put(
   zValidator(
     'json',
     z.object({
-      area: z.enum(AREAS).optional(),
+      area: z.string().min(2).max(80).optional(),
       titulo: z.string().min(3).optional(),
       procedimiento: z.string().optional(),
       alcance: z.string().optional(),
@@ -313,6 +313,10 @@ app.put(
         { error: { code: 'USUARIO_INVALIDO', message: 'El responsable no pertenece a la firma' } },
         400,
       )
+    }
+
+    if (body.area && !(await areaValidaParaFirma(firmaId, body.area))) {
+      return c.json({ error: ERROR_AREA_INVALIDA }, 400)
     }
 
     const updates: Record<string, string | Date | null> = {}
@@ -888,7 +892,7 @@ app.post(
   zValidator(
     'json',
     z.object({
-      area: z.enum(AREAS),
+      area: z.string().min(2).max(80),
       titulo: z.string().min(3),
       descripcion: z.string().optional(),
       asignadoA: z.string().uuid(),
@@ -924,6 +928,10 @@ app.post(
         { error: { code: 'USUARIO_INVALIDO', message: 'El responsable no pertenece a la firma' } },
         400,
       )
+    }
+
+    if (!(await areaValidaParaFirma(firmaId, body.area))) {
+      return c.json({ error: ERROR_AREA_INVALIDA }, 400)
     }
 
     const [tarea] = await db
@@ -976,7 +984,7 @@ app.put(
   zValidator(
     'json',
     z.object({
-      area: z.enum(AREAS).optional(),
+      area: z.string().min(2).max(80).optional(),
       titulo: z.string().min(3).optional(),
       descripcion: z.string().optional(),
       asignadoA: z.string().uuid().optional(),
@@ -999,6 +1007,10 @@ app.put(
         { error: { code: 'USUARIO_INVALIDO', message: 'El responsable no pertenece a la firma' } },
         400,
       )
+    }
+
+    if (body.area && !(await areaValidaParaFirma(firmaId, body.area))) {
+      return c.json({ error: ERROR_AREA_INVALIDA }, 400)
     }
 
     const updates: Record<string, string | Date | null> = {}
