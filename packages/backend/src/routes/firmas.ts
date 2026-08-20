@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { and, desc, eq, sql } from 'drizzle-orm'
 import { db } from '../db/client'
 import { firmas, empresas, auditorias, informes, areasFirma, riesgos, papelesTrabajo, tareas, hallazgos } from '../db/schema'
-import { claveDeArea, AREAS_BASE_CLAVES } from '@auditorya/types'
+import { claveDeArea, AREAS_BASE_CLAVES, FUENTES_DOCUMENTO } from '@auditorya/types'
 import { authMiddleware } from '../middleware/auth'
 import type { JwtPayload } from '../lib/jwt'
 import { registrarEvento } from '../lib/eventos'
@@ -77,6 +77,8 @@ app.put(
       ciudad: z.string().min(2).optional(),
       // Identidad de marca de los documentos. null limpia el valor (vuelve al defecto).
       colorMarca: z.string().regex(/^#[0-9a-fA-F]{6}$/, 'Color inválido (formato #rrggbb)').nullable().optional(),
+      fuenteTitulos: z.enum(FUENTES_DOCUMENTO).nullable().optional(),
+      fuenteCuerpo: z.enum(FUENTES_DOCUMENTO).nullable().optional(),
       logo: z
         .string()
         .regex(/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/, 'Logo inválido (se espera una imagen en data URI)')
@@ -107,6 +109,8 @@ app.put(
       detalle: {
         campos: Object.keys(body),
         ...(body.colorMarca !== undefined ? { colorMarca: body.colorMarca } : {}),
+        ...(body.fuenteTitulos !== undefined ? { fuenteTitulos: body.fuenteTitulos } : {}),
+        ...(body.fuenteCuerpo !== undefined ? { fuenteCuerpo: body.fuenteCuerpo } : {}),
       },
     })
 

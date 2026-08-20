@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Building2, ImagePlus, MapPin, Pencil, Plus, Trash2, UserCheck, X } from 'lucide-react'
+import { FUENTES_DOCUMENTO, FUENTE_TITULOS_DEFECTO, FUENTE_CUERPO_DEFECTO, type FuenteDocumento } from '@auditorya/types'
 import { api } from '../lib/api'
 import { useAuthStore } from '../store/auth.store'
 import { toast } from '../store/toast.store'
@@ -305,12 +306,22 @@ function MarcaCard() {
 
   const [color, setColor] = useState(firma?.colorMarca ?? COLOR_MARCA_DEFECTO)
   const [logo, setLogo] = useState<string | null>(firma?.logo ?? null)
+  const [fuente, setFuente] = useState<FuenteDocumento>(
+    (firma?.fuenteTitulos as FuenteDocumento) ?? FUENTE_TITULOS_DEFECTO,
+  )
+  const [fuenteCuerpo, setFuenteCuerpo] = useState<FuenteDocumento>(
+    (firma?.fuenteCuerpo as FuenteDocumento) ?? FUENTE_CUERPO_DEFECTO,
+  )
 
   const sinCambios =
-    color === (firma?.colorMarca ?? COLOR_MARCA_DEFECTO) && logo === (firma?.logo ?? null)
+    color === (firma?.colorMarca ?? COLOR_MARCA_DEFECTO) &&
+    logo === (firma?.logo ?? null) &&
+    fuente === ((firma?.fuenteTitulos as FuenteDocumento) ?? FUENTE_TITULOS_DEFECTO) &&
+    fuenteCuerpo === ((firma?.fuenteCuerpo as FuenteDocumento) ?? FUENTE_CUERPO_DEFECTO)
 
   const guardar = useMutation({
-    mutationFn: () => api.put('/firmas/mia', { colorMarca: color, logo }),
+    mutationFn: () =>
+      api.put('/firmas/mia', { colorMarca: color, logo, fuenteTitulos: fuente, fuenteCuerpo }),
     onSuccess: () => {
       toast.success('Identidad de marca guardada')
       useAuthStore.getState().checkSession()
@@ -353,8 +364,8 @@ function MarcaCard() {
         )}
       </div>
       <p className="text-xs text-gray-400 mb-5">
-        El color y el logo se aplican al membrete de todos los documentos que exporta la firma (dictamen,
-        cartas, memo, solicitud de documentos), en PDF y Word.
+        El color, el logo y la tipografía de títulos se aplican a todos los documentos que exporta la
+        firma (dictamen, cartas, memo, solicitud de documentos), en PDF y Word.
       </p>
 
       <div className="grid gap-6 sm:grid-cols-2">
@@ -400,6 +411,30 @@ function MarcaCard() {
             </div>
           </div>
 
+          {/* Tipografías del documento */}
+          <div className="flex gap-3">
+            <div className="flex-1 max-w-[220px]">
+              <p className="text-xs font-medium text-gray-400 uppercase tracking-wide mb-2">Tipografía de títulos</p>
+              <Select
+                id="fuente-titulos"
+                value={fuente}
+                disabled={!canEdit}
+                onChange={(e) => setFuente(e.target.value as FuenteDocumento)}
+                options={FUENTES_DOCUMENTO.map((f) => ({ value: f, label: f }))}
+              />
+            </div>
+            <div className="flex-1 max-w-[220px]">
+              <p className="text-xs font-medium text-gray-400 uppercase tracking-wide mb-2">Tipografía del cuerpo</p>
+              <Select
+                id="fuente-cuerpo"
+                value={fuenteCuerpo}
+                disabled={!canEdit}
+                onChange={(e) => setFuenteCuerpo(e.target.value as FuenteDocumento)}
+                options={FUENTES_DOCUMENTO.map((f) => ({ value: f, label: f }))}
+              />
+            </div>
+          </div>
+
           {/* Logo */}
           <div>
             <p className="text-xs font-medium text-gray-400 uppercase tracking-wide mb-2">Logo del membrete</p>
@@ -434,19 +469,22 @@ function MarcaCard() {
               <div className="flex items-center gap-2.5 min-w-0">
                 {logo && <img src={logo} alt="" className="h-8 max-w-[100px] object-contain shrink-0" />}
                 <div className="min-w-0">
-                  <p className="text-sm font-bold text-gray-900 truncate">{firma?.nombre ?? 'Mi firma'}</p>
-                  <p className="text-[10px] uppercase tracking-wider text-gray-500 truncate">
+                  <p className="text-sm font-bold text-gray-900 truncate" style={{ fontFamily: fuente }}>
+                    {firma?.nombre ?? 'Mi firma'}
+                  </p>
+                  <p className="text-[10px] uppercase tracking-wider text-gray-500 truncate" style={{ fontFamily: fuente }}>
                     NIT {firma?.nit ?? '—'} · {firma?.ciudad ?? '—'}
                   </p>
                 </div>
               </div>
               <p className="text-[10px] text-gray-400 whitespace-nowrap">{fechaHoy}</p>
             </div>
-            <p className="mt-3 text-[10px] font-bold uppercase tracking-widest" style={{ color }}>
+            <p className="mt-3 text-[10px] font-bold uppercase tracking-widest" style={{ color, fontFamily: fuente }}>
               Título de sección
             </p>
-            <p className="mt-1 text-[11px] text-gray-500 font-serif">
-              Así se verá el encabezado de los documentos exportados.
+            <p className="mt-1 text-[11px] text-gray-500" style={{ fontFamily: fuenteCuerpo }}>
+              Así se verá el cuerpo del texto en los documentos exportados: los párrafos de las
+              secciones usan esta letra.
             </p>
           </div>
         </div>

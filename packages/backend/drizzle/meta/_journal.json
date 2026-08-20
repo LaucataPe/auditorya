@@ -232,6 +232,20 @@
       "when": 1785300000000,
       "tag": "0032_homologar_areas",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1785500000000,
+      "tag": "0034_fuente_titulos",
+      "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1785900000000,
+      "tag": "0038_fuente_cuerpo",
+      "breakpoints": true
     }
   ]
 }

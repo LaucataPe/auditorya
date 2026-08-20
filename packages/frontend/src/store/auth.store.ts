@@ -17,6 +17,8 @@ export type Firma = {
   ciudad: string
   colorMarca: string | null
   logo: string | null
+  fuenteTitulos: string | null
+  fuenteCuerpo: string | null
   createdAt: string
 }
 

@@ -8,6 +8,8 @@ export const firmas = pgTable('firmas', {
   // Identidad de marca para los documentos exportados (PDF/Word).
   colorMarca: text('color_marca'), // hex '#rrggbb'; null → color por defecto de la app
   logo: text('logo'), // data URI (image/png|jpeg|webp) ya reducido en el cliente; null → sin logo
+  fuenteTitulos: text('fuente_titulos'), // catálogo FUENTES_DOCUMENTO; null → defecto (Arial)
+  fuenteCuerpo: text('fuente_cuerpo'), // catálogo FUENTES_DOCUMENTO; null → defecto (Georgia)
   createdAt: timestamp('created_at').defaultNow().notNull(),
 })
 

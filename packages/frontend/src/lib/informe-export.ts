@@ -7,8 +7,11 @@
  *
  * Identidad visual de los documentos (PDF y Word comparten la misma jerarquía):
  *  - Acento de marca en COLOR_MARCA (membrete, títulos de sección, tablas).
- *  - Titulares en sans (Arial/Helvetica) y cuerpo en serif (Georgia) para el tono formal de una carta.
+ *  - Titulares y cuerpo en las fuentes de la firma (defectos: Arial y Georgia) para el tono
+ *    formal de una carta.
  */
+
+import { FUENTE_TITULOS_DEFECTO, FUENTE_CUERPO_DEFECTO } from '@auditorya/types'
 
 /** Acento por defecto (indigo-700, alineado con la UI); cada firma puede definir el suyo. */
 const COLOR_MARCA_DEFECTO = '#4338CA'
@@ -24,12 +27,43 @@ export type FirmaMembrete = {
   colorMarca?: string | null
   /** Logo en data URI (png/jpeg/webp) o null → membrete solo con texto. */
   logo?: string | null
+  /** Fuente de titulares (catálogo FUENTES_DOCUMENTO) o null → FUENTE_TITULOS_DEFECTO. */
+  fuenteTitulos?: string | null
+  /** Fuente del cuerpo (catálogo FUENTES_DOCUMENTO) o null → FUENTE_CUERPO_DEFECTO. */
+  fuenteCuerpo?: string | null
 }
 
 /** Acento efectivo del documento: el de la firma si es un hex válido, o el de la app. */
 function acentoDe(firma?: FirmaMembrete | null): string {
   const c = firma?.colorMarca
   return c && /^#[0-9a-fA-F]{6}$/.test(c) ? c : COLOR_MARCA_DEFECTO
+}
+
+/** Pila CSS de cada fuente del catálogo, con respaldos por si el visor no la tiene. */
+const PILA_FUENTE: Record<string, string> = {
+  // Aptos viene con Office/M365 (no con el SO): la pila sigue la cadena de sustitución de Microsoft.
+  Aptos: "Aptos, 'Segoe UI', Calibri, Arial, sans-serif",
+  Arial: 'Arial, Helvetica, sans-serif',
+  Calibri: "Calibri, 'Segoe UI', Arial, sans-serif",
+  Cambria: 'Cambria, Georgia, serif',
+  Garamond: "Garamond, 'Times New Roman', serif",
+  Georgia: "Georgia, 'Times New Roman', serif",
+  Tahoma: 'Tahoma, Verdana, sans-serif',
+  'Times New Roman': "'Times New Roman', Times, serif",
+  'Trebuchet MS': "'Trebuchet MS', Tahoma, sans-serif",
+  Verdana: 'Verdana, Tahoma, sans-serif',
+}
+
+/** Fuente de titulares efectiva: la de la firma si está en el catálogo, o la de defecto. */
+function fuenteTitulosDe(firma?: FirmaMembrete | null): string {
+  const f = firma?.fuenteTitulos
+  return f && f in PILA_FUENTE ? f : FUENTE_TITULOS_DEFECTO
+}
+
+/** Fuente del cuerpo (párrafos) efectiva: la de la firma o la de defecto. */
+function fuenteCuerpoDe(firma?: FirmaMembrete | null): string {
+  const f = firma?.fuenteCuerpo
+  return f && f in PILA_FUENTE ? f : FUENTE_CUERPO_DEFECTO
 }
 type SeccionRender = { label: string; contenido: string }
 
@@ -72,16 +106,16 @@ function descargarBlob(blob: Blob, filename: string) {
 
 /* ── Piezas compartidas del HTML (PDF) ──────────────────────────────────── */
 
-const estilosDocumento = (ACENTO: string) => `
+const estilosDocumento = (ACENTO: string, TITULOS: string, CUERPO: string) => `
   @page {
     margin: 2.2cm 2.2cm 2.6cm;
     @bottom-center {
       content: "Página " counter(page) " de " counter(pages);
-      font-family: Arial, Helvetica, sans-serif; font-size: 8.5pt; color: #9ca3af;
+      font-family: ${TITULOS}; font-size: 8.5pt; color: #9ca3af;
     }
   }
   body {
-    font-family: Georgia, 'Times New Roman', serif;
+    font-family: ${CUERPO};
     color: ${TINTA}; line-height: 1.55; font-size: 11.5pt;
     max-width: 720px; margin: 0 auto; padding: 28px;
     -webkit-print-color-adjust: exact; print-color-adjust: exact;
@@ -93,24 +127,24 @@ const estilosDocumento = (ACENTO: string) => `
   .membrete .identidad { display: flex; align-items: center; gap: 12px; }
   .membrete .logo { max-height: 42px; max-width: 130px; display: block; }
   .membrete .firma-nombre {
-    font-family: Arial, Helvetica, sans-serif;
+    font-family: ${TITULOS};
     font-size: 13.5pt; font-weight: bold; margin: 0; color: ${TINTA}; letter-spacing: .2px;
   }
   .membrete .firma-datos {
-    font-family: Arial, Helvetica, sans-serif;
+    font-family: ${TITULOS};
     font-size: 8.5pt; text-transform: uppercase; letter-spacing: .8px; color: ${GRIS}; margin: 3px 0 0;
   }
-  .membrete .fecha { font-family: Arial, Helvetica, sans-serif; font-size: 9pt; color: ${GRIS}; margin: 0; white-space: nowrap; }
+  .membrete .fecha { font-family: ${TITULOS}; font-size: 9pt; color: ${GRIS}; margin: 0; white-space: nowrap; }
   header { margin: 26px 0 22px; }
   header h1 {
-    font-family: Arial, Helvetica, sans-serif;
+    font-family: ${TITULOS};
     font-size: 17pt; font-weight: 800; color: ${TINTA}; margin: 0 0 3px; letter-spacing: -.2px;
   }
-  header .subtitulo { font-family: Arial, Helvetica, sans-serif; font-size: 10.5pt; color: ${GRIS}; margin: 0; }
+  header .subtitulo { font-family: ${TITULOS}; font-size: 10.5pt; color: ${GRIS}; margin: 0; }
   header::after { content: ''; display: block; width: 44px; border-bottom: 3px solid ${ACENTO}; margin-top: 12px; }
   section { margin-bottom: 20px; }
   section h2 {
-    font-family: Arial, Helvetica, sans-serif;
+    font-family: ${TITULOS};
     font-size: 9.5pt; font-weight: 700; text-transform: uppercase; letter-spacing: 1px;
     color: ${ACENTO}; border-bottom: 1px solid ${BORDE}; padding-bottom: 4px; margin: 0 0 8px;
   }
@@ -118,7 +152,7 @@ const estilosDocumento = (ACENTO: string) => `
   .intro { text-align: justify; margin-bottom: 20px; }
   table { width: 100%; border-collapse: collapse; font-size: 10.5pt; }
   thead th {
-    font-family: Arial, Helvetica, sans-serif;
+    font-family: ${TITULOS};
     background: ${ACENTO}; color: #fff; font-size: 8.5pt; text-transform: uppercase; letter-spacing: .6px;
     text-align: left; padding: 6px 9px; border: none;
   }
@@ -127,7 +161,7 @@ const estilosDocumento = (ACENTO: string) => `
   .chk { width: 26px; text-align: center; }
   .chk span { display: inline-block; width: 10px; height: 10px; border: 1.4px solid #9ca3af; border-radius: 2.5px; }
   .plazo { width: 110px; white-space: nowrap; }
-  .detalle { font-family: Arial, Helvetica, sans-serif; font-size: 9pt; color: ${GRIS}; }
+  .detalle { font-family: ${TITULOS}; font-size: 9pt; color: ${GRIS}; }
   .cierre { margin-top: 28px; }
 `
 
@@ -157,13 +191,13 @@ function encabezadoHtml(titulo: string, sub: string): string {
 </header>`
 }
 
-function documentoHtml(tituloVentana: string, cuerpo: string, acento: string): string {
+function documentoHtml(tituloVentana: string, cuerpo: string, firma?: FirmaMembrete | null): string {
   return `<!DOCTYPE html>
 <html lang="es">
 <head>
 <meta charset="utf-8" />
 <title>${escapeHtml(tituloVentana)}</title>
-<style>${estilosDocumento(acento)}</style>
+<style>${estilosDocumento(acentoDe(firma), PILA_FUENTE[fuenteTitulosDe(firma)], PILA_FUENTE[fuenteCuerpoDe(firma)])}</style>
 </head>
 <body>
 ${cuerpo}
@@ -187,7 +221,7 @@ export function construirHtmlInforme(opts: ExportOpts): string {
     secciones,
   ].join('\n')
 
-  return documentoHtml(`${opts.titulo} — ${opts.empresaNombre}`, cuerpo, acentoDe(opts.firma))
+  return documentoHtml(`${opts.titulo} — ${opts.empresaNombre}`, cuerpo, opts.firma)
 }
 
 /* ── Relación de documentos solicitados al cliente (PBC) ────────────────── */
@@ -269,7 +303,7 @@ de los ya preparados. Quedamos atentos a cualquier inquietud sobre esta solicitu
     `<p class="cierre">Cordialmente,${opts.firma ? `<br/><strong>${escapeHtml(opts.firma.nombre)}</strong>` : ''}</p>`,
   ].join('\n')
 
-  return documentoHtml(`Relación de documentos solicitados — ${opts.empresaNombre}`, cuerpo, acentoDe(opts.firma))
+  return documentoHtml(`Relación de documentos solicitados — ${opts.empresaNombre}`, cuerpo, opts.firma)
 }
 
 /**
@@ -341,6 +375,8 @@ export async function descargarDocx(filename: string, opts: ExportOpts) {
 
   const GRIS_DOCX = '6B7280'
   const ACENTO_DOCX = acentoDe(opts.firma).slice(1).toUpperCase()
+  // Word sustituye por su cuenta si el equipo no tiene la fuente; el catálogo evita ese caso.
+  const FUENTE_TITULOS = fuenteTitulosDe(opts.firma)
   const bloques: InstanceType<typeof Paragraph>[] = []
 
   // Membrete de la firma (logo + identidad + fecha), cerrado con una regla en el color de marca.
@@ -362,13 +398,13 @@ export async function descargarDocx(filename: string, opts: ExportOpts) {
     }
     bloques.push(
       new Paragraph({
-        children: [new TextRun({ text: opts.firma.nombre, bold: true, size: 27, font: 'Arial', color: '111827' })],
+        children: [new TextRun({ text: opts.firma.nombre, bold: true, size: 27, font: FUENTE_TITULOS, color: '111827' })],
       }),
       new Paragraph({
         children: [
           new TextRun({
             text: `NIT ${opts.firma.nit} · ${opts.firma.ciudad}`.toUpperCase(),
-            size: 17, font: 'Arial', color: GRIS_DOCX,
+            size: 17, font: FUENTE_TITULOS, color: GRIS_DOCX,
           }),
         ],
       }),
@@ -377,7 +413,7 @@ export async function descargarDocx(filename: string, opts: ExportOpts) {
   bloques.push(
     new Paragraph({
       alignment: AlignmentType.RIGHT,
-      children: [new TextRun({ text: fechaEmision(), size: 18, font: 'Arial', color: GRIS_DOCX })],
+      children: [new TextRun({ text: fechaEmision(), size: 18, font: FUENTE_TITULOS, color: GRIS_DOCX })],
     }),
     new Paragraph({
       spacing: { after: 280 },
@@ -391,11 +427,11 @@ export async function descargarDocx(filename: string, opts: ExportOpts) {
     new Paragraph({
       heading: HeadingLevel.HEADING_1,
       spacing: { after: 60 },
-      children: [new TextRun({ text: opts.titulo, bold: true, size: 34, font: 'Arial', color: '111827' })],
+      children: [new TextRun({ text: opts.titulo, bold: true, size: 34, font: FUENTE_TITULOS, color: '111827' })],
     }),
     new Paragraph({
       spacing: { after: 360 },
-      children: [new TextRun({ text: subtitulo(opts), size: 21, font: 'Arial', color: GRIS_DOCX })],
+      children: [new TextRun({ text: subtitulo(opts), size: 21, font: FUENTE_TITULOS, color: GRIS_DOCX })],
     }),
   )
 
@@ -408,7 +444,7 @@ export async function descargarDocx(filename: string, opts: ExportOpts) {
         spacing: { before: 280, after: 120 },
         border: { bottom: { style: BorderStyle.SINGLE, size: 6, color: 'E5E7EB' } },
         children: [
-          new TextRun({ text: sec.label.toUpperCase(), bold: true, size: 19, font: 'Arial', color: ACENTO_DOCX }),
+          new TextRun({ text: sec.label.toUpperCase(), bold: true, size: 19, font: FUENTE_TITULOS, color: ACENTO_DOCX }),
         ],
       }),
     )
@@ -425,7 +461,9 @@ export async function descargarDocx(filename: string, opts: ExportOpts) {
 
   const doc = new Document({
     styles: {
-      default: { document: { run: { font: 'Georgia', size: 23, color: '111827' } } },
+      // La fuente por defecto del documento es la del cuerpo: los párrafos de las
+      // secciones la heredan; los titulares la sobreescriben con FUENTE_TITULOS.
+      default: { document: { run: { font: fuenteCuerpoDe(opts.firma), size: 23, color: '111827' } } },
     },
     sections: [{ children: bloques }],
   })
