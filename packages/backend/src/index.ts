@@ -18,6 +18,8 @@ import muestreoRoutes from './routes/muestreo'
 import ajustesRoutes from './routes/ajustes'
 import hallazgosRoutes from './routes/hallazgos'
 import cierreRoutes from './routes/cierre'
+import notificacionesRoutes from './routes/notificaciones'
+import miTrabajoRoutes from './routes/mi-trabajo'
 import archivosRoutes from './routes/archivos'
 import iaRoutes from './routes/ia'
 import superadminRoutes from './routes/superadmin'
@@ -85,6 +87,10 @@ app.route('/', ajustesRoutes)
 app.route('/', hallazgosRoutes)
 // cierreRoutes define rutas absolutas (/auditorias/:id/cierre, /papeles/:id/notas-revision, /notas-revision/...)
 app.route('/', cierreRoutes)
+// Bandeja de notificaciones del equipo (/notificaciones)
+app.route('/', notificacionesRoutes)
+// Vista transversal "Mi trabajo" (/mi-trabajo)
+app.route('/', miTrabajoRoutes)
 // Descarga de archivos con URL firmada (sin cookie de sesión)
 app.route('/', archivosRoutes)
 // Funciones de IA (Claude) — /auditorias/:id/ia/..., /papeles/:id/ia/...

@@ -15,6 +15,7 @@ import { authMiddleware } from '../middleware/auth'
 import { esSocioResponsable, ERROR_NO_SOCIO_RESPONSABLE } from '../lib/permisos'
 import { encargoCerrado, ERROR_ENCARGO_CERRADO } from '../lib/encargo'
 import { registrarEvento } from '../lib/eventos'
+import { notificar, notificarVarios } from '../lib/notificaciones'
 import type { JwtPayload } from '../lib/jwt'
 
 const app = new Hono<{ Variables: { user: JwtPayload } }>()
@@ -112,6 +113,14 @@ app.post(
       detalle: { papelId },
     })
 
+    // Avisa a quien tiene el papel a cargo (asignado y preparador).
+    notificarVarios(user, [papel.asignadoA, papel.preparadoPor], {
+      tipo: 'nota_creada',
+      mensaje: `Nueva nota de revisión en "${papel.titulo}"`,
+      auditoriaId: papel.auditoriaId,
+      papelTrabajoId: papelId,
+    })
+
     return c.json({ data: nota }, 201)
   },
 )
@@ -168,6 +177,30 @@ app.put(
         auditoriaId: nota.auditoriaId,
         detalle: { papelId: nota.papelTrabajoId },
       })
+
+      const [papel] = await db
+        .select({ titulo: papelesTrabajo.titulo })
+        .from(papelesTrabajo)
+        .where(eq(papelesTrabajo.id, nota.papelTrabajoId))
+      if (body.estado === 'resuelta') {
+        // El autor de la nota se entera de que ya la atendieron.
+        notificar(user, {
+          para: nota.creadoPor,
+          tipo: 'nota_resuelta',
+          mensaje: `Resolvieron tu nota de revisión en "${papel?.titulo ?? 'un papel'}"`,
+          auditoriaId: nota.auditoriaId,
+          papelTrabajoId: nota.papelTrabajoId,
+        })
+      } else {
+        // Quien la había resuelto se entera de la reapertura.
+        notificar(user, {
+          para: nota.resueltoPor,
+          tipo: 'nota_reabierta',
+          mensaje: `Reabrieron una nota de revisión en "${papel?.titulo ?? 'un papel'}"`,
+          auditoriaId: nota.auditoriaId,
+          papelTrabajoId: nota.papelTrabajoId,
+        })
+      }
     }
 
     return c.json({ data: actualizada })

@@ -1234,6 +1234,15 @@ export function PapelPanel({
     mutationFn: () => api.post(`/papeles/${papelId}/reabrir`, {}),
     onSuccess: invalidate,
   })
+  // Ciclo NIA 220: borrador → en revisión (avisa al socio) → aprobado.
+  const cambiarEstado = useMutation({
+    mutationFn: (estado: 'borrador' | 'en_revision') => api.put(`/papeles/${papelId}`, { estado }),
+    onSuccess: (_d, estado) => {
+      invalidate()
+      toast.success(estado === 'en_revision' ? 'Papel enviado a revisión' : 'Papel devuelto a borrador')
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : 'No se pudo cambiar el estado'),
+  })
   const addEvidencia = useMutation({
     mutationFn: async (b: { nombre: string; descripcion?: string; tipo: TipoEvidencia; enlaceExterno?: string; archivo?: File }) => {
       const ev = await api.post<{ id: string }>(`/papeles/${papelId}/evidencias`, {
@@ -1315,21 +1324,41 @@ export function PapelPanel({
           {!aprobado && (
             <Button size="sm" loading={saveMutation.isPending} onClick={() => saveMutation.mutate()}>Guardar</Button>
           )}
-          {!aprobado ? (
+          {papel.estado === 'borrador' && (
             <Button
               size="sm" variant="secondary" className="gap-1.5"
-              disabled={!esSocio || aprobarMutation.isPending}
-              loading={aprobarMutation.isPending}
-              onClick={() => aprobarMutation.mutate()}
+              disabled={dirty || cambiarEstado.isPending}
+              loading={cambiarEstado.isPending}
+              title={dirty ? 'Guarda los cambios antes de enviar a revisión' : undefined}
+              onClick={() => cambiarEstado.mutate('en_revision')}
             >
-              <ShieldCheck size={14} /> Aprobar
+              <Send size={14} /> Enviar a revisión
             </Button>
-          ) : (
-            esSocio && (
-              <Button size="sm" variant="secondary" loading={reabrirMutation.isPending} onClick={() => reabrirMutation.mutate()}>
-                Reabrir
+          )}
+          {papel.estado === 'en_revision' && (
+            <>
+              <Button
+                size="sm" variant="secondary"
+                disabled={cambiarEstado.isPending}
+                onClick={() => cambiarEstado.mutate('borrador')}
+              >
+                Volver a borrador
               </Button>
-            )
+              <Button
+                size="sm" variant="secondary" className="gap-1.5"
+                disabled={!esSocio || aprobarMutation.isPending}
+                loading={aprobarMutation.isPending}
+                title={!esSocio ? 'Solo el socio responsable puede aprobar' : undefined}
+                onClick={() => aprobarMutation.mutate()}
+              >
+                <ShieldCheck size={14} /> Aprobar
+              </Button>
+            </>
+          )}
+          {aprobado && esSocio && (
+            <Button size="sm" variant="secondary" loading={reabrirMutation.isPending} onClick={() => reabrirMutation.mutate()}>
+              Reabrir
+            </Button>
           )}
         </div>
       </div>

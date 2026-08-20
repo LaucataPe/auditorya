@@ -1,11 +1,13 @@
 import { NavLink, useNavigate } from 'react-router-dom'
-import { Building2, LayoutDashboard, LogOut, Users } from 'lucide-react'
+import { Building2, LayoutDashboard, ListTodo, LogOut, Users } from 'lucide-react'
 import { cn } from '../../lib/cn'
 import { Isotipo } from '../ui/Logo'
 import { useAuthStore } from '../../store/auth.store'
+import { NotificacionesBell } from '../notificaciones/NotificacionesBell'
 
 const nav = [
   { label: 'Inicio', icon: LayoutDashboard, to: '/dashboard' },
+  { label: 'Mi trabajo', icon: ListTodo, to: '/mi-trabajo' },
   { label: 'Clientes', icon: Users, to: '/empresas' },
   { label: 'Mi firma', icon: Building2, to: '/firma' },
 ]
@@ -83,13 +85,16 @@ export function Sidebar() {
               {ROL_LABEL[user?.rol ?? ''] ?? user?.rol}
             </p>
           </div>
-          <button
-            onClick={handleLogout}
-            title="Cerrar sesión"
-            className="ml-auto rounded-lg p-1.5 text-slate-500 hover:bg-white/5 hover:text-red-400 transition-colors"
-          >
-            <LogOut size={14} />
-          </button>
+          <div className="ml-auto flex items-center gap-0.5">
+            <NotificacionesBell oscuro />
+            <button
+              onClick={handleLogout}
+              title="Cerrar sesión"
+              className="rounded-lg p-1.5 text-slate-500 hover:bg-white/5 hover:text-red-400 transition-colors"
+            >
+              <LogOut size={14} />
+            </button>
+          </div>
         </div>
       </div>
     </aside>

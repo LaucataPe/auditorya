@@ -23,6 +23,7 @@ import { esSocioResponsable, ERROR_NO_SOCIO_RESPONSABLE } from '../lib/permisos'
 import { encargoCerrado, ERROR_ENCARGO_CERRADO } from '../lib/encargo'
 import { areaValidaParaFirma, ERROR_AREA_INVALIDA } from '../lib/areas'
 import { registrarEvento } from '../lib/eventos'
+import { notificar, notificarVarios } from '../lib/notificaciones'
 import { storage, firmarDescarga } from '../lib/storage'
 import { createHash, randomUUID } from 'node:crypto'
 import type { JwtPayload } from '../lib/jwt'
@@ -248,6 +249,15 @@ app.post(
       detalle: { titulo: papel.titulo, area: papel.area, riesgoId: papel.riesgoId },
     })
 
+    notificar(c.get('user'), {
+      para: papel.asignadoA,
+      tipo: 'papel_asignado',
+      mensaje: `Te asignaron la prueba "${papel.titulo}"`,
+      auditoriaId: id,
+      empresaId: row.auditoria.empresaId,
+      papelTrabajoId: papel.id,
+    })
+
     return c.json({ data: papel }, 201)
   },
 )
@@ -348,6 +358,28 @@ app.put(
       auditoriaId: row.papel.auditoriaId,
       detalle: { titulo: actualizado.titulo, campos: Object.keys(updates) },
     })
+
+    if (body.asignadoA && body.asignadoA !== row.papel.asignadoA) {
+      notificar(c.get('user'), {
+        para: body.asignadoA,
+        tipo: 'papel_asignado',
+        mensaje: `Te asignaron la prueba "${actualizado.titulo}"`,
+        auditoriaId: row.papel.auditoriaId,
+        empresaId: row.auditoria.empresaId,
+        papelTrabajoId: papelId,
+      })
+    }
+    // Al enviar a revisión se avisa al socio responsable del encargo (NIA 220).
+    if (body.estado === 'en_revision' && row.papel.estado !== 'en_revision') {
+      notificar(c.get('user'), {
+        para: row.auditoria.socioId,
+        tipo: 'papel_en_revision',
+        mensaje: `El papel "${actualizado.titulo}" está listo para tu revisión`,
+        auditoriaId: row.papel.auditoriaId,
+        empresaId: row.auditoria.empresaId,
+        papelTrabajoId: papelId,
+      })
+    }
 
     return c.json({ data: actualizado })
   },
@@ -512,6 +544,14 @@ app.post('/papeles/:papelId/aprobar', async (c) => {
     detalle: { titulo: row.papel.titulo, area: row.papel.area, evidencias: conSoporte.length },
   })
 
+  notificarVarios(user, [row.papel.asignadoA, row.papel.preparadoPor], {
+    tipo: 'papel_aprobado',
+    mensaje: `El socio aprobó el papel "${row.papel.titulo}"`,
+    auditoriaId: row.papel.auditoriaId,
+    empresaId: row.auditoria.empresaId,
+    papelTrabajoId: papelId,
+  })
+
   return c.json({ data: aprobado })
 })
 
@@ -542,6 +582,14 @@ app.post('/papeles/:papelId/reabrir', async (c) => {
     entidadId: papelId,
     auditoriaId: row.papel.auditoriaId,
     detalle: { titulo: row.papel.titulo },
+  })
+
+  notificarVarios(user, [row.papel.asignadoA, row.papel.preparadoPor], {
+    tipo: 'papel_reabierto',
+    mensaje: `El papel "${row.papel.titulo}" fue reabierto: requiere ajustes`,
+    auditoriaId: row.papel.auditoriaId,
+    empresaId: row.auditoria.empresaId,
+    papelTrabajoId: papelId,
   })
 
   return c.json({ data: reabierto })
@@ -957,6 +1005,15 @@ app.post(
       detalle: { titulo: tarea.titulo, area: tarea.area, asignadoA: tarea.asignadoA },
     })
 
+    notificar(c.get('user'), {
+      para: tarea.asignadoA,
+      tipo: 'tarea_asignada',
+      mensaje: `Te asignaron la tarea "${tarea.titulo}"`,
+      auditoriaId: id,
+      empresaId: row.auditoria.empresaId,
+      papelTrabajoId: tarea.papelTrabajoId,
+    })
+
     return c.json({ data: tarea }, 201)
   },
 )
@@ -1043,6 +1100,16 @@ app.put(
       auditoriaId: tarea.auditoriaId,
       detalle: { campos: Object.keys(updates) },
     })
+
+    if (body.asignadoA && body.asignadoA !== tarea.asignadoA) {
+      notificar(c.get('user'), {
+        para: body.asignadoA,
+        tipo: 'tarea_asignada',
+        mensaje: `Te asignaron la tarea "${actualizada.titulo}"`,
+        auditoriaId: tarea.auditoriaId,
+        papelTrabajoId: tarea.papelTrabajoId,
+      })
+    }
 
     return c.json({ data: actualizada })
   },

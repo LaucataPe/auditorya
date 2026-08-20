@@ -16,6 +16,7 @@ import { OnboardingPage } from './pages/OnboardingPage'
 
 // Admin panel pages
 import { DashboardPage } from './pages/DashboardPage'
+import { MiTrabajoPage } from './pages/MiTrabajoPage'
 import { FirmaPage } from './pages/FirmaPage'
 import { EmpresasPage } from './pages/EmpresasPage'
 
@@ -91,6 +92,7 @@ export default function App() {
       {/* Admin panel */}
       <Route element={<AppLayout />}>
         <Route path="/dashboard" element={<DashboardPage />} />
+        <Route path="/mi-trabajo" element={<MiTrabajoPage />} />
         <Route path="/firma" element={<FirmaPage />} />
         <Route path="/empresas" element={<EmpresasPage />} />
       </Route>

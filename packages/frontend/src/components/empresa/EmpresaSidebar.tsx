@@ -10,6 +10,7 @@ import {
 } from 'lucide-react'
 import { cn } from '../../lib/cn'
 import { useAuthStore } from '../../store/auth.store'
+import { NotificacionesBell } from '../notificaciones/NotificacionesBell'
 
 type Empresa = {
   id: string
@@ -98,14 +99,15 @@ export function EmpresaSidebar({ empresa }: { empresa: Empresa }) {
         <p className="text-xs font-medium text-gray-600 mt-0.5">{MARCO_LABEL[empresa.marcoContable] ?? empresa.marcoContable}</p>
       </div>
 
-      {/* Cerrar sesión */}
-      <div className="border-t border-gray-100 px-4 py-3">
+      {/* Notificaciones + cerrar sesión */}
+      <div className="border-t border-gray-100 px-4 py-3 flex items-center justify-between">
         <button
           onClick={handleLogout}
           className="flex items-center gap-2 text-xs text-gray-400 hover:text-red-500 transition-colors"
         >
           <LogOut size={13} /> Cerrar sesión
         </button>
+        <NotificacionesBell />
       </div>
     </aside>
   )

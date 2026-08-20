@@ -1,4 +1,4 @@
-import { pgTable, text, timestamp, boolean, uuid, jsonb, numeric, integer, uniqueIndex, date } from 'drizzle-orm/pg-core'
+import { pgTable, text, timestamp, boolean, uuid, jsonb, numeric, integer, uniqueIndex, index, date } from 'drizzle-orm/pg-core'
 
 export const firmas = pgTable('firmas', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -511,6 +511,33 @@ export const eventos = pgTable('eventos', {
   detalle: jsonb('detalle').$type<Record<string, unknown>>(),
   createdAt: timestamp('created_at').defaultNow().notNull(),
 })
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Notificaciones in-app del equipo. Cada fila es un aviso para un usuario
+// (asignaciones, papeles enviados a revisión / aprobados, notas de revisión).
+// Se crean vía lib/notificaciones (fire-and-forget); nunca al propio actor.
+// ─────────────────────────────────────────────────────────────────────────────
+export const notificaciones = pgTable(
+  'notificaciones',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    firmaId: uuid('firma_id').notNull().references(() => firmas.id),
+    // Destinatario del aviso.
+    usuarioId: uuid('usuario_id').notNull().references(() => usuarios.id),
+    tipo: text('tipo').notNull(), // catálogo en @auditorya/types → notificacion.ts
+    mensaje: text('mensaje').notNull(),
+    // Enlaces para navegar al lugar de la acción. Sin FK a auditoría/papel a
+    // propósito (igual que eventos): el aviso sobrevive al borrado de la entidad.
+    empresaId: uuid('empresa_id').references(() => empresas.id),
+    auditoriaId: uuid('auditoria_id'),
+    papelTrabajoId: uuid('papel_trabajo_id'),
+    leidaAt: timestamp('leida_at'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (t) => ({
+    usuarioIdx: index('notificaciones_usuario_idx').on(t.usuarioId, t.leidaAt),
+  }),
+)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Snapshot inmutable del papel de trabajo en el momento de su aprobación (NIA 230).
