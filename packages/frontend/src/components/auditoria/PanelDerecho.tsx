@@ -37,7 +37,10 @@ export function PanelDerecho({
             <button
               key={idx}
               onClick={() => onIr(it.tab)}
-              className="w-full flex items-start gap-2.5 rounded-lg px-2 py-1.5 text-left hover:bg-gray-50 transition-colors"
+              className={cn(
+                'w-full flex items-start gap-2.5 rounded-lg px-2 py-1.5 text-left transition-colors',
+                it.hecho ? 'bg-emerald-50 hover:bg-emerald-100' : 'hover:bg-gray-50',
+              )}
             >
               {it.hecho ? (
                 <Check size={15} className="text-emerald-500 shrink-0 mt-0.5" />
@@ -46,7 +49,7 @@ export function PanelDerecho({
               ) : (
                 <Circle size={13} className="text-gray-300 shrink-0 mt-1" />
               )}
-              <span className={cn('text-sm flex-1 leading-snug', it.hecho ? 'text-gray-400' : 'text-gray-700')}>
+              <span className={cn('text-sm flex-1 leading-snug', it.hecho ? 'text-emerald-700' : 'text-gray-700')}>
                 {it.label}
                 {!it.requerido && <span className="text-xs text-gray-400"> · opcional</span>}
               </span>

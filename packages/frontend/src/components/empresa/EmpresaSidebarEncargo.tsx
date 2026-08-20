@@ -179,7 +179,9 @@ export function EmpresaSidebarEncargo({ empresa, auditoriaId }: { empresa: Empre
                           ? 'bg-indigo-50 text-indigo-700 font-medium'
                           : bloqueada
                             ? 'text-gray-400 hover:bg-gray-50'
-                            : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900',
+                            : est === 'done'
+                              ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                              : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900',
                       )}
                     >
                       {bloqueada ? (
