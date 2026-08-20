@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   SECCIONES_INFORME, TIPO_INFORME_LABEL, TIPO_OPINION_LABEL, OPINION_LABEL,
-  ESTADO_HALLAZGO_LABEL,
+  ESTADO_HALLAZGO_LABEL, TIPOS_INFORME_ENRIQUECIDO, esHtmlInforme, textoPlanoAHtml,
   type TipoInforme, type TipoOpinion, type EvaluacionOpinion, type OpinionSugerida,
   type HallazgoConPapel,
 } from '@auditorya/types'
@@ -12,6 +12,7 @@ import { Button } from '../ui/Button'
 import { Modal } from '../ui/Modal'
 import { Select } from '../ui/Select'
 import { Textarea } from '../ui/Textarea'
+import { RichTextEditor } from '../ui/RichTextEditor'
 import { api } from '../../lib/api'
 import { useAuthStore } from '../../store/auth.store'
 import { cn } from '../../lib/cn'
@@ -373,17 +374,34 @@ function InformeEditor({
               </div>
             )}
 
-            {secciones.map((s) => (
-              <Textarea
-                key={s.key}
-                id={`inf-${s.key}`}
-                label={s.label}
-                rows={s.key === 'firma' || s.key === 'destinatario' ? 3 : 5}
-                value={contenido[s.key] ?? ''}
-                disabled={aprobado}
-                onChange={(e) => setContenido((prev) => ({ ...prev, [s.key]: e.target.value }))}
-              />
-            ))}
+            {secciones.map((s) => {
+              const valor = contenido[s.key] ?? ''
+              // El dictamen se edita con formato enriquecido; los borradores de
+              // plantilla (texto plano) se convierten a párrafos HTML al abrir.
+              if (TIPOS_INFORME_ENRIQUECIDO.includes(tipo)) {
+                return (
+                  <RichTextEditor
+                    key={s.key}
+                    id={`inf-${s.key}`}
+                    label={s.label}
+                    value={esHtmlInforme(valor) ? valor : textoPlanoAHtml(valor)}
+                    disabled={aprobado}
+                    onChange={(html) => setContenido((prev) => ({ ...prev, [s.key]: html }))}
+                  />
+                )
+              }
+              return (
+                <Textarea
+                  key={s.key}
+                  id={`inf-${s.key}`}
+                  label={s.label}
+                  rows={s.key === 'firma' || s.key === 'destinatario' ? 3 : 5}
+                  value={valor}
+                  disabled={aprobado}
+                  onChange={(e) => setContenido((prev) => ({ ...prev, [s.key]: e.target.value }))}
+                />
+              )
+            })}
 
             {/* Acciones */}
             <div className="border-t border-gray-100 pt-4 flex flex-wrap items-center gap-2">

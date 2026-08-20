@@ -11,7 +11,7 @@
  *    formal de una carta.
  */
 
-import { FUENTE_TITULOS_DEFECTO, FUENTE_CUERPO_DEFECTO } from '@auditorya/types'
+import { FUENTE_TITULOS_DEFECTO, FUENTE_CUERPO_DEFECTO, esHtmlInforme, htmlInformeVacio } from '@auditorya/types'
 
 /** Acento por defecto (indigo-700, alineado con la UI); cada firma puede definir el suyo. */
 const COLOR_MARCA_DEFECTO = '#4338CA'
@@ -82,6 +82,11 @@ function escapeHtml(s: string): string {
     .replace(/>/g, '&gt;')
 }
 
+/** true si la sección no tiene contenido real (texto plano vacío o HTML sin texto). */
+function seccionVacia(contenido: string): boolean {
+  return esHtmlInforme(contenido) ? htmlInformeVacio(contenido) : contenido.trim().length === 0
+}
+
 /** Subtítulo del documento: omite el período si no viene informado. */
 function subtitulo(opts: { empresaNombre: string; periodo: string }): string {
   return opts.periodo ? `${opts.empresaNombre} — Período ${opts.periodo}` : opts.empresaNombre
@@ -148,7 +153,13 @@ const estilosDocumento = (ACENTO: string, TITULOS: string, CUERPO: string) => `
     font-size: 9.5pt; font-weight: 700; text-transform: uppercase; letter-spacing: 1px;
     color: ${ACENTO}; border-bottom: 1px solid ${BORDE}; padding-bottom: 4px; margin: 0 0 8px;
   }
-  section p { margin: 0; text-align: justify; white-space: normal; }
+  section p { margin: 0 0 8px; text-align: justify; white-space: normal; }
+  section p:last-child { margin-bottom: 0; }
+  section ul, section ol { margin: 4px 0 8px; padding-left: 22px; text-align: justify; }
+  section ul { list-style: disc; }
+  section ol { list-style: decimal; }
+  section li { margin-bottom: 3px; }
+  section li p { margin: 0; }
   .intro { text-align: justify; margin-bottom: 20px; }
   table { width: 100%; border-collapse: collapse; font-size: 10.5pt; }
   thead th {
@@ -208,11 +219,15 @@ ${cuerpo}
 /** Construye el HTML del documento (membrete + secciones), con numeración de páginas al imprimir. */
 export function construirHtmlInforme(opts: ExportOpts): string {
   const secciones = opts.secciones
-    .filter((s) => s.contenido.trim().length > 0)
-    .map(
-      (s) =>
-        `<section><h2>${escapeHtml(s.label)}</h2><p>${escapeHtml(s.contenido).replace(/\n/g, '<br/>')}</p></section>`,
-    )
+    .filter((s) => !seccionVacia(s.contenido))
+    .map((s) => {
+      // HTML del editor enriquecido (ya sanitizado en el backend contra la whitelist)
+      // se inyecta tal cual; el texto plano legado se escapa como siempre.
+      const cuerpo = esHtmlInforme(s.contenido)
+        ? s.contenido
+        : `<p>${escapeHtml(s.contenido).replace(/\n/g, '<br/>')}</p>`
+      return `<section><h2>${escapeHtml(s.label)}</h2>${cuerpo}</section>`
+    })
     .join('\n')
 
   const cuerpo = [
@@ -370,7 +385,7 @@ async function logoParaDocx(
 
 /** Genera y descarga un .docx real. Importa `docx` de forma perezosa (fuera del bundle inicial). */
 export async function descargarDocx(filename: string, opts: ExportOpts) {
-  const { Document, Packer, Paragraph, TextRun, ImageRun, HeadingLevel, AlignmentType, BorderStyle } =
+  const { Document, Packer, Paragraph, TextRun, ImageRun, HeadingLevel, AlignmentType, BorderStyle, LevelFormat } =
     await import('docx')
 
   const GRIS_DOCX = '6B7280'
@@ -435,9 +450,73 @@ export async function descargarDocx(filename: string, opts: ExportOpts) {
     }),
   )
 
-  // Secciones (encabezado en color de marca + cuerpo por líneas)
+  /* ── Conversión del HTML del editor enriquecido a párrafos docx ─────────
+     Cubre exactamente la whitelist ETIQUETAS_INFORME_ENRIQUECIDO:
+     p/br + strong/b, em/i, u + ul/ol/li. */
+
+  type Marcas = { bold?: boolean; italics?: boolean; underline?: boolean }
+  let listasNumeradas = 0 // cada <ol> usa una instancia propia para reiniciar en 1
+
+  function runsDe(nodo: Node, marcas: Marcas): InstanceType<typeof TextRun>[] {
+    if (nodo.nodeType === Node.TEXT_NODE) {
+      const texto = nodo.textContent ?? ''
+      if (!texto) return []
+      return [
+        new TextRun({
+          text: texto,
+          bold: marcas.bold,
+          italics: marcas.italics,
+          underline: marcas.underline ? {} : undefined,
+        }),
+      ]
+    }
+    if (nodo.nodeType !== Node.ELEMENT_NODE) return []
+    const tag = (nodo as Element).tagName.toLowerCase()
+    if (tag === 'br') return [new TextRun({ break: 1 })]
+    const siguientes: Marcas = {
+      bold: marcas.bold || tag === 'strong' || tag === 'b',
+      italics: marcas.italics || tag === 'em' || tag === 'i',
+      underline: marcas.underline || tag === 'u',
+    }
+    return Array.from(nodo.childNodes).flatMap((hijo) => runsDe(hijo, siguientes))
+  }
+
+  function parrafosDesdeHtml(html: string): InstanceType<typeof Paragraph>[] {
+    const dom = new DOMParser().parseFromString(html, 'text/html')
+    const out: InstanceType<typeof Paragraph>[] = []
+    for (const bloque of Array.from(dom.body.children)) {
+      const tag = bloque.tagName.toLowerCase()
+      if (tag === 'ul' || tag === 'ol') {
+        const instance = tag === 'ol' ? ++listasNumeradas : 0
+        for (const li of Array.from(bloque.children)) {
+          if (li.tagName.toLowerCase() !== 'li') continue
+          out.push(
+            new Paragraph({
+              alignment: AlignmentType.JUSTIFIED,
+              spacing: { after: 60 },
+              children: runsDe(li, {}),
+              ...(tag === 'ul'
+                ? { bullet: { level: 0 } }
+                : { numbering: { reference: 'lista-numerada', level: 0, instance } }),
+            }),
+          )
+        }
+      } else {
+        out.push(
+          new Paragraph({
+            alignment: AlignmentType.JUSTIFIED,
+            spacing: { after: 80 },
+            children: runsDe(bloque, {}),
+          }),
+        )
+      }
+    }
+    return out
+  }
+
+  // Secciones (encabezado en color de marca + cuerpo por líneas o HTML del editor)
   for (const sec of opts.secciones) {
-    if (!sec.contenido.trim()) continue
+    if (seccionVacia(sec.contenido)) continue
     bloques.push(
       new Paragraph({
         heading: HeadingLevel.HEADING_2,
@@ -448,14 +527,18 @@ export async function descargarDocx(filename: string, opts: ExportOpts) {
         ],
       }),
     )
-    for (const linea of sec.contenido.split('\n')) {
-      bloques.push(
-        new Paragraph({
-          alignment: AlignmentType.JUSTIFIED,
-          spacing: { after: 80 },
-          children: [new TextRun({ text: linea })],
-        }),
-      )
+    if (esHtmlInforme(sec.contenido)) {
+      bloques.push(...parrafosDesdeHtml(sec.contenido))
+    } else {
+      for (const linea of sec.contenido.split('\n')) {
+        bloques.push(
+          new Paragraph({
+            alignment: AlignmentType.JUSTIFIED,
+            spacing: { after: 80 },
+            children: [new TextRun({ text: linea })],
+          }),
+        )
+      }
     }
   }
 
@@ -464,6 +547,22 @@ export async function descargarDocx(filename: string, opts: ExportOpts) {
       // La fuente por defecto del documento es la del cuerpo: los párrafos de las
       // secciones la heredan; los titulares la sobreescriben con FUENTE_TITULOS.
       default: { document: { run: { font: fuenteCuerpoDe(opts.firma), size: 23, color: '111827' } } },
+    },
+    numbering: {
+      config: [
+        {
+          reference: 'lista-numerada',
+          levels: [
+            {
+              level: 0,
+              format: LevelFormat.DECIMAL,
+              text: '%1.',
+              alignment: AlignmentType.START,
+              style: { paragraph: { indent: { left: 640, hanging: 320 } } },
+            },
+          ],
+        },
+      ],
     },
     sections: [{ children: bloques }],
   })

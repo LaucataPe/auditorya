@@ -78,6 +78,41 @@ export const SECCIONES_INFORME: Record<TipoInforme, SeccionInforme[]> = {
   ],
 }
 
+/* ── Contenido enriquecido ────────────────────────────────────────────────
+   Los informes de este catálogo se editan con el editor de texto enriquecido
+   (formato acotado: negrita/cursiva/subrayado/listas) y guardan HTML en
+   `contenido`; el resto sigue guardando texto plano. El backend sanitiza el
+   HTML contra ETIQUETAS_INFORME_ENRIQUECIDO al guardar. */
+
+export const TIPOS_INFORME_ENRIQUECIDO: TipoInforme[] = ['dictamen']
+
+/** Etiquetas HTML permitidas en el contenido enriquecido (sin atributos). */
+export const ETIQUETAS_INFORME_ENRIQUECIDO = ['p', 'br', 'strong', 'b', 'em', 'i', 'u', 'ul', 'ol', 'li']
+
+/** Heurística: distingue HTML del editor de texto plano legado en una sección. */
+export function esHtmlInforme(valor: string): boolean {
+  return /^\s*</.test(valor)
+}
+
+function escaparHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
+/** Convierte texto plano legado (borradores de plantilla) a párrafos HTML para el editor. */
+export function textoPlanoAHtml(texto: string): string {
+  const parrafos = texto
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0)
+    .map((l) => `<p>${escaparHtml(l)}</p>`)
+  return parrafos.join('') || '<p></p>'
+}
+
+/** true si el HTML del editor no tiene texto real (p. ej. '<p></p>'). */
+export function htmlInformeVacio(html: string): boolean {
+  return html.replace(/<[^>]*>/g, '').trim().length === 0
+}
+
 export const TIPO_INFORME_LABEL: Record<TipoInforme, string> = {
   carta_encargo: 'Carta de encargo (NIA 210)',
   memo_planeacion: 'Memorando de planeación (NIA 300)',

@@ -18,6 +18,8 @@ import {
   tareas,
   usuarios,
 } from '../db/schema'
+import sanitizeHtml from 'sanitize-html'
+import { TIPOS_INFORME_ENRIQUECIDO, ETIQUETAS_INFORME_ENRIQUECIDO, type TipoInforme } from '@auditorya/types'
 import { authMiddleware } from '../middleware/auth'
 import { esSocioResponsable, ERROR_NO_SOCIO_RESPONSABLE } from '../lib/permisos'
 import { encargoCerrado, ERROR_ENCARGO_CERRADO } from '../lib/encargo'
@@ -337,7 +339,19 @@ app.put(
     }
 
     const updates: Record<string, unknown> = {}
-    if (body.contenido) updates.contenido = body.contenido
+    if (body.contenido) {
+      // Los informes con editor enriquecido guardan HTML: se sanitiza contra la
+      // whitelist compartida (sin atributos → sin estilos/fuentes libres, sin XSS).
+      // Los demás tipos guardan texto plano y se dejan intactos.
+      updates.contenido = TIPOS_INFORME_ENRIQUECIDO.includes(row.informe.tipo as TipoInforme)
+        ? Object.fromEntries(
+            Object.entries(body.contenido).map(([k, v]) => [
+              k,
+              sanitizeHtml(v, { allowedTags: ETIQUETAS_INFORME_ENRIQUECIDO, allowedAttributes: {} }),
+            ]),
+          )
+        : body.contenido
+    }
     if (body.tipoOpinion !== undefined) updates.tipoOpinion = body.tipoOpinion
 
     if (Object.keys(updates).length === 0) {
