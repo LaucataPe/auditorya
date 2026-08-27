@@ -26,6 +26,7 @@ import { SuperadminLogin } from './pages/superadmin/SuperadminLogin'
 import { SuperadminFirmas } from './pages/superadmin/SuperadminFirmas'
 import { SuperadminUsuarios } from './pages/superadmin/SuperadminUsuarios'
 import { SuperadminPermisos } from './pages/superadmin/SuperadminPermisos'
+import { SuperadminPrefijos } from './pages/superadmin/SuperadminPrefijos'
 
 // Empresa panel pages
 import { EmpresaDashboard } from './pages/empresa/EmpresaDashboard'
@@ -116,6 +117,7 @@ export default function App() {
         <Route path="firmas" element={<SuperadminFirmas />} />
         <Route path="usuarios" element={<SuperadminUsuarios />} />
         <Route path="permisos" element={<SuperadminPermisos />} />
+        <Route path="prefijos" element={<SuperadminPrefijos />} />
       </Route>
 
       <Route path="*" element={<Navigate to="/login" replace />} />

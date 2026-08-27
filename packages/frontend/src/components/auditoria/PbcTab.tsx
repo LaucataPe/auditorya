@@ -75,7 +75,7 @@ export function PbcTab({
       items: pendientes.map((s) => ({
         descripcion: s.descripcion,
         area: s.papelArea ? areaLabel(s.papelArea) : null,
-        papelTitulo: s.papelTitulo,
+        papelTitulo: s.papelTitulo && s.papelIndice ? `${s.papelIndice} — ${s.papelTitulo}` : s.papelTitulo,
         fechaLimite: s.fechaLimite,
         notas: s.notas,
       })),
@@ -163,7 +163,7 @@ export function PbcTab({
                 </div>
                 <p className="text-xs text-gray-400 mt-0.5">
                   {s.papelTitulo ? (
-                    <>Papel: {s.papelTitulo}{s.papelArea ? ` · ${areaLabel(s.papelArea)}` : ''}</>
+                    <>Papel: {s.papelIndice ? `${s.papelIndice} — ` : ''}{s.papelTitulo}{s.papelArea ? ` · ${areaLabel(s.papelArea)}` : ''}</>
                   ) : (
                     'Sin papel asociado'
                   )}

@@ -78,6 +78,7 @@ app.get('/auditorias/:id/notas-revision', async (c) => {
       createdAt: notasRevision.createdAt,
       papelTitulo: papelesTrabajo.titulo,
       papelArea: papelesTrabajo.area,
+      papelIndice: papelesTrabajo.indice,
     })
     .from(notasRevision)
     .leftJoin(papelesTrabajo, eq(notasRevision.papelTrabajoId, papelesTrabajo.id))

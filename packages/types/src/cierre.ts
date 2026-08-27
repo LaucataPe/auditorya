@@ -28,6 +28,7 @@ export type NotaRevision = {
 export type NotaRevisionConPapel = NotaRevision & {
   papelTitulo: string | null
   papelArea: string | null
+  papelIndice: string | null
 }
 
 export type CierreAuditoria = {

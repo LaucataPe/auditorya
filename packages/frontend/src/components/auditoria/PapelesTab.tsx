@@ -49,6 +49,8 @@ type Evidencia = {
 type Papel = {
   id: string
   area: Area
+  // Referencia en el archivo (NIA 230): prefijo del área + consecutivo, ej. 'C-1'.
+  indice: string
   titulo: string
   procedimiento: string | null
   alcance: string | null
@@ -102,7 +104,7 @@ export function PapelesTab({
   const [nuevoOpen, setNuevoOpen] = useState(false)
   const [editTarget, setEditTarget] = useState<Papel | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<Papel | null>(null)
-  const [filtro, setFiltro] = useState<EstadoPapel | 'todos'>('todos')
+  const [filtro, setFiltro] = useState<EstadoPapel | 'todos'>('borrador')
   const irAlPapel = (papelId: string) => navigate(`/empresas/${empresaId}/encargos/${auditoriaId}/papeles/${papelId}`)
 
   const { data: papeles = [], isLoading } = useQuery<Papel[]>({
@@ -110,6 +112,12 @@ export function PapelesTab({
     queryFn: () => api.get<Papel[]>(`/auditorias/${auditoriaId}/papeles`),
     enabled: materialidadAprobada,
   })
+
+  // Arranca en "Borrador"; si el encargo no tiene borradores, cae a "Todos"
+  const sinBorradores = !isLoading && !papeles.some((p) => p.estado === 'borrador')
+  useEffect(() => {
+    if (sinBorradores) setFiltro((f) => (f === 'borrador' ? 'todos' : f))
+  }, [sinBorradores])
 
   const { data: usuarios = [] } = useQuery<Usuario[]>({
     queryKey: ['usuarios'],
@@ -127,7 +135,7 @@ export function PapelesTab({
   })
 
   const editMutation = useMutation({
-    mutationFn: ({ id, body }: { id: string; body: { area: Area; titulo: string } }) =>
+    mutationFn: ({ id, body }: { id: string; body: { area: Area; titulo: string; indice: string } }) =>
       api.put(`/papeles/${id}`, body),
     onSuccess: (_d, { id }) => {
       queryClient.invalidateQueries({ queryKey: ['papeles', auditoriaId] })
@@ -209,6 +217,7 @@ export function PapelesTab({
               <div className="flex items-start justify-between">
                 <div>
                   <div className="flex items-center gap-2 mb-0.5">
+                    <span className="text-xs font-mono font-semibold text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded">{p.indice}</span>
                     <span className="text-xs text-gray-400 font-medium">{areaLabel(p.area)}</span>
                     <span className={cn('text-xs font-medium px-2 py-0.5 rounded-full', ESTADO_BADGE[p.estado])}>
                       {ESTADO_LABEL[p.estado]}
@@ -332,19 +341,19 @@ function EditarPapelModal({
   onClose: () => void
   loading: boolean
   error: string | null
-  onSave: (b: { area: Area; titulo: string }) => void
+  onSave: (b: { area: Area; titulo: string; indice: string }) => void
 }) {
   const { opciones } = useAreas()
-  const [form, setForm] = useState({ area: 'bancos' as Area, titulo: '' })
+  const [form, setForm] = useState({ area: 'bancos' as Area, titulo: '', indice: '' })
 
   useEffect(() => {
-    if (papel) setForm({ area: papel.area, titulo: papel.titulo })
+    if (papel) setForm({ area: papel.area, titulo: papel.titulo, indice: papel.indice })
   }, [papel])
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (form.titulo.trim().length < 3) return
-    onSave({ area: form.area, titulo: form.titulo.trim() })
+    if (form.titulo.trim().length < 3 || !form.indice.trim()) return
+    onSave({ area: form.area, titulo: form.titulo.trim(), indice: form.indice.trim() })
   }
 
   return (
@@ -357,14 +366,24 @@ function EditarPapelModal({
           onChange={(e) => setForm({ ...form, area: e.target.value as Area })}
           options={opciones}
         />
-        <Input
-          id="ep-titulo"
-          label="Título del papel"
-          placeholder="Ej: Confirmación de saldos bancarios"
-          value={form.titulo}
-          onChange={(e) => setForm({ ...form, titulo: e.target.value })}
-        />
+        <div className="grid grid-cols-[7rem_1fr] gap-3">
+          <Input
+            id="ep-indice"
+            label="Referencia"
+            placeholder="C-1"
+            value={form.indice}
+            onChange={(e) => setForm({ ...form, indice: e.target.value })}
+          />
+          <Input
+            id="ep-titulo"
+            label="Título del papel"
+            placeholder="Ej: Confirmación de saldos bancarios"
+            value={form.titulo}
+            onChange={(e) => setForm({ ...form, titulo: e.target.value })}
+          />
+        </div>
         <p className="text-xs text-gray-400">
+          La referencia es el índice del papel en el archivo (NIA 230); debe ser única en el encargo.
           El procedimiento, alcance, hallazgos y conclusión se editan dentro del papel.
         </p>
         {error && (
@@ -372,7 +391,7 @@ function EditarPapelModal({
         )}
         <div className="flex justify-end gap-3 pt-1">
           <Button type="button" variant="secondary" onClick={onClose}>Cancelar</Button>
-          <Button type="submit" loading={loading} disabled={form.titulo.trim().length < 3}>
+          <Button type="submit" loading={loading} disabled={form.titulo.trim().length < 3 || !form.indice.trim()}>
             Guardar cambios
           </Button>
         </div>
@@ -396,7 +415,7 @@ function EliminarPapelModal({
       <div className="space-y-4">
         {papel && (
           <div className="rounded-xl bg-gray-50 border border-gray-100 px-4 py-3">
-            <p className="text-xs text-gray-400 mb-0.5">{areaLabel(papel.area)}</p>
+            <p className="text-xs text-gray-400 mb-0.5">{papel.indice} · {areaLabel(papel.area)}</p>
             <p className="text-sm font-medium text-gray-800">{papel.titulo}</p>
           </div>
         )}
@@ -1312,7 +1331,10 @@ export function PapelPanel({
       <div className="border-b border-gray-100 py-3 flex items-center gap-3 flex-wrap">
         <div className="min-w-0">
           <p className="text-[11px] text-gray-400">{areaLabel(papel.area)}</p>
-          <h2 className="text-base font-semibold text-gray-900 truncate">{papel.titulo}</h2>
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-xs font-mono font-semibold text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded shrink-0">{papel.indice}</span>
+            <h2 className="text-base font-semibold text-gray-900 truncate">{papel.titulo}</h2>
+          </div>
         </div>
         <span className={cn('text-xs font-medium px-2 py-0.5 rounded-full', ESTADO_BADGE[papel.estado])}>
           {ESTADO_LABEL[papel.estado]}
@@ -1459,8 +1481,16 @@ export function PapelPanel({
                 </div>
                 {papel.evidencias.length > 0 && (
                   <div className="space-y-2 mb-3">
-                    {papel.evidencias.map((ev) => (
-                      <EvidenciaRow key={ev.id} evidencia={ev} aprobado={aprobado} onEliminar={() => delEvidencia.mutate(ev.id)} onCambio={invalidate} />
+                    {papel.evidencias.map((ev, i) => (
+                      <EvidenciaRow
+                        key={ev.id}
+                        evidencia={ev}
+                        // La lista viene en orden descendente: la más antigua es .1
+                        subIndice={`${papel.indice}.${papel.evidencias.length - i}`}
+                        aprobado={aprobado}
+                        onEliminar={() => delEvidencia.mutate(ev.id)}
+                        onCambio={invalidate}
+                      />
                     ))}
                   </div>
                 )}
@@ -2413,9 +2443,10 @@ function formatoTamano(bytes: number): string {
 }
 
 function EvidenciaRow({
-  evidencia: ev, aprobado, onEliminar, onCambio,
+  evidencia: ev, subIndice, aprobado, onEliminar, onCambio,
 }: {
   evidencia: Evidencia
+  subIndice: string
   aprobado: boolean
   onEliminar: () => void
   onCambio: () => void
@@ -2440,6 +2471,7 @@ function EvidenciaRow({
     <div className="flex items-start justify-between rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
       <div className="min-w-0">
         <div className="flex items-center gap-2">
+          <span className="text-[11px] font-mono font-semibold text-indigo-700 bg-indigo-50 px-1 py-0.5 rounded shrink-0">{subIndice}</span>
           <span className="text-sm font-medium text-gray-800">{ev.nombre}</span>
           <span className="text-xs text-gray-400 capitalize">{ev.tipo}</span>
         </div>

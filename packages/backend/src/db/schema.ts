@@ -81,12 +81,22 @@ export const areasFirma = pgTable(
     firmaId: uuid('firma_id').notNull().references(() => firmas.id),
     clave: text('clave').notNull(),
     nombre: text('nombre').notNull(),
+    // Prefijo de referenciación de papeles; si es null se deriva de la clave (prefijoDeArea).
+    prefijo: text('prefijo'),
     createdAt: timestamp('created_at').defaultNow().notNull(),
   },
   (t) => ({
     firmaClaveUnq: uniqueIndex('areas_firma_firma_clave_unq').on(t.firmaId, t.clave),
   }),
 )
+
+// Overrides globales (superadmin) de los prefijos de referenciación del catálogo
+// base. Sin fila = prefijo por defecto de AREAS_BASE. Solo afecta papeles nuevos.
+export const prefijosAreas = pgTable('prefijos_areas', {
+  clave: text('clave').primaryKey(),
+  prefijo: text('prefijo').notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+})
 
 export const empresas = pgTable('empresas', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -343,13 +353,18 @@ export const riesgos = pgTable('riesgos', {
 // Fase 4 — Papeles de trabajo (NIA 230). Uno por área/procedimiento.
 // Solo el socio responsable puede aprobarlos.
 // ─────────────────────────────────────────────────────────────────────────────
-export const papelesTrabajo = pgTable('papeles_trabajo', {
+export const papelesTrabajo = pgTable(
+  'papeles_trabajo',
+  {
   id: uuid('id').primaryKey().defaultRandom(),
   auditoriaId: uuid('auditoria_id')
     .notNull()
     .references(() => auditorias.id),
   // Clave del catálogo base (AREAS_BASE) o de un ciclo propio de la firma (areas_firma).
   area: text('area').notNull(),
+  // Referencia en el archivo (NIA 230): prefijo del área + consecutivo por encargo ('C-1').
+  // Se genera al crear el papel y nunca se renumera tras aprobar.
+  indice: text('indice').notNull(),
   titulo: text('titulo').notNull(),
   // Riesgo (NIA 315) que este papel atiende, si aplica.
   riesgoId: uuid('riesgo_id').references(() => riesgos.id),
@@ -376,7 +391,11 @@ export const papelesTrabajo = pgTable('papeles_trabajo', {
   aprobadoPor: uuid('aprobado_por').references(() => usuarios.id),
   aprobadoAt: timestamp('aprobado_at'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
-})
+  },
+  (t) => ({
+    auditoriaIndiceUnq: uniqueIndex('papeles_trabajo_auditoria_indice_unq').on(t.auditoriaId, t.indice),
+  }),
+)
 
 // Evidencia ligada a un papel de trabajo. Puede llevar archivo adjunto
 // (guardado vía lib/storage, servido con URL firmada de corta duración).

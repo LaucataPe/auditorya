@@ -3,8 +3,8 @@ import { zValidator } from '../lib/validacion'
 import { z } from 'zod'
 import { and, desc, eq, sql } from 'drizzle-orm'
 import { db } from '../db/client'
-import { firmas, empresas, auditorias, informes, areasFirma, riesgos, papelesTrabajo, tareas, hallazgos } from '../db/schema'
-import { claveDeArea, AREAS_BASE_CLAVES, FUENTES_DOCUMENTO } from '@auditorya/types'
+import { firmas, empresas, auditorias, informes, areasFirma, riesgos, papelesTrabajo, tareas, hallazgos, prefijosAreas } from '../db/schema'
+import { claveDeArea, AREAS_BASE, AREAS_BASE_CLAVES, FUENTES_DOCUMENTO, prefijoDeArea } from '@auditorya/types'
 import { authMiddleware } from '../middleware/auth'
 import type { JwtPayload } from '../lib/jwt'
 import { registrarEvento } from '../lib/eventos'
@@ -121,6 +121,16 @@ app.put(
 /* ── Ciclos/áreas propios de la firma ─────────────────────────────────────
    Complementan el catálogo base fijo (AREAS_BASE en @auditorya/types). */
 
+// GET /firmas/mia/prefijos-areas — prefijos vigentes del catálogo base para mostrar
+// en la firma (incluye los overrides globales del superadmin). Solo lectura.
+app.get('/mia/prefijos-areas', async (c) => {
+  const overrides = await db.select().from(prefijosAreas)
+  const porClave = new Map(overrides.map((o) => [o.clave, o.prefijo]))
+  return c.json({
+    data: AREAS_BASE.map((a) => ({ clave: a.clave, prefijo: porClave.get(a.clave) ?? a.prefijo })),
+  })
+})
+
 // GET /firmas/mia/areas — ciclos propios (el frontend los une al catálogo base)
 app.get('/mia/areas', async (c) => {
   const { firmaId } = c.get('user')
@@ -171,6 +181,81 @@ app.post(
     })
 
     return c.json({ data: area }, 201)
+  },
+)
+
+// PUT /firmas/mia/areas/:id — prefijo de referenciación del ciclo (índices NIA 230).
+// Regla: socio o gerente. prefijo null = volver al derivado de la clave.
+// Solo afecta papeles nuevos: los índices ya asignados no se renumeran.
+app.put(
+  '/mia/areas/:id',
+  zValidator(
+    'json',
+    z.object({
+      prefijo: z
+        .string()
+        .trim()
+        .toUpperCase()
+        .regex(/^[A-Z0-9]{1,4}$/, 'Usa 1 a 4 letras mayúsculas o dígitos')
+        .nullable(),
+    }),
+  ),
+  async (c) => {
+    const user = c.get('user')
+    if (user.rol !== 'socio' && user.rol !== 'gerente') {
+      return c.json({ error: { code: 'FORBIDDEN', message: 'Solo socio o gerente pueden editar ciclos' } }, 403)
+    }
+
+    const [area] = await db
+      .select()
+      .from(areasFirma)
+      .where(and(eq(areasFirma.id, c.req.param('id')), eq(areasFirma.firmaId, user.firmaId)))
+    if (!area) {
+      return c.json({ error: { code: 'NOT_FOUND', message: 'Ciclo no encontrado' } }, 404)
+    }
+
+    const { prefijo } = c.req.valid('json')
+
+    // Sin choques con los prefijos vigentes del catálogo base (con overrides del
+    // superadmin) ni con los demás ciclos de la firma: compartir prefijo mezcla
+    // las series de consecutivos y el archivo se vuelve ilegible.
+    if (prefijo) {
+      const overrides = await db.select().from(prefijosAreas)
+      const porClave = new Map(overrides.map((o) => [o.clave, o.prefijo]))
+      const base = AREAS_BASE.find((a) => (porClave.get(a.clave) ?? a.prefijo) === prefijo)
+      if (base) {
+        return c.json(
+          { error: { code: 'PREFIJO_DUPLICADO', message: `El prefijo "${prefijo}" ya lo usa ${base.nombre} (catálogo base)` } },
+          409,
+        )
+      }
+      const hermanas = await db
+        .select()
+        .from(areasFirma)
+        .where(eq(areasFirma.firmaId, user.firmaId))
+      const choque = hermanas.find((a) => a.id !== area.id && prefijoDeArea(a.clave, a.prefijo) === prefijo)
+      if (choque) {
+        return c.json(
+          { error: { code: 'PREFIJO_DUPLICADO', message: `El prefijo "${prefijo}" ya lo usa tu ciclo "${choque.nombre}"` } },
+          409,
+        )
+      }
+    }
+
+    const [actualizada] = await db
+      .update(areasFirma)
+      .set({ prefijo })
+      .where(eq(areasFirma.id, area.id))
+      .returning()
+
+    registrarEvento(user, {
+      accion: 'firma.area_prefijo',
+      entidad: 'area_firma',
+      entidadId: area.id,
+      detalle: { clave: area.clave, nombre: area.nombre, prefijo: prefijo ?? prefijoDeArea(area.clave) },
+    })
+
+    return c.json({ data: actualizada })
   },
 )
 

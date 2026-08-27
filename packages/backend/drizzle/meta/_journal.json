@@ -253,6 +253,20 @@
       "when": 1785900000000,
       "tag": "0038_fuente_cuerpo",
       "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1786000000000,
+      "tag": "0039_indices_papeles",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1786100000000,
+      "tag": "0040_prefijos_areas",
+      "breakpoints": true
     }
   ]
 }

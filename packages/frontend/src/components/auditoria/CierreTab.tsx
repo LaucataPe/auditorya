@@ -197,7 +197,7 @@ export function CierreTab({ auditoriaId }: { auditoriaId: string }) {
                 <div className="min-w-0">
                   <p className="text-sm text-gray-800">{n.texto}</p>
                   <p className="text-xs text-gray-400 mt-0.5">
-                    {n.papelTitulo ? `${n.papelTitulo}${n.papelArea ? ` · ${areaLabel(n.papelArea)}` : ''}` : 'Papel'}
+                    {n.papelTitulo ? `${n.papelIndice ? `${n.papelIndice} — ` : ''}${n.papelTitulo}${n.papelArea ? ` · ${areaLabel(n.papelArea)}` : ''}` : 'Papel'}
                   </p>
                 </div>
                 <button

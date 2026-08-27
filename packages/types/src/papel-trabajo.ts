@@ -29,6 +29,8 @@ export type PapelTrabajo = {
   id: string
   auditoriaId: string
   area: AreaRiesgo
+  /** Referencia del papel en el archivo (NIA 230): prefijo del área + consecutivo, p. ej. 'C-1'. */
+  indice: string
   titulo: string
   procedimiento: string | null
   alcance: string | null

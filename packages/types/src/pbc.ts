@@ -28,6 +28,7 @@ export type SolicitudPbc = {
 export type SolicitudPbcConPapel = SolicitudPbc & {
   papelTitulo: string | null
   papelArea: string | null
+  papelIndice: string | null
   evidenciaArchivoNombre: string | null
   evidenciaArchivoTamano: number | null
 }

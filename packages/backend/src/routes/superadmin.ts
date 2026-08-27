@@ -5,7 +5,8 @@ import { asc, eq, sql } from 'drizzle-orm'
 import bcrypt from 'bcryptjs'
 import { createHash, timingSafeEqual } from 'node:crypto'
 import { db } from '../db/client'
-import { firmas, usuarios, permisos } from '../db/schema'
+import { firmas, usuarios, permisos, prefijosAreas } from '../db/schema'
+import { AREAS_BASE, PREFIJO_AREA_BASE } from '@auditorya/types'
 import { signToken } from '../lib/jwt'
 import { superadminMiddleware } from '../middleware/superadmin'
 import { seedRolesFirma } from '../lib/roles'
@@ -210,6 +211,81 @@ app.delete('/permisos/:clave', superadminMiddleware, async (c) => {
     return c.json({ error: { code: 'NOT_FOUND', message: 'Permiso no encontrado' } }, 404)
   }
   return c.json({ data: { clave: borrado.clave } })
+})
+
+// ─── Prefijos de referenciación (índices de papeles, NIA 230) ─────────────────
+// Overrides globales sobre el catálogo base. Solo afectan papeles nuevos: los
+// índices ya asignados no se renumeran.
+
+/** Catálogo base con el prefijo vigente (override si existe, defecto si no). */
+async function catalogoConPrefijos() {
+  const overrides = await db.select().from(prefijosAreas)
+  const porClave = new Map(overrides.map((o) => [o.clave, o.prefijo]))
+  return AREAS_BASE.map((a) => ({
+    clave: a.clave,
+    nombre: a.nombre,
+    prefijoDefecto: a.prefijo,
+    prefijo: porClave.get(a.clave) ?? a.prefijo,
+    personalizado: porClave.has(a.clave),
+  }))
+}
+
+// GET /superadmin/prefijos-areas
+app.get('/prefijos-areas', superadminMiddleware, async (c) => {
+  return c.json({ data: await catalogoConPrefijos() })
+})
+
+// PUT /superadmin/prefijos-areas/:clave — cambia el prefijo de un área base
+app.put(
+  '/prefijos-areas/:clave',
+  superadminMiddleware,
+  zValidator(
+    'json',
+    z.object({
+      prefijo: z.string().trim().toUpperCase().regex(/^[A-Z0-9]{1,4}$/, 'Usa 1 a 4 letras mayúsculas o dígitos'),
+    }),
+  ),
+  async (c) => {
+    const clave = c.req.param('clave')
+    const { prefijo } = c.req.valid('json')
+
+    if (!(clave in PREFIJO_AREA_BASE)) {
+      return c.json({ error: { code: 'NOT_FOUND', message: 'El área no existe en el catálogo base' } }, 404)
+    }
+
+    // Sin prefijos repetidos entre áreas base: dos áreas con la misma letra
+    // compartirían la serie de consecutivos y el archivo se vuelve ilegible.
+    const catalogo = await catalogoConPrefijos()
+    const choque = catalogo.find((a) => a.clave !== clave && a.prefijo === prefijo)
+    if (choque) {
+      return c.json(
+        { error: { code: 'PREFIJO_DUPLICADO', message: `El prefijo "${prefijo}" ya lo usa ${choque.nombre}` } },
+        409,
+      )
+    }
+
+    if (prefijo === PREFIJO_AREA_BASE[clave]) {
+      // Volver al defecto = quitar el override.
+      await db.delete(prefijosAreas).where(eq(prefijosAreas.clave, clave))
+    } else {
+      await db
+        .insert(prefijosAreas)
+        .values({ clave, prefijo })
+        .onConflictDoUpdate({ target: prefijosAreas.clave, set: { prefijo, updatedAt: new Date() } })
+    }
+
+    return c.json({ data: (await catalogoConPrefijos()).find((a) => a.clave === clave) })
+  },
+)
+
+// DELETE /superadmin/prefijos-areas/:clave — restaura el prefijo por defecto
+app.delete('/prefijos-areas/:clave', superadminMiddleware, async (c) => {
+  const clave = c.req.param('clave')
+  if (!(clave in PREFIJO_AREA_BASE)) {
+    return c.json({ error: { code: 'NOT_FOUND', message: 'El área no existe en el catálogo base' } }, 404)
+  }
+  await db.delete(prefijosAreas).where(eq(prefijosAreas.clave, clave))
+  return c.json({ data: { clave, prefijo: PREFIJO_AREA_BASE[clave] } })
 })
 
 export default app

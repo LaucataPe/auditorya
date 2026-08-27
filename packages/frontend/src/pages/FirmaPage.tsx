@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Building2, ImagePlus, MapPin, Pencil, Plus, Trash2, UserCheck, X } from 'lucide-react'
-import { FUENTES_DOCUMENTO, FUENTE_TITULOS_DEFECTO, FUENTE_CUERPO_DEFECTO, type FuenteDocumento } from '@auditorya/types'
+import { Building2, ImagePlus, MapPin, Pencil, Plus, RotateCcw, Trash2, UserCheck, X } from 'lucide-react'
+import { FUENTES_DOCUMENTO, FUENTE_TITULOS_DEFECTO, FUENTE_CUERPO_DEFECTO, prefijoDeArea, type FuenteDocumento } from '@auditorya/types'
 import { api } from '../lib/api'
 import { useAuthStore } from '../store/auth.store'
 import { toast } from '../store/toast.store'
@@ -187,7 +187,20 @@ function CiclosCard() {
   const queryClient = useQueryClient()
   const { areas, propias } = useAreas()
   const [nombre, setNombre] = useState('')
+  const [editandoPrefijo, setEditandoPrefijo] = useState<string | null>(null)
+  const [prefijoValor, setPrefijoValor] = useState('')
   const canManage = user?.rol === 'socio' || user?.rol === 'gerente'
+
+  // Ciclo propio por clave, para leer su prefijo configurado.
+  const propiaPorClave = new Map(propias.map((p) => [p.clave, p]))
+
+  // Prefijos vigentes del catálogo base (con overrides del superadmin) — solo lectura.
+  const { data: prefijosBase = [] } = useQuery<{ clave: string; prefijo: string }[]>({
+    queryKey: ['prefijos-base'],
+    queryFn: () => api.get<{ clave: string; prefijo: string }[]>('/firmas/mia/prefijos-areas'),
+    staleTime: 5 * 60_000,
+  })
+  const prefijoBasePorClave = new Map(prefijosBase.map((p) => [p.clave, p.prefijo]))
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['areas-firma'] })
 
@@ -207,36 +220,107 @@ function CiclosCard() {
     onError: (e) => toast.error(e instanceof Error ? e.message : 'Error al eliminar el ciclo'),
   })
 
+  const cambiarPrefijo = useMutation({
+    mutationFn: ({ id, prefijo }: { id: string; prefijo: string | null }) =>
+      api.put(`/firmas/mia/areas/${id}`, { prefijo }),
+    onSuccess: () => {
+      toast.success('Prefijo actualizado — aplica a papeles nuevos')
+      setEditandoPrefijo(null)
+      invalidate()
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : 'Error al cambiar el prefijo'),
+  })
+
+  function confirmarPrefijo(id: string) {
+    const prefijo = prefijoValor.trim().toUpperCase()
+    if (!/^[A-Z0-9]{1,4}$/.test(prefijo)) {
+      toast.error('Usa 1 a 4 letras mayúsculas o dígitos')
+      return
+    }
+    cambiarPrefijo.mutate({ id, prefijo })
+  }
+
   return (
     <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
       <p className="text-sm font-medium text-gray-700 mb-1">Ciclos de auditoría</p>
       <p className="text-xs text-gray-400 mb-4">
-        Áreas/ciclos disponibles al crear riesgos, papeles y tareas en todos los encargos. Los del
-        catálogo base son fijos; tu firma puede añadir ciclos propios.
+        Áreas/ciclos disponibles al crear riesgos, papeles y tareas en todos los encargos. La letra de
+        cada uno es el prefijo con que se referencian sus papeles de trabajo (ej. B-1). Los del catálogo
+        base son fijos; en tus ciclos propios puedes hacer clic en el prefijo para cambiarlo (solo aplica
+        a papeles nuevos).
       </p>
 
       <div className="flex flex-wrap gap-1.5">
-        {areas.map((a) => (
-          <span
-            key={a.clave}
-            className={cn(
-              'inline-flex items-center gap-1 text-xs font-medium px-2.5 py-1 rounded-full',
-              a.propia ? 'bg-indigo-50 text-indigo-700' : 'bg-gray-100 text-gray-600',
-            )}
-          >
-            {a.nombre}
-            {a.propia && canManage && (
-              <button
-                onClick={() => eliminar.mutate(a.id!)}
-                disabled={eliminar.isPending}
-                className="text-indigo-300 hover:text-red-500 transition-colors"
-                title="Eliminar ciclo (solo si no tiene registros)"
-              >
-                <X size={12} />
-              </button>
-            )}
-          </span>
-        ))}
+        {areas.map((a) => {
+          const propia = a.propia ? propiaPorClave.get(a.clave) : undefined
+          const prefijo = propia ? prefijoDeArea(propia.clave, propia.prefijo) : null
+          const personalizado = !!propia?.prefijo
+          return (
+            <span
+              key={a.clave}
+              className={cn(
+                'inline-flex items-center gap-1 text-xs font-medium px-2.5 py-1 rounded-full',
+                a.propia ? 'bg-indigo-50 text-indigo-700' : 'bg-gray-100 text-gray-600',
+              )}
+            >
+              {!a.propia && prefijoBasePorClave.has(a.clave) && (
+                <span
+                  className="font-mono font-semibold text-gray-400"
+                  title="Prefijo de referenciación de los papeles (catálogo base — lo administra el superadmin)"
+                >
+                  {prefijoBasePorClave.get(a.clave)}
+                </span>
+              )}
+              {propia && (
+                editandoPrefijo === propia.id ? (
+                  <input
+                    autoFocus
+                    value={prefijoValor}
+                    onChange={(e) => setPrefijoValor(e.target.value.toUpperCase())}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') confirmarPrefijo(propia.id)
+                      if (e.key === 'Escape') setEditandoPrefijo(null)
+                    }}
+                    maxLength={4}
+                    className="w-11 rounded border border-indigo-300 bg-white px-1 py-0 font-mono text-[11px] text-center uppercase text-indigo-800 focus:outline-none"
+                    title="Enter guarda · Esc cancela"
+                  />
+                ) : (
+                  <button
+                    onClick={canManage ? () => { setEditandoPrefijo(propia.id); setPrefijoValor(prefijo!) } : undefined}
+                    className={cn('font-mono font-semibold text-indigo-500', canManage && 'hover:text-indigo-900')}
+                    title={canManage ? 'Prefijo de referenciación de los papeles — clic para editar' : 'Prefijo de referenciación'}
+                  >
+                    {prefijo}
+                  </button>
+                )
+              )}
+              {a.nombre}
+              {a.propia && canManage && (
+                <>
+                  {personalizado && editandoPrefijo !== propia!.id && (
+                    <button
+                      onClick={() => cambiarPrefijo.mutate({ id: propia!.id, prefijo: null })}
+                      disabled={cambiarPrefijo.isPending}
+                      className="text-indigo-300 hover:text-indigo-600 transition-colors"
+                      title={`Restaurar prefijo derivado (${prefijoDeArea(propia!.clave)})`}
+                    >
+                      <RotateCcw size={11} />
+                    </button>
+                  )}
+                  <button
+                    onClick={() => eliminar.mutate(a.id!)}
+                    disabled={eliminar.isPending}
+                    className="text-indigo-300 hover:text-red-500 transition-colors"
+                    title="Eliminar ciclo (solo si no tiene registros)"
+                  >
+                    <X size={12} />
+                  </button>
+                </>
+              )}
+            </span>
+          )
+        })}
         {propias.length === 0 && (
           <span className="text-xs text-gray-400 self-center">— aún sin ciclos propios</span>
         )}

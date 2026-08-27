@@ -17,7 +17,10 @@ import {
   muestras,
   hallazgos,
   papelesSnapshots,
+  areasFirma,
+  prefijosAreas,
 } from '../db/schema'
+import { AREAS_BASE_CLAVES, PREFIJO_AREA_BASE, prefijoDeArea, siguienteIndice } from '@auditorya/types'
 import { authMiddleware } from '../middleware/auth'
 import { esSocioResponsable, ERROR_NO_SOCIO_RESPONSABLE } from '../lib/permisos'
 import { encargoCerrado, ERROR_ENCARGO_CERRADO } from '../lib/encargo'
@@ -78,6 +81,40 @@ async function usuarioDeFirma(usuarioId: string, firmaId: string) {
     .from(usuarios)
     .where(and(eq(usuarios.id, usuarioId), eq(usuarios.firmaId, firmaId)))
   return !!u
+}
+
+/**
+ * Siguiente índice de referenciación (NIA 230) para un papel del área en el encargo:
+ * prefijo del área + consecutivo. Los huecos por borrado no se reutilizan.
+ */
+async function siguienteIndicePapel(auditoriaId: string, firmaId: string, area: string) {
+  let prefijo: string
+  if (AREAS_BASE_CLAVES.includes(area)) {
+    // Área base: el superadmin puede haber cambiado el prefijo del catálogo.
+    const [ov] = await db
+      .select({ prefijo: prefijosAreas.prefijo })
+      .from(prefijosAreas)
+      .where(eq(prefijosAreas.clave, area))
+      .limit(1)
+    prefijo = ov?.prefijo ?? PREFIJO_AREA_BASE[area]
+  } else {
+    const [af] = await db
+      .select({ prefijo: areasFirma.prefijo })
+      .from(areasFirma)
+      .where(and(eq(areasFirma.firmaId, firmaId), eq(areasFirma.clave, area)))
+      .limit(1)
+    prefijo = prefijoDeArea(area, af?.prefijo ?? null)
+  }
+  const existentes = await db
+    .select({ indice: papelesTrabajo.indice })
+    .from(papelesTrabajo)
+    .where(eq(papelesTrabajo.auditoriaId, auditoriaId))
+  return siguienteIndice(prefijo, existentes.map((e) => e.indice))
+}
+
+/** ¿El error es la violación del índice único (auditoria_id, indice)? */
+function esColisionIndice(e: unknown): boolean {
+  return (e as { code?: string })?.code === '23505'
 }
 
 // ─── Papeles de trabajo (NIA 230) ────────────────────────────────────────────
@@ -212,23 +249,36 @@ app.post(
       }
     }
 
-    const [papel] = await db
-      .insert(papelesTrabajo)
-      .values({
-        auditoriaId: id,
-        area: body.area,
-        titulo: body.titulo,
-        riesgoId: body.riesgoId ?? null,
-        procedimiento: body.procedimiento ?? null,
-        alcance: body.alcance ?? null,
-        hallazgos: body.hallazgos ?? null,
-        conclusion: body.conclusion ?? null,
-        fechaInicio: body.fechaInicio ? new Date(body.fechaInicio) : null,
-        fechaFin: body.fechaFin ? new Date(body.fechaFin) : null,
-        asignadoA: body.asignadoA ?? null,
-        preparadoPor: sub,
-      })
-      .returning()
+    // El índice se recalcula y reintenta si dos creaciones simultáneas chocan
+    // en el único (auditoria_id, indice).
+    let papel!: typeof papelesTrabajo.$inferSelect
+    for (let intento = 0; ; intento++) {
+      const indice = await siguienteIndicePapel(id, firmaId, body.area)
+      try {
+        ;[papel] = await db
+          .insert(papelesTrabajo)
+          .values({
+            auditoriaId: id,
+            area: body.area,
+            indice,
+            titulo: body.titulo,
+            riesgoId: body.riesgoId ?? null,
+            procedimiento: body.procedimiento ?? null,
+            alcance: body.alcance ?? null,
+            hallazgos: body.hallazgos ?? null,
+            conclusion: body.conclusion ?? null,
+            fechaInicio: body.fechaInicio ? new Date(body.fechaInicio) : null,
+            fechaFin: body.fechaFin ? new Date(body.fechaFin) : null,
+            asignadoA: body.asignadoA ?? null,
+            preparadoPor: sub,
+          })
+          .returning()
+        break
+      } catch (e) {
+        if (intento < 2 && esColisionIndice(e)) continue
+        throw e
+      }
+    }
 
     // Genera las solicitudes PBC de los documentos requeridos por la prueba.
     if (body.documentosRequeridos && body.documentosRequeridos.length > 0) {
@@ -246,7 +296,7 @@ app.post(
       entidad: 'papel_trabajo',
       entidadId: papel.id,
       auditoriaId: id,
-      detalle: { titulo: papel.titulo, area: papel.area, riesgoId: papel.riesgoId },
+      detalle: { titulo: papel.titulo, area: papel.area, indice: papel.indice, riesgoId: papel.riesgoId },
     })
 
     notificar(c.get('user'), {
@@ -286,6 +336,7 @@ app.put(
     'json',
     z.object({
       area: z.string().min(2).max(80).optional(),
+      indice: z.string().trim().min(1).max(20).optional(),
       titulo: z.string().min(3).optional(),
       procedimiento: z.string().optional(),
       alcance: z.string().optional(),
@@ -329,8 +380,26 @@ app.put(
       return c.json({ error: ERROR_AREA_INVALIDA }, 400)
     }
 
+    // Índice editable, pero único dentro del encargo (referencia NIA 230).
+    if (body.indice && body.indice !== row.papel.indice) {
+      const [ocupado] = await db
+        .select({ id: papelesTrabajo.id })
+        .from(papelesTrabajo)
+        .where(and(
+          eq(papelesTrabajo.auditoriaId, row.papel.auditoriaId),
+          eq(papelesTrabajo.indice, body.indice),
+        ))
+      if (ocupado) {
+        return c.json(
+          { error: { code: 'INDICE_DUPLICADO', message: `La referencia "${body.indice}" ya está usada por otro papel de este encargo.` } },
+          409,
+        )
+      }
+    }
+
     const updates: Record<string, string | Date | null> = {}
     if (body.area) updates.area = body.area
+    if (body.indice) updates.indice = body.indice
     if (body.titulo) updates.titulo = body.titulo
     if (body.procedimiento !== undefined) updates.procedimiento = body.procedimiento || null
     if (body.alcance !== undefined) updates.alcance = body.alcance || null

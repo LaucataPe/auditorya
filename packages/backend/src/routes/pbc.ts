@@ -64,6 +64,7 @@ app.get('/auditorias/:id/pbc', async (c) => {
       createdAt: solicitudesPbc.createdAt,
       papelTitulo: papelesTrabajo.titulo,
       papelArea: papelesTrabajo.area,
+      papelIndice: papelesTrabajo.indice,
       evidenciaArchivoNombre: evidencias.archivoNombre,
       evidenciaArchivoTamano: evidencias.archivoTamano,
     })
