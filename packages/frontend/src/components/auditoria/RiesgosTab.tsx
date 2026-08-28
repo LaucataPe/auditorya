@@ -75,6 +75,7 @@ export function RiesgosTab({
   const [responder, setResponder] = useState<Riesgo | null>(null)
   const [editTarget, setEditTarget] = useState<Riesgo | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<Riesgo | null>(null)
+  const [filtro, setFiltro] = useState<'todos' | 'con_prueba' | 'sin_prueba'>('sin_prueba')
 
   const { data: riesgos = [], isLoading } = useQuery<Riesgo[]>({
     queryKey: ['riesgos', auditoriaId],
@@ -120,6 +121,12 @@ export function RiesgosTab({
     },
   })
 
+  const tienePrueba = (r: Riesgo) => (respuestas[r.id]?.papeles ?? 0) > 0
+  const filtrados =
+    filtro === 'todos' ? riesgos
+      : filtro === 'con_prueba' ? riesgos.filter(tienePrueba)
+      : riesgos.filter((r) => !tienePrueba(r))
+
   return (
     <div className="space-y-5">
       {/* Marco normativo */}
@@ -151,6 +158,27 @@ export function RiesgosTab({
         </div>
       </div>
 
+      {riesgos.length > 0 && (
+        <div className="flex items-center gap-2 flex-wrap">
+          {(['sin_prueba', 'con_prueba', 'todos'] as const).map((f) => (
+            <button
+              key={f}
+              onClick={() => setFiltro(f)}
+              className={cn(
+                'px-3 py-1.5 rounded-lg text-xs font-medium transition-colors',
+                filtro === f ? 'bg-indigo-600 text-white' : 'bg-white border border-gray-200 text-gray-500 hover:bg-gray-50',
+              )}
+            >
+              {f === 'todos'
+                ? `Todos (${riesgos.length})`
+                : f === 'con_prueba'
+                  ? `Con prueba (${riesgos.filter(tienePrueba).length})`
+                  : `Sin prueba (${riesgos.filter((r) => !tienePrueba(r)).length})`}
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* Lista */}
       {isLoading ? (
         <div className="flex justify-center py-16">
@@ -164,9 +192,14 @@ export function RiesgosTab({
             Usa “Sugerir riesgos” para partir del catálogo típico del sector{sector ? ` (${sector})` : ''}.
           </p>
         </div>
+      ) : filtrados.length === 0 ? (
+        <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-gray-200 bg-white py-14 text-center">
+          <ShieldAlert size={34} className="text-gray-300 mb-3" />
+          <p className="text-sm font-medium text-gray-400">Ningún riesgo coincide con este filtro</p>
+        </div>
       ) : (
         <div className="space-y-3">
-          {riesgos.map((r) => (
+          {filtrados.map((r) => (
             <div key={r.id} className="bg-white rounded-xl border border-gray-200 shadow-sm px-5 py-4">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
