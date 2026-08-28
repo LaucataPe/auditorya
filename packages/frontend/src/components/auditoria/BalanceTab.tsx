@@ -88,6 +88,20 @@ export function BalanceTab({ auditoriaId }: { auditoriaId: string }) {
     },
   })
 
+  const descargarArchivo = useMutation({
+    mutationFn: () =>
+      api.get<{ nombre: string; contenido: string }>(`/auditorias/${auditoriaId}/balance/archivo`),
+    onSuccess: ({ nombre, contenido }) => {
+      const bytes = Uint8Array.from(atob(contenido), (ch) => ch.charCodeAt(0))
+      const url = URL.createObjectURL(new Blob([bytes]))
+      const a = document.createElement('a')
+      a.href = url
+      a.download = nombre
+      a.click()
+      URL.revokeObjectURL(url)
+    },
+  })
+
   const limpiar = useMutation({
     mutationFn: () => api.delete(`/auditorias/${auditoriaId}/balance`),
     onSuccess: () => {
@@ -214,6 +228,14 @@ export function BalanceTab({ auditoriaId }: { auditoriaId: string }) {
             {analisis?.archivo && (
               <span className="inline-flex items-center gap-1.5">
                 <FileSpreadsheet size={12} /> Archivo guardado como evidencia: {analisis.archivo.nombre}
+                <button
+                  onClick={() => descargarArchivo.mutate()}
+                  disabled={descargarArchivo.isPending}
+                  className="inline-flex items-center gap-1 text-indigo-500 hover:text-indigo-700 disabled:opacity-50"
+                  title="Descargar el archivo original importado"
+                >
+                  <Download size={12} /> {descargarArchivo.isPending ? 'Descargando…' : 'Descargar'}
+                </button>
               </span>
             )}
             {analisis?.periodo ? (

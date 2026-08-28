@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { Building2, CheckCircle, ChevronRight, UserCircle, Plus } from 'lucide-react'
+import { Link, useNavigate } from 'react-router-dom'
+import { ArrowLeft, Building2, CheckCircle, ChevronRight, UserCircle, Plus } from 'lucide-react'
 import { useAuthStore } from '../store/auth.store'
 import { api } from '../lib/api'
 import { Button } from '../components/ui/Button'
@@ -91,7 +91,14 @@ export function OnboardingPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-indigo-50 to-gray-100 flex items-center justify-center p-4">
+    <div className="relative min-h-screen bg-gradient-to-br from-indigo-50 to-gray-100 flex items-center justify-center p-4">
+      <Link
+        to="/"
+        className="absolute left-4 top-4 inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium text-gray-600 transition-colors hover:bg-white hover:text-gray-900 sm:left-6 sm:top-6"
+      >
+        <ArrowLeft size={16} />
+        Volver al inicio
+      </Link>
       <div className="w-full max-w-xl">
         {/* Header */}
         <div className="text-center mb-8">

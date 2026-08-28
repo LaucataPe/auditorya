@@ -117,7 +117,8 @@ export function CronogramaTab({ auditoriaId }: { auditoriaId: string }) {
         <>
           {/* Timeline visual */}
           {agendados.length > 0 && (
-            <div className="rounded-xl border border-gray-200 bg-white p-4 overflow-hidden">
+            <div className="rounded-xl border border-gray-200 bg-white p-4 overflow-x-auto">
+              <div className="min-w-[560px]">
               {/* Cabecera de meses */}
               <div className="relative ml-48 h-4 mb-1 border-b border-gray-100">
                 {meses.map((m, i) => (
@@ -154,12 +155,13 @@ export function CronogramaTab({ auditoriaId }: { auditoriaId: string }) {
                   )
                 })}
               </div>
+              </div>
             </div>
           )}
 
           {/* Tabla editable */}
-          <div className="rounded-xl border border-gray-200 bg-white overflow-hidden">
-            <table className="w-full text-sm">
+          <div className="rounded-xl border border-gray-200 bg-white overflow-x-auto">
+            <table className="w-full min-w-[560px] text-sm">
               <thead>
                 <tr className="border-b border-gray-100 text-xs text-gray-400 text-left">
                   <th className="px-3 py-2 font-medium">Actividad</th>

@@ -11,6 +11,7 @@ import { AppLayout } from './components/layout/AppLayout'
 import { EmpresaLayout } from './components/empresa/EmpresaLayout'
 
 // Auth pages
+import { LandingPage } from './pages/LandingPage'
 import { LoginPage } from './pages/LoginPage'
 import { OnboardingPage } from './pages/OnboardingPage'
 
@@ -80,6 +81,7 @@ export default function App() {
     <Toaster />
     <Routes>
       {/* Public */}
+      <Route path="/" element={<LandingPage />} />
       <Route path="/login" element={<LoginPage />} />
       <Route
         path="/onboarding"
@@ -120,7 +122,7 @@ export default function App() {
         <Route path="prefijos" element={<SuperadminPrefijos />} />
       </Route>
 
-      <Route path="*" element={<Navigate to="/login" replace />} />
+      <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
     </ErrorBoundary>
   )

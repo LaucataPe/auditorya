@@ -26,7 +26,9 @@ el frontend oculta las funciones de IA y la sugerencia de riesgos cae al catálo
 sugerir riesgos con contexto real (sector + entendimiento + balance), análisis analítico del balance (NIA 520),
 asistente NIA conversacional por encargo, y redacción de campos de papeles de trabajo.
 
-**Archivos** — `lib/storage.ts` con drivers `local` (disco, `STORAGE_DIR`) y `s3` (pendiente).
+**Archivos** — `lib/storage.ts` con drivers `local` (disco, `STORAGE_DIR`) y `s3` (compatible S3:
+Cloudflare R2 / AWS S3, vía `@aws-sdk/client-s3` con endpoint configurable; producción usa R2).
+Migración disco → bucket: `scripts/migrar-storage-s3.ts`.
 Descargas SIEMPRE por URL firmada HMAC de 15 minutos (`/archivos?key=&exp=&sig=`), nunca públicas.
 
 **Pista de auditoría** — tabla `eventos` (inmutable, quién/qué/cuándo). Registrar con
@@ -59,11 +61,13 @@ OPENROUTER_MODEL=anthropic/claude-sonnet-4.5    # cualquier slug de OpenRouter
 OPENROUTER_BASE_URL=https://openrouter.ai/api/v1  # opcional (default)
 OPENROUTER_SITE_URL=https://auditorya.app         # opcional (atribución)
 S3_BUCKET=auditorya-evidencia
+S3_ENDPOINT=https://<account_id>.r2.cloudflarestorage.com   # solo driver s3
+S3_REGION=auto                  # opcional (default 'auto', correcto para R2)
 AWS_ACCESS_KEY_ID=...
 AWS_SECRET_ACCESS_KEY=...
 FRONTEND_URL=http://localhost:5173
 PORT=3001
-STORAGE_DRIVER=local            # 'local' o 's3' (s3 pendiente de activar)
+STORAGE_DRIVER=local            # 'local' o 's3'
 STORAGE_DIR=./data/archivos     # solo para driver local
 ```
 

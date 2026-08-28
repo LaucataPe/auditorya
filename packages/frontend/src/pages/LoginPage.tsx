@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
+import { ArrowLeft } from 'lucide-react'
 import { useAuthStore } from '../store/auth.store'
 import { Button } from '../components/ui/Button'
 import { Input } from '../components/ui/Input'
@@ -29,7 +30,14 @@ export function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-indigo-50 to-gray-100 flex items-center justify-center p-4">
+    <div className="relative min-h-screen bg-gradient-to-br from-indigo-50 to-gray-100 flex items-center justify-center p-4">
+      <Link
+        to="/"
+        className="absolute left-4 top-4 inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium text-gray-600 transition-colors hover:bg-white hover:text-gray-900 sm:left-6 sm:top-6"
+      >
+        <ArrowLeft size={16} />
+        Volver al inicio
+      </Link>
       <div className="w-full max-w-sm">
         <div className="flex items-center justify-center mb-8">
           <Logo className="h-20 w-auto" />

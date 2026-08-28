@@ -476,6 +476,25 @@ app.get('/auditorias/:id/balance/terceros', async (c) => {
   return c.json({ data: detalle })
 })
 
+// GET /auditorias/:id/balance/archivo — archivo original importado (base64), para descargarlo
+app.get('/auditorias/:id/balance/archivo', async (c) => {
+  const { firmaId } = c.get('user')
+  const id = c.req.param('id')
+
+  const row = await cargarAuditoria(id, firmaId)
+  if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Auditoría no encontrada' } }, 404)
+
+  const [archivo] = await db
+    .select({ nombre: balanceArchivos.nombre, contenido: balanceArchivos.contenido })
+    .from(balanceArchivos)
+    .where(eq(balanceArchivos.auditoriaId, id))
+  if (!archivo) {
+    return c.json({ error: { code: 'NOT_FOUND', message: 'El balance no tiene archivo original guardado' } }, 404)
+  }
+
+  return c.json({ data: archivo })
+})
+
 // GET /auditorias/:id/perfil-balance — mapeo de columnas guardado para la empresa del encargo
 app.get('/auditorias/:id/perfil-balance', async (c) => {
   const { firmaId } = c.get('user')
