@@ -63,6 +63,8 @@ export type Hallazgo = {
 /** Hallazgo con datos del papel de origen (vista consolidada / carta). */
 export type HallazgoConPapel = Hallazgo & {
   papelTitulo: string | null
+  /** Índice del papel de origen (NIA 230), p. ej. 'C-1'. */
+  papelIndice: string | null
 }
 
 export type ResumenHallazgos = {

@@ -70,6 +70,7 @@ app.get('/auditorias/:id/hallazgos', async (c) => {
       corregidoAt: hallazgos.corregidoAt,
       createdAt: hallazgos.createdAt,
       papelTitulo: papelesTrabajo.titulo,
+      papelIndice: papelesTrabajo.indice,
     })
     .from(hallazgos)
     .leftJoin(papelesTrabajo, eq(hallazgos.papelTrabajoId, papelesTrabajo.id))

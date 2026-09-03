@@ -20,7 +20,7 @@ import {
   areasFirma,
   prefijosAreas,
 } from '../db/schema'
-import { AREAS_BASE_CLAVES, PREFIJO_AREA_BASE, prefijoDeArea, siguienteIndice } from '@auditorya/types'
+import { AREAS_BASE_CLAVES, PREFIJO_AREA_BASE, compararIndices, prefijoDeArea, siguienteIndice } from '@auditorya/types'
 import { authMiddleware } from '../middleware/auth'
 import { esSocioResponsable, ERROR_NO_SOCIO_RESPONSABLE } from '../lib/permisos'
 import { encargoCerrado, ERROR_ENCARGO_CERRADO } from '../lib/encargo'
@@ -131,7 +131,9 @@ app.get('/auditorias/:id/papeles', async (c) => {
     .select()
     .from(papelesTrabajo)
     .where(eq(papelesTrabajo.auditoriaId, id))
-    .orderBy(desc(papelesTrabajo.createdAt))
+
+  // Orden de archivo (NIA 230): por índice A → Z con el consecutivo numérico.
+  lista.sort((a, b) => compararIndices(a.indice, b.indice))
 
   return c.json({ data: lista })
 })

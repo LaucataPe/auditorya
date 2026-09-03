@@ -22,9 +22,11 @@ export type ContextoInforme = {
   periodo: string
   tipoOpinion?: TipoOpinion | null
   deficienciasCoso?: { titulo: string; calificacion: string; observaciones: string | null }[]
-  hallazgos?: { area: string; titulo: string; hallazgos: string | null }[]
+  hallazgos?: { indice: string; area: string; titulo: string; hallazgos: string | null }[]
   // Hallazgos estructurados tipo deficiencia de control (condición/criterio/causa/efecto).
+  // `indice` es la referencia del papel de trabajo del que proviene (NIA 230), si lo tiene.
   deficienciasHallazgos?: {
+    indice: string | null
     area: string
     condicion: string
     criterio: string | null
@@ -200,7 +202,8 @@ function cartaControlInterno(ctx: ContextoInforme): Record<string, string> {
   // Hallazgos estructurados: se comunican con sus atributos (condición/criterio/causa/efecto + recomendación).
   for (const h of ctx.deficienciasHallazgos ?? []) {
     const sev = SEVERIDAD_HALLAZGO_LABEL[h.severidad] ?? h.severidad
-    const lineas = [`• [${h.area} · Severidad ${sev}] ${h.condicion.trim()}`]
+    const ref = h.indice ? `Ref. ${h.indice} · ` : ''
+    const lineas = [`• [${ref}${h.area} · Severidad ${sev}] ${h.condicion.trim()}`]
     if (h.criterio?.trim()) lineas.push(`   Criterio: ${h.criterio.trim()}`)
     if (h.causa?.trim()) lineas.push(`   Causa: ${h.causa.trim()}`)
     if (h.efecto?.trim()) lineas.push(`   Efecto: ${h.efecto.trim()}`)
@@ -208,7 +211,7 @@ function cartaControlInterno(ctx: ContextoInforme): Record<string, string> {
     items.push(lineas.join('\n'))
   }
   for (const h of ctx.hallazgos ?? []) {
-    if (h.hallazgos?.trim()) items.push(`• [${h.area}] ${h.titulo}: ${h.hallazgos.trim()}`)
+    if (h.hallazgos?.trim()) items.push(`• [Ref. ${h.indice} · ${h.area}] ${h.titulo}: ${h.hallazgos.trim()}`)
   }
   const deficiencias =
     items.length > 0
@@ -217,7 +220,7 @@ function cartaControlInterno(ctx: ContextoInforme): Record<string, string> {
 
   return {
     destinatario: `A la Junta Directiva y a la Administración de ${ctx.empresaNombre}`,
-    introduccion: `En relación con nuestra auditoría de los estados financieros de ${ctx.empresaNombre} por el año terminado el 31 de diciembre de ${ctx.periodo}, consideramos el control interno relevante para la preparación de los estados financieros con el fin de diseñar procedimientos de auditoría apropiados a las circunstancias, y no con el propósito de expresar una opinión sobre la eficacia del control interno. En cumplimiento de la NIA 265, a continuación comunicamos las deficiencias identificadas durante nuestro trabajo.`,
+    introduccion: `En relación con nuestra auditoría de los estados financieros de ${ctx.empresaNombre} por el año terminado el 31 de diciembre de ${ctx.periodo}, consideramos el control interno relevante para la preparación de los estados financieros con el fin de diseñar procedimientos de auditoría apropiados a las circunstancias, y no con el propósito de expresar una opinión sobre la eficacia del control interno. En cumplimiento de la NIA 265, a continuación comunicamos las deficiencias identificadas durante nuestro trabajo. La referencia (Ref.) de cada deficiencia corresponde al índice del papel de trabajo que la respalda en nuestro archivo de auditoría.`,
     deficiencias,
     recomendaciones: `Recomendamos a la administración implementar planes de acción para subsanar las deficiencias anteriores, asignando responsables y fechas de cumplimiento, y fortaleciendo los controles clave en las áreas señaladas.`,
     cierre: `Esta comunicación se dirige exclusivamente a la Junta Directiva y a la administración de la entidad, y no debe ser utilizada para ningún otro propósito ni distribuida a terceros.`,

@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   SECCIONES_INFORME, TIPO_INFORME_LABEL, TIPO_OPINION_LABEL, OPINION_LABEL,
-  ESTADO_HALLAZGO_LABEL, TIPOS_INFORME_ENRIQUECIDO, esHtmlInforme, textoPlanoAHtml,
+  ESTADO_HALLAZGO_LABEL, TIPOS_INFORME_ENRIQUECIDO, esHtmlInforme, textoPlanoAHtml, compararIndices,
   type TipoInforme, type TipoOpinion, type EvaluacionOpinion, type OpinionSugerida,
   type HallazgoConPapel,
 } from '@auditorya/types'
@@ -183,15 +183,28 @@ function CartaRecomendaciones({
   const pendientes = hallazgos.filter((h) => h.estado !== 'corregido')
 
   function secciones() {
+    // Dentro de cada área los hallazgos van en orden de archivo (índice del papel,
+    // NIA 230); los que no nacieron en un papel quedan al final.
+    const porArea = (area: string) =>
+      pendientes
+        .filter((h) => h.area === area)
+        .sort((a, b) => {
+          if (!a.papelIndice && !b.papelIndice) return 0
+          if (!a.papelIndice) return 1
+          if (!b.papelIndice) return -1
+          return compararIndices(a.papelIndice, b.papelIndice)
+        })
+
     const areas = Array.from(new Set(pendientes.map((h) => h.area)))
     return areas.map((area) => ({
       label: areaLabel(area),
-      contenido: pendientes
-        .filter((h) => h.area === area)
+      contenido: porArea(area)
         .map((h) => {
           const rec = h.recomendacion ? `\n   Recomendación: ${h.recomendacion}` : ''
           const est = ` [${ESTADO_HALLAZGO_LABEL[h.estado]}]`
-          return `• ${h.descripcion}${est}${rec}`
+          // Referencia al papel de trabajo que soporta el hallazgo.
+          const ref = h.papelIndice ? `[Ref. ${h.papelIndice}] ` : ''
+          return `• ${ref}${h.descripcion}${est}${rec}`
         })
         .join('\n\n'),
     }))
@@ -203,7 +216,8 @@ function CartaRecomendaciones({
       contenido:
         `Apreciado equipo contable de ${empresaNombre}:\n\n` +
         `En desarrollo de nuestra revisión del período ${periodo}, presentamos a continuación las observaciones ` +
-        `y recomendaciones identificadas, para su análisis y corrección. Agradecemos su gestión sobre los siguientes puntos.`,
+        `y recomendaciones identificadas, para su análisis y corrección. Agradecemos su gestión sobre los siguientes puntos.\n\n` +
+        `La referencia (Ref.) de cada observación corresponde al índice del papel de trabajo que la soporta en nuestro archivo de auditoría.`,
     }
     return {
       titulo: 'Carta de recomendaciones',

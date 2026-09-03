@@ -19,7 +19,7 @@ import {
   usuarios,
 } from '../db/schema'
 import sanitizeHtml from 'sanitize-html'
-import { TIPOS_INFORME_ENRIQUECIDO, ETIQUETAS_INFORME_ENRIQUECIDO, type TipoInforme } from '@auditorya/types'
+import { TIPOS_INFORME_ENRIQUECIDO, ETIQUETAS_INFORME_ENRIQUECIDO, compararIndices, type TipoInforme } from '@auditorya/types'
 import { authMiddleware } from '../middleware/auth'
 import { esSocioResponsable, ERROR_NO_SOCIO_RESPONSABLE } from '../lib/permisos'
 import { encargoCerrado, ERROR_ENCARGO_CERRADO } from '../lib/encargo'
@@ -145,8 +145,8 @@ app.post(
     const [firma] = await db.select().from(firmas).where(eq(firmas.id, firmaId))
 
     let deficienciasCoso: { titulo: string; calificacion: string; observaciones: string | null }[] = []
-    let hallazgosNarrativa: { area: string; titulo: string; hallazgos: string | null }[] = []
-    let deficienciasHallazgos: { area: string; condicion: string; criterio: string | null; causa: string | null; efecto: string | null; recomendacion: string | null; severidad: string }[] = []
+    let hallazgosNarrativa: { indice: string; area: string; titulo: string; hallazgos: string | null }[] = []
+    let deficienciasHallazgos: { indice: string | null; area: string; condicion: string; criterio: string | null; causa: string | null; efecto: string | null; recomendacion: string | null; severidad: string }[] = []
     let hallazgosAIData: { titulo: string; nivelRiesgo: string; condicion: string; criterio: string; causa: string; efecto: string; recomendacion: string }[] = []
 
     // Datos de planeación para el memo (NIA 300)
@@ -181,24 +181,37 @@ app.post(
         .where(eq(papelesTrabajo.auditoriaId, id))
       hallazgosNarrativa = papeles
         .filter((p) => (p.hallazgos ?? '').trim().length > 0)
-        .map((p) => ({ area: AREA_LABEL[p.area] ?? p.area, titulo: p.titulo, hallazgos: p.hallazgos }))
+        .map((p) => ({ indice: p.indice, area: AREA_LABEL[p.area] ?? p.area, titulo: p.titulo, hallazgos: p.hallazgos }))
+        .sort((a, b) => compararIndices(a.indice, b.indice))
 
       // Hallazgos estructurados tipo "deficiencia de control" → carta NIA 265.
       // Las incorrecciones no entran aquí (van a la hoja de ajustes / dictamen).
+      // Se trae el índice del papel de origen (NIA 230) para referenciar cada
+      // deficiencia con el papel de trabajo que la respalda.
       const deficiencias = await db
-        .select()
+        .select({ hallazgo: hallazgos, indice: papelesTrabajo.indice })
         .from(hallazgos)
+        .leftJoin(papelesTrabajo, eq(hallazgos.papelTrabajoId, papelesTrabajo.id))
         .where(and(eq(hallazgos.auditoriaId, id), eq(hallazgos.tipo, 'deficiencia')))
         .orderBy(desc(hallazgos.createdAt))
-      deficienciasHallazgos = deficiencias.map((h) => ({
-        area: AREA_LABEL[h.area] ?? h.area,
-        condicion: h.descripcion,
-        criterio: h.criterio,
-        causa: h.causa,
-        efecto: h.efecto,
-        recomendacion: h.recomendacion,
-        severidad: h.severidad,
-      }))
+      deficienciasHallazgos = deficiencias
+        .map(({ hallazgo: h, indice }) => ({
+          indice,
+          area: AREA_LABEL[h.area] ?? h.area,
+          condicion: h.descripcion,
+          criterio: h.criterio,
+          causa: h.causa,
+          efecto: h.efecto,
+          recomendacion: h.recomendacion,
+          severidad: h.severidad,
+        }))
+        // Las que no vienen de un papel (sin índice) quedan al final.
+        .sort((a, b) => {
+          if (!a.indice && !b.indice) return 0
+          if (!a.indice) return 1
+          if (!b.indice) return -1
+          return compararIndices(a.indice, b.indice)
+        })
     }
 
     if (tipo === 'informe_ai') {
