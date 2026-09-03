@@ -6,16 +6,18 @@ import {
   FileText, Plus, CheckCircle, Trash2, ShieldCheck, Paperclip, Link2,
   Sparkles, Upload, Download, Inbox, Check, X, Clock, MessageSquare,
   Target, Flag, RefreshCw, AlertTriangle, Send, ArrowRightCircle, ListTodo, Pencil,
+  Printer, FileDown, Search,
 } from 'lucide-react'
 import { BloqueoMaterialidad } from './BloqueoMaterialidad'
 import {
   ESTADO_PBC_LABEL, PROGRAMA_AUDITORIA, COBERTURA_OBJETIVO_DEFECTO,
   TIPO_HALLAZGO_LABEL, SEVERIDAD_HALLAZGO_LABEL, ESTADO_HALLAZGO_LABEL,
-  proyectarError, VEREDICTO_ERROR_LABEL,
+  proyectarError, VEREDICTO_ERROR_LABEL, compararIndices,
   type EstadoPbc, type SolicitudPbcConPapel, type NotaRevision,
   type MuestraConItems, type ResultadoCompletitud,
   type Hallazgo, type TipoHallazgo, type SeveridadHallazgo,
   type Tarea, type EstadoTarea, type AnalisisBalance, type CuentaAnalizada, type MuestraItem,
+  type Riesgo,
 } from '@auditorya/types'
 import { PbcArchivo } from './pbc-archivo'
 import { Button } from '../ui/Button'
@@ -30,6 +32,8 @@ import { toast } from '../../store/toast.store'
 import { cn } from '../../lib/cn'
 import { useAreas } from '../../hooks/useAreas'
 import { CrearCicloInline } from './CrearCicloInline'
+import { construirHtmlInforme, imprimirInforme, descargarDocx } from '../../lib/informe-export'
+import { exportOptsPapel, nombreArchivoPapel, type DatosCedulaPapel } from '../../lib/papel-export'
 
 // Clave de área: catálogo base o ciclo propio de la firma (ver useAreas).
 type Area = string
@@ -52,6 +56,8 @@ type Papel = {
   // Referencia en el archivo (NIA 230): prefijo del área + consecutivo, ej. 'C-1'.
   indice: string
   titulo: string
+  // Riesgo (NIA 315) que atiende la prueba, si el papel nació de uno.
+  riesgoId: string | null
   procedimiento: string | null
   alcance: string | null
   hallazgos: string | null
@@ -81,6 +87,11 @@ const ESTADO_LABEL: Record<EstadoPapel, string> = {
   aprobado: 'Aprobado',
 }
 
+/** Normaliza para búsqueda: minúsculas y sin tildes ('Conciliación' ≈ 'conciliacion'). */
+function normalizarBusqueda(s: string): string {
+  return s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
+}
+
 const TIPO_EVIDENCIA_OPTS = [
   { value: 'documento', label: 'Documento' },
   { value: 'confirmacion', label: 'Confirmación' },
@@ -105,6 +116,8 @@ export function PapelesTab({
   const [editTarget, setEditTarget] = useState<Papel | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<Papel | null>(null)
   const [filtro, setFiltro] = useState<EstadoPapel | 'todos'>('borrador')
+  const [filtroResponsable, setFiltroResponsable] = useState<'todos' | 'sin_asignar' | string>('todos')
+  const [busqueda, setBusqueda] = useState('')
   const irAlPapel = (papelId: string) => navigate(`/empresas/${empresaId}/encargos/${auditoriaId}/papeles/${papelId}`)
 
   const { data: papeles = [], isLoading } = useQuery<Papel[]>({
@@ -166,7 +179,24 @@ export function PapelesTab({
     )
   }
 
-  const filtrados = filtro === 'todos' ? papeles : papeles.filter((p) => p.estado === filtro)
+  const responsablesEnUso = useMemo(() => {
+    const ids = Array.from(new Set(papeles.map((p) => p.asignadoA).filter((id): id is string => !!id)))
+    return ids
+      .map((id) => ({ id, nombre: nombre(id) }))
+      .sort((a, b) => a.nombre.localeCompare(b.nombre))
+  }, [papeles, usuarios])
+
+  const q = normalizarBusqueda(busqueda.trim())
+  const filtrados = papeles
+    .filter((p) => filtro === 'todos' || p.estado === filtro)
+    .filter((p) => {
+      if (filtroResponsable === 'todos') return true
+      if (filtroResponsable === 'sin_asignar') return !p.asignadoA
+      return p.asignadoA === filtroResponsable
+    })
+    .filter((p) => !q || normalizarBusqueda(`${p.indice} ${p.titulo} ${areaLabel(p.area)}`).includes(q))
+    // Orden de archivo (NIA 230): índice A → Z.
+    .sort((a, b) => compararIndices(a.indice, b.indice))
 
   return (
     <div className="space-y-5">
@@ -187,6 +217,36 @@ export function PapelesTab({
                 : `${ESTADO_LABEL[f]} (${papeles.filter((p) => p.estado === f).length})`}
             </button>
           ))}
+          <select
+            value={filtroResponsable}
+            onChange={(e) => setFiltroResponsable(e.target.value)}
+            className="rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs text-gray-600 focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400"
+          >
+            <option value="todos">Responsable: todos</option>
+            <option value="sin_asignar">Sin asignar</option>
+            {responsablesEnUso.map((r) => (
+              <option key={r.id} value={r.id}>{r.nombre}</option>
+            ))}
+          </select>
+          <div className="relative">
+            <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+            <input
+              type="search"
+              value={busqueda}
+              onChange={(e) => setBusqueda(e.target.value)}
+              placeholder="Buscar por nombre o índice…"
+              className="w-52 rounded-lg border border-gray-200 bg-white pl-7 pr-6 py-1.5 text-xs text-gray-700 placeholder:text-gray-400 focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400"
+            />
+            {busqueda && (
+              <button
+                onClick={() => setBusqueda('')}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-300 hover:text-gray-500"
+                title="Limpiar búsqueda"
+              >
+                <X size={12} />
+              </button>
+            )}
+          </div>
         </div>
         <Button size="sm" className="gap-1.5 shrink-0" onClick={() => setNuevoOpen(true)}>
           <Plus size={14} /> Nuevo papel
@@ -203,7 +263,11 @@ export function PapelesTab({
         <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-gray-200 bg-white py-14 text-center">
           <FileText size={32} className="text-gray-300 mb-3" />
           <p className="text-sm font-medium text-gray-400">
-            {papeles.length === 0 ? 'Aún no hay papeles de trabajo' : 'Sin papeles en este filtro'}
+            {papeles.length === 0
+              ? 'Aún no hay papeles de trabajo'
+              : q
+                ? `Sin resultados para "${busqueda.trim()}"`
+                : 'Sin papeles en este filtro'}
           </p>
         </div>
       ) : (
@@ -594,9 +658,57 @@ const CAMPOS_HALLAZGO: { key: 'descripcion' | 'criterio' | 'causa' | 'efecto' | 
   { key: 'recomendacion', label: 'Recomendación', placeholder: 'Qué debe hacer la administración para corregir' },
 ]
 
-function CamposHallazgo({ form, onChange }: { form: HallazgoForm; onChange: (patch: Partial<HallazgoForm>) => void }) {
+// Payload que se envía a la IA para pulir el hallazgo (solo los campos narrativos + clasificación).
+const bodyHallazgoIA = (f: HallazgoForm) => ({
+  descripcion: f.descripcion.trim(),
+  criterio: f.criterio.trim(),
+  causa: f.causa.trim(),
+  efecto: f.efecto.trim(),
+  recomendacion: f.recomendacion.trim(),
+  tipo: f.tipo,
+  severidad: f.severidad,
+})
+
+type SugerenciaHallazgoIA = Pick<HallazgoForm, 'descripcion' | 'criterio' | 'causa' | 'efecto' | 'recomendacion'>
+
+function CamposHallazgo({
+  form, onChange, papelId, iaDisponible,
+}: {
+  form: HallazgoForm
+  onChange: (patch: Partial<HallazgoForm>) => void
+  papelId: string
+  iaDisponible: boolean
+}) {
+  // Reescribe los cinco atributos a partir del borrador del auditor (condición mínima: 5 caracteres).
+  const mejorarIA = useMutation({
+    mutationFn: () => api.post<SugerenciaHallazgoIA>(`/papeles/${papelId}/ia/hallazgo`, bodyHallazgoIA(form)),
+    onSuccess: (s) => onChange(s),
+    onError: (e) => toast.error(e instanceof Error ? e.message : 'No se pudo mejorar la redacción'),
+  })
+  const puedeIA = form.descripcion.trim().length >= 5
+
   return (
     <div className="space-y-2">
+      {iaDisponible && (
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={() => mejorarIA.mutate()}
+            disabled={!puedeIA || mejorarIA.isPending}
+            title={puedeIA
+              ? 'Reescribe condición, criterio, causa, efecto y recomendación a partir de tu borrador'
+              : 'Escribe primero la condición (qué encontraste)'}
+            className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs text-indigo-600 hover:bg-indigo-50 disabled:text-gray-300 disabled:hover:bg-transparent transition-colors"
+          >
+            {mejorarIA.isPending ? (
+              <span className="h-3 w-3 animate-spin rounded-full border-[1.5px] border-indigo-500 border-t-transparent" />
+            ) : (
+              <Sparkles size={11} />
+            )}
+            Mejorar redacción con IA
+          </button>
+        </div>
+      )}
       {CAMPOS_HALLAZGO.map(({ key, label, placeholder }) => (
         <div key={key}>
           <label className="text-[11px] font-medium text-gray-500 block mb-0.5">
@@ -651,6 +763,12 @@ function HallazgosSeccion({
     queryKey: ['hallazgos-papel', papelId],
     queryFn: () => api.get<Hallazgo[]>(`/papeles/${papelId}/hallazgos`),
   })
+  const { data: ia } = useQuery<{ disponible: boolean }>({
+    queryKey: ['ia-estado'],
+    queryFn: () => api.get('/ia/estado'),
+    staleTime: 5 * 60 * 1000,
+  })
+  const iaDisponible = !!ia?.disponible && !aprobado
 
   const refrescar = () => {
     queryClient.invalidateQueries({ queryKey: ['hallazgos-papel', papelId] })
@@ -708,7 +826,10 @@ function HallazgosSeccion({
             if (editId === h.id) {
               return (
                 <div key={h.id} className="rounded-lg border border-indigo-200 bg-white p-3 space-y-2">
-                  <CamposHallazgo form={editForm} onChange={(patch) => setEditForm((f) => ({ ...f, ...patch }))} />
+                  <CamposHallazgo
+                    form={editForm} onChange={(patch) => setEditForm((f) => ({ ...f, ...patch }))}
+                    papelId={papelId} iaDisponible={iaDisponible}
+                  />
                   <div className="flex gap-2">
                     <Button size="sm" loading={editar.isPending} disabled={editForm.descripcion.trim().length < 2} onClick={() => editar.mutate()}>Guardar</Button>
                     <Button size="sm" variant="secondary" onClick={() => setEditId(null)}>Cancelar</Button>
@@ -805,7 +926,10 @@ function HallazgosSeccion({
       {!aprobado && (
         abrir ? (
           <div className="rounded-lg border border-gray-200 bg-white p-3 space-y-2">
-            <CamposHallazgo form={form} onChange={(patch) => setForm((f) => ({ ...f, ...patch }))} />
+            <CamposHallazgo
+              form={form} onChange={(patch) => setForm((f) => ({ ...f, ...patch }))}
+              papelId={papelId} iaDisponible={iaDisponible}
+            />
             <div className="flex gap-2">
               <Button size="sm" loading={crear.isPending} disabled={form.descripcion.trim().length < 2} onClick={() => crear.mutate()}>Guardar hallazgo</Button>
               <Button size="sm" variant="secondary" onClick={() => { setAbrir(false); setForm(HALLAZGO_FORM_VACIO) }}>Cancelar</Button>
@@ -1155,6 +1279,173 @@ function CompletitudPanel({
   )
 }
 
+
+/** Período del encargo en texto, p. ej. "01 ene. 2025 – 31 dic. 2025". */
+function periodoLegible(fechaInicio?: string | null, fechaFin?: string | null): string {
+  if (!fechaInicio || !fechaFin) return ''
+  const f = (d: string) =>
+    new Date(d.slice(0, 10) + 'T00:00:00').toLocaleDateString('es-CO', {
+      day: '2-digit', month: 'short', year: 'numeric',
+    })
+  return `${f(fechaInicio)} – ${f(fechaFin)}`
+}
+
+type AuditoriaCabecera = {
+  fechaInicio: string
+  fechaFin: string
+  empresa: { nombre: string }
+}
+
+/**
+ * Cédula del papel (NIA 230): reúne prueba, programa, muestra, hallazgos,
+ * documentos y evidencia en un solo documento imprimible. Se genera al vuelo
+ * en el navegador — no se archiva ni deja registro, siempre refleja el papel
+ * tal como está hoy.
+ */
+function ExportarPapelDialog({
+  papel, auditoriaId, areaLabel, nombreUsuario, onClose,
+}: {
+  papel: PapelDetalle
+  auditoriaId: string
+  areaLabel: string
+  nombreUsuario: (id: string | null) => string
+  onClose: () => void
+}) {
+  const { firma } = useAuthStore()
+  const [incluirNotas, setIncluirNotas] = useState(true)
+  const [generando, setGenerando] = useState<'pdf' | 'word' | null>(null)
+
+  const { data: auditoria } = useQuery<AuditoriaCabecera>({
+    queryKey: ['auditoria', auditoriaId],
+    queryFn: () => api.get<AuditoriaCabecera>(`/auditorias/${auditoriaId}`),
+  })
+  const { data: muestra = null } = useQuery<MuestraConItems | null>({
+    queryKey: ['muestra', papel.id],
+    queryFn: () => api.get<MuestraConItems | null>(`/papeles/${papel.id}/muestra`),
+  })
+  const { data: hallazgos = [] } = useQuery<Hallazgo[]>({
+    queryKey: ['hallazgos-papel', papel.id],
+    queryFn: () => api.get<Hallazgo[]>(`/papeles/${papel.id}/hallazgos`),
+  })
+  const { data: pbcTodas = [] } = useQuery<SolicitudPbcConPapel[]>({
+    queryKey: ['pbc', auditoriaId],
+    queryFn: () => api.get<SolicitudPbcConPapel[]>(`/auditorias/${auditoriaId}/pbc`),
+  })
+  const { data: notasTodas = [] } = useQuery<NotaRevision[]>({
+    queryKey: ['notas-revision', auditoriaId],
+    queryFn: () => api.get<NotaRevision[]>(`/auditorias/${auditoriaId}/notas-revision`),
+  })
+  const { data: riesgos = [] } = useQuery<Riesgo[]>({
+    queryKey: ['riesgos', auditoriaId],
+    queryFn: () => api.get<Riesgo[]>(`/auditorias/${auditoriaId}/riesgos`),
+  })
+
+  const notas = notasTodas.filter((n) => n.papelTrabajoId === papel.id)
+  const pbc = pbcTodas.filter((s) => s.papelTrabajoId === papel.id)
+
+  const datos = (): DatosCedulaPapel => ({
+    papel,
+    areaLabel,
+    empresaNombre: auditoria?.empresa.nombre ?? '',
+    periodo: periodoLegible(auditoria?.fechaInicio, auditoria?.fechaFin),
+    riesgo: riesgos.find((r) => r.id === papel.riesgoId) ?? null,
+    muestra,
+    hallazgos,
+    pbc,
+    notas: incluirNotas ? notas : null,
+    nombreUsuario,
+    firma,
+  })
+
+  // El PDF sale por el diálogo de impresión del navegador ("Guardar como PDF").
+  const exportar = async (formato: 'pdf' | 'word') => {
+    setGenerando(formato)
+    try {
+      const opts = exportOptsPapel(datos())
+      if (formato === 'pdf') {
+        imprimirInforme(construirHtmlInforme(opts))
+      } else {
+        await descargarDocx(nombreArchivoPapel({ papel, empresaNombre: opts.empresaNombre }), opts)
+      }
+      onClose()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'No se pudo generar el documento')
+    } finally {
+      setGenerando(null)
+    }
+  }
+
+  const incluye = [
+    `Identificación del papel (${papel.indice}) y responsables`,
+    'Procedimiento aplicado y pasos del programa',
+    muestra ? `Muestra: ${muestra.items.filter((i) => i.incluido).length} partidas revisadas` : null,
+    hallazgos.length > 0 ? `${hallazgos.length} hallazgo${hallazgos.length !== 1 ? 's' : ''} con sus cinco atributos` : null,
+    pbc.length > 0 ? `${pbc.length} documento${pbc.length !== 1 ? 's' : ''} solicitado${pbc.length !== 1 ? 's' : ''} al cliente` : null,
+    papel.evidencias.length > 0 ? `${papel.evidencias.length} referencia${papel.evidencias.length !== 1 ? 's' : ''} de evidencia` : null,
+    'Conclusión y espacio de firmas',
+  ].filter(Boolean) as string[]
+
+  return (
+    <Modal open onClose={onClose} title="Exportar papel de trabajo">
+      <div className="p-6 space-y-4">
+        <p className="text-sm text-gray-600">
+          Genera la cédula del papel <strong>{papel.indice}</strong> con el membrete de la firma. El documento se
+          arma en el momento y refleja el papel tal como está ahora.
+        </p>
+
+        <ul className="space-y-1">
+          {incluye.map((linea) => (
+            <li key={linea} className="flex items-start gap-2 text-xs text-gray-600">
+              <Check size={13} className="mt-0.5 shrink-0 text-emerald-500" />
+              <span>{linea}</span>
+            </li>
+          ))}
+        </ul>
+
+        <label className="flex items-start gap-2 rounded-lg border border-gray-200 px-3 py-2.5 cursor-pointer hover:bg-gray-50 transition-colors">
+          <input
+            type="checkbox" className="mt-0.5 accent-indigo-600"
+            checked={incluirNotas} onChange={(e) => setIncluirNotas(e.target.checked)}
+            disabled={notas.length === 0}
+          />
+          <span className="text-xs">
+            <span className="font-medium text-gray-800">Incluir las notas de revisión (NIA 220)</span>
+            <span className="block text-gray-500">
+              {notas.length === 0
+                ? 'Este papel no tiene notas de revisión.'
+                : `${notas.length} nota${notas.length !== 1 ? 's' : ''} de supervisión interna. Desmárcalo si el documento sale de la firma.`}
+            </span>
+          </span>
+        </label>
+
+        {papel.estado !== 'aprobado' && (
+          <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
+            El papel aún no está aprobado: el documento se emitirá marcado como borrador.
+          </p>
+        )}
+
+        <div className="flex justify-end gap-2 pt-1">
+          <Button variant="ghost" size="sm" onClick={onClose}>Cancelar</Button>
+          <Button
+            variant="secondary" size="sm" className="gap-1.5"
+            loading={generando === 'pdf'} disabled={!auditoria || generando !== null}
+            onClick={() => void exportar('pdf')}
+          >
+            <Printer size={14} /> PDF
+          </Button>
+          <Button
+            size="sm" className="gap-1.5"
+            loading={generando === 'word'} disabled={!auditoria || generando !== null}
+            onClick={() => void exportar('word')}
+          >
+            <FileDown size={14} /> Word
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  )
+}
+
 type PapelTab = 'prueba' | 'cuentas' | 'muestra' | 'documentos' | 'hallazgos' | 'revision'
 const PAPEL_TABS: { id: PapelTab; label: string }[] = [
   { id: 'prueba', label: 'Prueba' },
@@ -1176,6 +1467,7 @@ export function PapelPanel({
   const { user } = useAuthStore()
   const esSocio = user?.rol === 'socio'
   const [tab, setTab] = useState<PapelTab>('prueba')
+  const [exportar, setExportar] = useState(false)
 
   const { data: papel, isLoading } = useQuery<PapelDetalle>({
     queryKey: ['papel', papelId],
@@ -1187,6 +1479,18 @@ export function PapelPanel({
     queryFn: () => api.get('/ia/estado'),
     staleTime: 5 * 60 * 1000,
   })
+
+  // Contadores de las sub-pestañas. Comparten la clave de caché con las secciones
+  // que los renderizan, así que no añaden peticiones extra.
+  const { data: hallazgosPapel = [] } = useQuery<Hallazgo[]>({
+    queryKey: ['hallazgos-papel', papelId],
+    queryFn: () => api.get<Hallazgo[]>(`/papeles/${papelId}/hallazgos`),
+  })
+  const { data: notasAuditoria = [] } = useQuery<NotaRevision[]>({
+    queryKey: ['notas-revision', auditoriaId],
+    queryFn: () => api.get<NotaRevision[]>(`/auditorias/${auditoriaId}/notas-revision`),
+  })
+  const notasPapel = notasAuditoria.filter((n) => n.papelTrabajoId === papelId)
 
   const [form, setForm] = useState({
     procedimiento: '', alcance: '', hallazgos: '', conclusion: '',
@@ -1299,6 +1603,13 @@ export function PapelPanel({
 
   const aprobado = papel?.estado === 'aprobado'
 
+  // Cantidad que acompaña a la etiqueta de cada sub-pestaña (0 = sin badge).
+  const conteoTab = (id: PapelTab) =>
+    id === 'documentos' ? papel?.evidencias.length ?? 0
+    : id === 'hallazgos' ? hallazgosPapel.length
+    : id === 'revision' ? notasPapel.length
+    : 0
+
   // Cambios sin guardar en los campos de texto del papel (procedimiento/alcance/hallazgos/conclusión).
   const dirty =
     !!papel &&
@@ -1343,6 +1654,13 @@ export function PapelPanel({
           {!aprobado && dirty && (
             <span className="text-[11px] font-medium text-amber-600">● Cambios sin guardar</span>
           )}
+          <Button
+            size="sm" variant="secondary" className="gap-1.5"
+            title="Genera la cédula del papel en PDF o Word"
+            onClick={() => setExportar(true)}
+          >
+            <Download size={14} /> Exportar
+          </Button>
           {!aprobado && (
             <Button size="sm" loading={saveMutation.isPending} onClick={() => saveMutation.mutate()}>Guardar</Button>
           )}
@@ -1399,8 +1717,8 @@ export function PapelPanel({
                 )}
               >
                 {t.label}
-                {t.id === 'documentos' && papel.evidencias.length > 0 && (
-                  <span className="ml-1 text-xs text-gray-400">· {papel.evidencias.length}</span>
+                {conteoTab(t.id) > 0 && (
+                  <span className="ml-1 text-xs text-gray-400">· {conteoTab(t.id)}</span>
                 )}
               </button>
             ))}
@@ -1598,6 +1916,16 @@ export function PapelPanel({
           />
         </aside>
       </div>
+
+      {exportar && (
+        <ExportarPapelDialog
+          papel={papel}
+          auditoriaId={auditoriaId}
+          areaLabel={areaLabel(papel.area)}
+          nombreUsuario={nombreU}
+          onClose={() => setExportar(false)}
+        />
+      )}
     </div>
   )
 }

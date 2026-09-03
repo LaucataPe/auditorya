@@ -65,7 +65,15 @@ function fuenteCuerpoDe(firma?: FirmaMembrete | null): string {
   const f = firma?.fuenteCuerpo
   return f && f in PILA_FUENTE ? f : FUENTE_CUERPO_DEFECTO
 }
-type SeccionRender = { label: string; contenido: string }
+/** Columna de una tabla del documento (las de cifras se alinean a la derecha). */
+export type ColumnaTabla = { label: string; derecha?: boolean }
+export type TablaRender = { columnas: ColumnaTabla[]; filas: string[][] }
+
+/**
+ * Sección del documento: un texto (plano o HTML del editor), una tabla, o ambos.
+ * PDF y Word renderizan las dos formas con la misma jerarquía visual.
+ */
+export type SeccionRender = { label: string; contenido?: string; tabla?: TablaRender }
 
 export type ExportOpts = {
   titulo: string
@@ -82,9 +90,15 @@ function escapeHtml(s: string): string {
     .replace(/>/g, '&gt;')
 }
 
-/** true si la sección no tiene contenido real (texto plano vacío o HTML sin texto). */
-function seccionVacia(contenido: string): boolean {
+/** true si el texto no aporta contenido (texto plano vacío o HTML sin texto). */
+function textoVacio(contenido?: string): boolean {
+  if (!contenido) return true
   return esHtmlInforme(contenido) ? htmlInformeVacio(contenido) : contenido.trim().length === 0
+}
+
+/** true si la sección no tiene ni texto ni filas: no se imprime. */
+function seccionVacia(sec: SeccionRender): boolean {
+  return textoVacio(sec.contenido) && !sec.tabla?.filas.length
 }
 
 /** Subtítulo del documento: omite el período si no viene informado. */
@@ -169,6 +183,8 @@ const estilosDocumento = (ACENTO: string, TITULOS: string, CUERPO: string) => `
   }
   tbody td { padding: 6px 9px; border-bottom: 1px solid ${BORDE}; vertical-align: top; }
   tbody tr:nth-child(even) { background: #f7f7fb; }
+  td.der, th.der { text-align: right; white-space: nowrap; }
+  section table { margin: 4px 0 8px; }
   .chk { width: 26px; text-align: center; }
   .chk span { display: inline-block; width: 10px; height: 10px; border: 1.4px solid #9ca3af; border-radius: 2.5px; }
   .plazo { width: 110px; white-space: nowrap; }
@@ -216,17 +232,39 @@ ${cuerpo}
 </html>`
 }
 
+/** Tabla de una sección: encabezado en el color de marca y celdas con saltos de línea respetados. */
+function tablaHtml(tabla?: TablaRender): string {
+  if (!tabla || tabla.filas.length === 0) return ''
+  const th = tabla.columnas
+    .map((c) => `<th${c.derecha ? ' class="der"' : ''}>${escapeHtml(c.label)}</th>`)
+    .join('')
+  const filas = tabla.filas
+    .map((fila) => {
+      const tds = fila
+        .map((celda, i) => {
+          const der = tabla.columnas[i]?.derecha ? ' class="der"' : ''
+          return `<td${der}>${escapeHtml(celda).replace(/\n/g, '<br/>')}</td>`
+        })
+        .join('')
+      return `<tr>${tds}</tr>`
+    })
+    .join('\n')
+  return `<table><thead><tr>${th}</tr></thead><tbody>${filas}</tbody></table>`
+}
+
 /** Construye el HTML del documento (membrete + secciones), con numeración de páginas al imprimir. */
 export function construirHtmlInforme(opts: ExportOpts): string {
   const secciones = opts.secciones
-    .filter((s) => !seccionVacia(s.contenido))
+    .filter((s) => !seccionVacia(s))
     .map((s) => {
       // HTML del editor enriquecido (ya sanitizado en el backend contra la whitelist)
       // se inyecta tal cual; el texto plano legado se escapa como siempre.
-      const cuerpo = esHtmlInforme(s.contenido)
-        ? s.contenido
-        : `<p>${escapeHtml(s.contenido).replace(/\n/g, '<br/>')}</p>`
-      return `<section><h2>${escapeHtml(s.label)}</h2>${cuerpo}</section>`
+      const texto = textoVacio(s.contenido)
+        ? ''
+        : esHtmlInforme(s.contenido!)
+          ? s.contenido!
+          : `<p>${escapeHtml(s.contenido!).replace(/\n/g, '<br/>')}</p>`
+      return `<section><h2>${escapeHtml(s.label)}</h2>${texto}${tablaHtml(s.tabla)}</section>`
     })
     .join('\n')
 
@@ -385,14 +423,17 @@ async function logoParaDocx(
 
 /** Genera y descarga un .docx real. Importa `docx` de forma perezosa (fuera del bundle inicial). */
 export async function descargarDocx(filename: string, opts: ExportOpts) {
-  const { Document, Packer, Paragraph, TextRun, ImageRun, HeadingLevel, AlignmentType, BorderStyle, LevelFormat } =
-    await import('docx')
+  const {
+    Document, Packer, Paragraph, TextRun, ImageRun, HeadingLevel, AlignmentType, BorderStyle, LevelFormat,
+    Table, TableRow, TableCell, WidthType,
+  } = await import('docx')
 
   const GRIS_DOCX = '6B7280'
   const ACENTO_DOCX = acentoDe(opts.firma).slice(1).toUpperCase()
   // Word sustituye por su cuenta si el equipo no tiene la fuente; el catálogo evita ese caso.
   const FUENTE_TITULOS = fuenteTitulosDe(opts.firma)
-  const bloques: InstanceType<typeof Paragraph>[] = []
+  // El cuerpo mezcla párrafos y tablas (docx admite ambos en `children`).
+  const bloques: (InstanceType<typeof Paragraph> | InstanceType<typeof Table>)[] = []
 
   // Membrete de la firma (logo + identidad + fecha), cerrado con una regla en el color de marca.
   if (opts.firma) {
@@ -514,9 +555,51 @@ export async function descargarDocx(filename: string, opts: ExportOpts) {
     return out
   }
 
+  /** Celda con el texto (respeta los saltos de línea) y la alineación de su columna. */
+  function celdaDocx(texto: string, derecha: boolean, encabezado: boolean) {
+    const runs = texto.split('\n').map((linea, i) =>
+      new TextRun({
+        text: encabezado ? linea.toUpperCase() : linea,
+        break: i ? 1 : undefined,
+        bold: encabezado || undefined,
+        size: encabezado ? 16 : 19,
+        font: encabezado ? FUENTE_TITULOS : undefined,
+        color: encabezado ? 'FFFFFF' : undefined,
+      }),
+    )
+    return new TableCell({
+      shading: encabezado ? { fill: ACENTO_DOCX } : undefined,
+      margins: { top: 60, bottom: 60, left: 100, right: 100 },
+      children: [new Paragraph({ alignment: derecha ? AlignmentType.RIGHT : AlignmentType.LEFT, children: runs })],
+    })
+  }
+
+  /** Tabla de sección: encabezado en el color de marca y rejilla gris clara. */
+  function tablaDocx(tabla: TablaRender) {
+    const borde = { style: BorderStyle.SINGLE, size: 2, color: 'E5E7EB' } as const
+    return new Table({
+      width: { size: 100, type: WidthType.PERCENTAGE },
+      borders: {
+        top: borde, bottom: borde, left: borde, right: borde,
+        insideHorizontal: borde, insideVertical: borde,
+      },
+      rows: [
+        new TableRow({
+          tableHeader: true,
+          children: tabla.columnas.map((c) => celdaDocx(c.label, !!c.derecha, true)),
+        }),
+        ...tabla.filas.map((fila) =>
+          new TableRow({
+            children: fila.map((celda, i) => celdaDocx(celda, !!tabla.columnas[i]?.derecha, false)),
+          }),
+        ),
+      ],
+    })
+  }
+
   // Secciones (encabezado en color de marca + cuerpo por líneas o HTML del editor)
   for (const sec of opts.secciones) {
-    if (seccionVacia(sec.contenido)) continue
+    if (seccionVacia(sec)) continue
     bloques.push(
       new Paragraph({
         heading: HeadingLevel.HEADING_2,
@@ -527,18 +610,25 @@ export async function descargarDocx(filename: string, opts: ExportOpts) {
         ],
       }),
     )
-    if (esHtmlInforme(sec.contenido)) {
-      bloques.push(...parrafosDesdeHtml(sec.contenido))
-    } else {
-      for (const linea of sec.contenido.split('\n')) {
-        bloques.push(
-          new Paragraph({
-            alignment: AlignmentType.JUSTIFIED,
-            spacing: { after: 80 },
-            children: [new TextRun({ text: linea })],
-          }),
-        )
+    if (!textoVacio(sec.contenido)) {
+      if (esHtmlInforme(sec.contenido!)) {
+        bloques.push(...parrafosDesdeHtml(sec.contenido!))
+      } else {
+        for (const linea of sec.contenido!.split('\n')) {
+          bloques.push(
+            new Paragraph({
+              alignment: AlignmentType.JUSTIFIED,
+              spacing: { after: 80 },
+              children: [new TextRun({ text: linea })],
+            }),
+          )
+        }
       }
+    }
+    if (sec.tabla?.filas.length) {
+      bloques.push(tablaDocx(sec.tabla))
+      // Word pega el párrafo siguiente a la tabla si no se deja aire.
+      bloques.push(new Paragraph({ spacing: { after: 120 }, children: [] }))
     }
   }
 

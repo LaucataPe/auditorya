@@ -106,3 +106,20 @@ export function siguienteIndice(prefijo: string, existentes: Array<string | null
   }
   return `${prefijo}-${max + 1}`
 }
+
+/**
+ * Orden natural de índices de papeles de trabajo: primero el prefijo (A → Z) y
+ * luego el consecutivo como número, para que 'C-2' vaya antes de 'C-10'.
+ * Los índices que no siguen el patrón `PREFIJO-N` se comparan alfabéticamente
+ * y quedan al final de su prefijo.
+ */
+export function compararIndices(a: string | null, b: string | null): number {
+  const pa = a?.match(/^([A-Za-z]+)-(\d+)$/)
+  const pb = b?.match(/^([A-Za-z]+)-(\d+)$/)
+  if (pa && pb) {
+    const prefijo = pa[1].localeCompare(pb[1], 'es')
+    if (prefijo !== 0) return prefijo
+    return parseInt(pa[2], 10) - parseInt(pb[2], 10)
+  }
+  return (a ?? '').localeCompare(b ?? '', 'es')
+}

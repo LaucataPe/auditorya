@@ -5,6 +5,7 @@ import {
   claveDeArea,
   prefijoDeArea,
   siguienteIndice,
+  compararIndices,
 } from './areas'
 
 describe('prefijos del catálogo base', () => {
@@ -69,5 +70,25 @@ describe('siguienteIndice', () => {
 
   it('ignora índices editados a mano con otro formato y nulos', () => {
     expect(siguienteIndice('C', ['C-especial', null, 'C-2.1', 'C-3'])).toBe('C-4')
+  })
+})
+
+describe('compararIndices', () => {
+  const orden = (xs: string[]) => [...xs].sort(compararIndices)
+
+  it('ordena por prefijo alfabéticamente', () => {
+    expect(orden(['D-1', 'A-1', 'C-1'])).toEqual(['A-1', 'C-1', 'D-1'])
+  })
+
+  it('ordena el consecutivo como número, no como texto', () => {
+    expect(orden(['C-10', 'C-2', 'C-1'])).toEqual(['C-1', 'C-2', 'C-10'])
+  })
+
+  it('A va antes que AA', () => {
+    expect(orden(['AA-1', 'A-9'])).toEqual(['A-9', 'AA-1'])
+  })
+
+  it('los índices con otro formato se ordenan alfabéticamente', () => {
+    expect(orden(['C-2', 'C-especial', 'B-1'])).toEqual(['B-1', 'C-2', 'C-especial'])
   })
 })
