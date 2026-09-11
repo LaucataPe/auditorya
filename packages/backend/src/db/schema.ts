@@ -981,7 +981,7 @@ export const propuestasAgente = pgTable(
     // IDs de reglas del motor que la originaron (p. ej. ['V-20','V-21']).
     reglas: jsonb('reglas').$type<string[]>().default([]).notNull(),
     // Datos calculados por el motor (los "facts" de la tarjeta). El LLM nunca los produce.
-    datos: jsonb('datos').$type<Record<string, unknown>>().default({}).notNull(),
+    datos: jsonb('datos').$type<{ etiqueta: string; valor: string }[]>().default([]).notNull(),
     // Redacción y opciones: descripción, norma, recomendación, opciones de un juicio, etc.
     contenido: jsonb('contenido').$type<Record<string, unknown>>().default({}).notNull(),
     estado: text('estado', { enum: ['propuesta', 'aprobada', 'ajustada', 'omitida', 'descartada'] })

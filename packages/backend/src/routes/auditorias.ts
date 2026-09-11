@@ -17,6 +17,7 @@ import { esSocioResponsable, ERROR_NO_SOCIO_RESPONSABLE } from '../lib/permisos'
 import { encargoCerrado, ERROR_ENCARGO_CERRADO } from '../lib/encargo'
 import { areaValidaParaFirma, ERROR_AREA_INVALIDA } from '../lib/areas'
 import { registrarEvento } from '../lib/eventos'
+import { correrProcedimientoBalance } from '../lib/agente/corrida-balance'
 import { storage } from '../lib/storage'
 import { sugerirRiesgos } from '../lib/ia'
 import { claseDesdeCodigo, esClaseBalance, nivelCombinado, calcularRatios, detectarBanderas, evaluarCompletitud, evaluarOpinion, resumirHallazgos } from '@auditorya/types'
@@ -632,7 +633,18 @@ app.post(
       detalle: { filas: cuentas.length, archivo: archivo?.nombre ?? null },
     })
 
-    return c.json({ data: { importadas: cuentas.length } }, 201)
+    // Modo agéntico: con el balance recién importado, el agente corre la validación
+    // (0 tokens) y deja sus propuestas. Un fallo aquí nunca rompe la importación.
+    let agente: { corridaId: string; propuestas: number } | null = null
+    if (row.auditoria.agenteActivado) {
+      try {
+        agente = await correrProcedimientoBalance(id, c.get('user'))
+      } catch (err) {
+        console.error('[agente] no se pudo correr la validación tras importar', err instanceof Error ? err.message : err)
+      }
+    }
+
+    return c.json({ data: { importadas: cuentas.length, agente } }, 201)
   },
 )
 

@@ -24,6 +24,8 @@ import { InformeAITab } from '../../components/auditoria/ai/InformeAITab'
 import { PanelDerecho } from '../../components/auditoria/PanelDerecho'
 import { AsistenteIA } from '../../components/auditoria/AsistenteIA'
 import { ActividadModal } from '../../components/auditoria/ActividadModal'
+import { AgentePaso } from '../../components/agente/AgentePaso'
+import { useResumenAgente } from '../../hooks/useAgente'
 import {
   tabsPorServicio, FASE_ID, TIPO_LABEL, SERVICIO_LABEL,
   type SubTab, type FaseNombre,
@@ -44,6 +46,7 @@ type Auditoria = {
   tipo: TipoAuditoria | null
   estado: FaseAuditoria
   materialidadAprobada: boolean
+  agenteActivado?: boolean
   empresa: { id: string; nombre: string; sector: string }
 }
 
@@ -91,6 +94,9 @@ export function EmpresaAuditoria() {
     queryFn: () => api.get<SignalsProgreso>(`/auditorias/${auditoriaId}/progreso`),
     enabled: !!auditoriaId,
   })
+
+  const agenteActivado = !!auditoria?.agenteActivado
+  const resumenAgente = useResumenAgente(auditoriaId, agenteActivado)
 
   const avanzarMutation = useMutation({
     mutationFn: () => api.put(`/auditorias/${auditoriaId}`, { estado: 'ejecucion' }),
@@ -157,8 +163,28 @@ export function EmpresaAuditoria() {
 
   return (
     <div className="p-8 space-y-6">
-      {/* Actividad (pista de auditoría) */}
-      <div className="flex items-center justify-end">
+      {/* Actividad (pista de auditoría) + contadores del agente */}
+      <div className="flex items-center justify-end gap-2">
+        {agenteActivado && resumenAgente.data && (
+          <>
+            <button
+              onClick={() => {
+                const paso = Object.entries(resumenAgente.data!.porPaso).find(([, v]) => v.pendientes > 0)?.[0]
+                if (paso) setTab(paso as SubTab)
+              }}
+              className={cn(
+                'flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors',
+                resumenAgente.data.teToca > 0 ? 'border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100' : 'border-gray-200 bg-white text-gray-500',
+              )}
+              title="Decisiones pendientes"
+            >
+              Te toca <span className="font-mono tabular-nums font-semibold">{resumenAgente.data.teToca}</span>
+            </button>
+            <span className="flex items-center gap-1.5 rounded-full border border-emerald-200 bg-white px-3 py-1 text-xs font-medium text-emerald-700" title="Acciones del agente y decisiones tomadas">
+              Hecho por el agente <span className="font-mono tabular-nums font-semibold">{resumenAgente.data.hecho}</span>
+            </span>
+          </>
+        )}
         <button
           onClick={() => setActividadOpen(true)}
           className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-colors"
@@ -254,8 +280,16 @@ export function EmpresaAuditoria() {
           {!esAI && tabActivo === 'entendimiento' && (
             <EntendimientoTab auditoriaId={auditoria.id} empresaId={auditoria.empresa.id} />
           )}
-          {!esAI && tabActivo === 'balance' && <BalanceTab auditoriaId={auditoria.id} />}
-          {!esAI && tabActivo === 'materialidad' && <MaterialidadTab auditoriaId={auditoria.id} />}
+          {!esAI && tabActivo === 'balance' && (
+            agenteActivado
+              ? <AgentePaso auditoriaId={auditoria.id} paso="balance" contenidoLabel="Ver el balance completo"><BalanceTab auditoriaId={auditoria.id} /></AgentePaso>
+              : <BalanceTab auditoriaId={auditoria.id} />
+          )}
+          {!esAI && tabActivo === 'materialidad' && (
+            agenteActivado
+              ? <AgentePaso auditoriaId={auditoria.id} paso="materialidad" contenidoLabel="Ver o editar la materialidad"><MaterialidadTab auditoriaId={auditoria.id} /></AgentePaso>
+              : <MaterialidadTab auditoriaId={auditoria.id} />
+          )}
           {!esAI && tabActivo === 'riesgos' && (
             <RiesgosTab auditoriaId={auditoria.id} sector={auditoria.empresa.sector} materialidadAprobada={auditoria.materialidadAprobada} />
           )}
@@ -266,12 +300,18 @@ export function EmpresaAuditoria() {
             <PapelesTab auditoriaId={auditoria.id} materialidadAprobada={auditoria.materialidadAprobada} />
           )}
           {!esAI && tabActivo === 'pbc' && (
-            <PbcTab
-              auditoriaId={auditoria.id}
-              materialidadAprobada={auditoria.materialidadAprobada}
-              empresaNombre={auditoria.empresa.nombre}
-              periodo={periodo}
-            />
+            agenteActivado ? (
+              <AgentePaso auditoriaId={auditoria.id} paso="pbc" contenidoLabel="Ver todos los documentos solicitados">
+                <PbcTab auditoriaId={auditoria.id} materialidadAprobada={auditoria.materialidadAprobada} empresaNombre={auditoria.empresa.nombre} periodo={periodo} />
+              </AgentePaso>
+            ) : (
+              <PbcTab
+                auditoriaId={auditoria.id}
+                materialidadAprobada={auditoria.materialidadAprobada}
+                empresaNombre={auditoria.empresa.nombre}
+                periodo={periodo}
+              />
+            )
           )}
           {!esAI && tabActivo === 'cronograma' && (
             <CronogramaTab auditoriaId={auditoria.id} />
@@ -328,8 +368,8 @@ export function EmpresaAuditoria() {
         <ActividadModal auditoriaId={auditoria.id} onClose={() => setActividadOpen(false)} />
       )}
 
-      {/* Asistente NIA flotante (solo si la IA está disponible) */}
-      <AsistenteIA auditoriaId={auditoria.id} />
+      {/* Asistente NIA flotante (solo si la IA está disponible). En modo agéntico no hay chat global: se pregunta dentro de cada propuesta. */}
+      {!agenteActivado && <AsistenteIA auditoriaId={auditoria.id} />}
     </div>
   )
 }

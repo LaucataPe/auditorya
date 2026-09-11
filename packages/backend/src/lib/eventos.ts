@@ -14,6 +14,8 @@ export type EventoInput = {
   auditoriaId?: string | null
   empresaId?: string | null
   detalle?: Record<string, unknown>
+  /** 'agente' cuando la acción la ejecutó el agente a nombre del usuario. */
+  actor?: 'usuario' | 'agente'
 }
 
 export function registrarEvento(user: Pick<JwtPayload, 'sub' | 'firmaId'>, ev: EventoInput): void {
@@ -27,6 +29,7 @@ export function registrarEvento(user: Pick<JwtPayload, 'sub' | 'firmaId'>, ev: E
       entidad: ev.entidad,
       entidadId: ev.entidadId ?? null,
       detalle: ev.detalle ?? null,
+      actor: ev.actor ?? 'usuario',
     })
     .then(() => {})
     .catch((err) => {

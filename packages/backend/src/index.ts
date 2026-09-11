@@ -23,6 +23,7 @@ import miTrabajoRoutes from './routes/mi-trabajo'
 import tributarioRoutes from './routes/tributario'
 import archivosRoutes from './routes/archivos'
 import iaRoutes from './routes/ia'
+import agenteRoutes from './routes/agente'
 import superadminRoutes from './routes/superadmin'
 
 const app = new Hono()
@@ -98,6 +99,8 @@ app.route('/', tributarioRoutes)
 app.route('/', archivosRoutes)
 // Funciones de IA (Claude) — /auditorias/:id/ia/..., /papeles/:id/ia/...
 app.route('/', iaRoutes)
+// Modo agéntico — /auditorias/:id/agente/..., /propuestas/:id/decidir
+app.route('/', agenteRoutes)
 app.route('/superadmin', superadminRoutes)
 
 const port = Number(process.env.PORT ?? 3001)

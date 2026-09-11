@@ -12,6 +12,7 @@ import { api } from '../../lib/api'
 import { cn } from '../../lib/cn'
 import { useAuthStore } from '../../store/auth.store'
 import { NotificacionesBell } from '../notificaciones/NotificacionesBell'
+import { useResumenAgente } from '../../hooks/useAgente'
 
 type Empresa = { id: string; nombre: string }
 
@@ -22,6 +23,7 @@ type Auditoria = {
   tipoServicio: string
   tipo: string | null
   materialidadAprobada: boolean
+  agenteActivado?: boolean
 }
 
 export function EmpresaSidebarEncargo({ empresa, auditoriaId }: { empresa: Empresa; auditoriaId: string }) {
@@ -46,6 +48,9 @@ export function EmpresaSidebarEncargo({ empresa, auditoriaId }: { empresa: Empre
     queryFn: () => api.get<SignalsProgreso>(`/auditorias/${auditoriaId}/progreso`),
     enabled: !!auditoriaId,
   })
+
+  const resumenAgente = useResumenAgente(auditoriaId, !!auditoria?.agenteActivado)
+  const pendientesAgente = (paso: string) => resumenAgente.data?.porPaso[paso]?.pendientes ?? 0
 
   const esAI = auditoria?.tipoServicio === 'auditoria_interna'
   const tabs = tabsPorServicio(auditoria?.tipoServicio)
@@ -195,6 +200,11 @@ export function EmpresaSidebarEncargo({ empresa, auditoriaId }: { empresa: Empre
                         <Circle size={12} className={cn('shrink-0', activo ? 'text-indigo-400' : 'text-gray-300')} />
                       )}
                       <span className="truncate flex-1">{p.label}</span>
+                      {pendientesAgente(p.id) > 0 && (
+                        <span className="ml-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-indigo-600 px-1 font-mono text-[10px] font-semibold text-white" title="Decisiones pendientes del agente">
+                          {pendientesAgente(p.id)}
+                        </span>
+                      )}
                     </button>
                   )
                 })}
