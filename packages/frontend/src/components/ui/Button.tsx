@@ -1,5 +1,5 @@
 import { cn } from '../../lib/cn'
-import { type ButtonHTMLAttributes } from 'react'
+import { forwardRef, type ButtonHTMLAttributes } from 'react'
 
 type Variant = 'primary' | 'secondary' | 'ghost' | 'danger'
 type Size = 'sm' | 'md' | 'lg'
@@ -23,17 +23,13 @@ const sizes: Record<Size, string> = {
   lg: 'px-6 py-3 text-base',
 }
 
-export function Button({
-  variant = 'primary',
-  size = 'md',
-  loading,
-  className,
-  children,
-  disabled,
-  ...props
-}: Props) {
+export const Button = forwardRef<HTMLButtonElement, Props>(function Button(
+  { variant = 'primary', size = 'md', loading, className, children, disabled, ...props },
+  ref,
+) {
   return (
     <button
+      ref={ref}
       className={cn(
         'inline-flex items-center justify-center gap-2 rounded-lg font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:cursor-not-allowed',
         variants[variant],
@@ -49,4 +45,4 @@ export function Button({
       {children}
     </button>
   )
-}
+})

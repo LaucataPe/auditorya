@@ -4,6 +4,7 @@ import { useAuthStore } from './store/auth.store'
 import { EVENTO_SESION_EXPIRADA } from './lib/api'
 import { toast } from './store/toast.store'
 import { Toaster } from './components/ui/Toaster'
+import { ConfirmDialog } from './components/ui/ConfirmDialog'
 import { ErrorBoundary } from './components/ui/ErrorBoundary'
 
 // Guards & layouts
@@ -37,6 +38,8 @@ import { EmpresaPapel } from './pages/empresa/EmpresaPapel'
 import { EmpresaEvaluacion } from './pages/empresa/EmpresaEvaluacion'
 import { EmpresaDocumentos } from './pages/empresa/EmpresaDocumentos'
 import { EmpresaInformacion } from './pages/empresa/EmpresaInformacion'
+import { EmpresaTributario } from './pages/empresa/EmpresaTributario'
+import { EmpresaTributarioRevision } from './pages/empresa/EmpresaTributarioRevision'
 
 function OnboardingGuard({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, onboardingComplete } = useAuthStore()
@@ -79,6 +82,7 @@ export default function App() {
   return (
     <ErrorBoundary>
     <Toaster />
+    <ConfirmDialog />
     <Routes>
       {/* Public */}
       <Route path="/" element={<LandingPage />} />
@@ -110,6 +114,8 @@ export default function App() {
         <Route path="evaluacion" element={<EmpresaEvaluacion />} />
         <Route path="documentos" element={<EmpresaDocumentos />} />
         <Route path="informacion" element={<EmpresaInformacion />} />
+        <Route path="tributario" element={<EmpresaTributario />} />
+        <Route path="tributario/:revisionId" element={<EmpresaTributarioRevision />} />
       </Route>
 
       {/* Superadmin */}

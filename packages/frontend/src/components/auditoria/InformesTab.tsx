@@ -195,7 +195,10 @@ function CartaRecomendaciones({
           return compararIndices(a.papelIndice, b.papelIndice)
         })
 
+    // Las áreas se listan alfabéticamente por su nombre visible (no por el orden
+    // en que se capturaron los hallazgos), para que la carta sea fácil de recorrer.
     const areas = Array.from(new Set(pendientes.map((h) => h.area)))
+      .sort((a, b) => areaLabel(a).localeCompare(areaLabel(b), 'es'))
     return areas.map((area) => ({
       label: areaLabel(area),
       contenido: porArea(area)

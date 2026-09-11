@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { KeyRound, Pencil, Plus, Trash2 } from 'lucide-react'
 import { api } from '../../lib/api'
+import { confirmar } from '../../store/confirm.store'
 import { Modal } from '../../components/ui/Modal'
 import { Input } from '../../components/ui/Input'
 import { Textarea } from '../../components/ui/Textarea'
@@ -62,10 +63,12 @@ export function SuperadminPermisos() {
     editMutation.mutate({ clave: p.clave, body: { activo: !p.activo } })
   }
 
-  function handleDelete(p: Permiso) {
-    if (confirm(`¿Eliminar el permiso "${p.label}" (${p.clave})?\n\nSe quitará de todos los roles que lo tengan asignado.`)) {
-      deleteMutation.mutate(p.clave)
-    }
+  async function handleDelete(p: Permiso) {
+    const ok = await confirmar({
+      titulo: `¿Eliminar el permiso "${p.label}"?`,
+      descripcion: `Clave: ${p.clave}\n\nSe quitará de todos los roles que lo tengan asignado.`,
+    })
+    if (ok) deleteMutation.mutate(p.clave)
   }
 
   // Agrupar por grupo preservando orden

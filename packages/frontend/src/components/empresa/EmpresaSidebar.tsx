@@ -5,6 +5,7 @@ import {
   ClipboardList,
   FileText,
   Info,
+  Landmark,
   LayoutDashboard,
   LogOut,
 } from 'lucide-react'
@@ -25,6 +26,7 @@ const navItems = (id: string) => [
   { label: 'Dashboard', icon: LayoutDashboard, to: `/empresas/${id}/dashboard` },
   { label: 'Encargos', icon: ClipboardList, to: `/empresas/${id}/encargos` },
   { label: 'Evaluación', icon: CheckSquare, to: `/empresas/${id}/evaluacion` },
+  { label: 'Tributario', icon: Landmark, to: `/empresas/${id}/tributario` },
   { label: 'Documentos', icon: FileText, to: `/empresas/${id}/documentos` },
   { label: 'Información', icon: Info, to: `/empresas/${id}/informacion` },
 ]

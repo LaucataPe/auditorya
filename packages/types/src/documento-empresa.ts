@@ -12,6 +12,7 @@ export type TipoDocumentoEmpresa =
   | 'composicion_accionaria'
   | 'estatutos'
   | 'declaracion_renta'
+  | 'contrato'
   | 'otro'
 
 export type CatalogoDocumentoEmpresa = {
@@ -55,6 +56,11 @@ export const CATALOGO_DOCUMENTOS_EMPRESA: CatalogoDocumentoEmpresa[] = [
     tipo: 'declaracion_renta',
     label: 'Última declaración de renta',
     descripcion: 'Declaración de renta del último período gravable.',
+  },
+  {
+    tipo: 'contrato',
+    label: 'Contrato de servicios',
+    descripcion: 'Contrato firmado con el cliente para la prestación del servicio (revisoría fiscal o auditoría).',
   },
 ]
 

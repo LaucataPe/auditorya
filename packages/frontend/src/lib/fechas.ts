@@ -14,5 +14,17 @@ export function haceCuanto(fecha: string): string {
 /** Fecha corta legible ("12 ago 2026") o em-dash si no hay. */
 export function fechaCorta(fecha: string | null | undefined): string {
   if (!fecha) return '—'
-  return new Date(fecha).toLocaleDateString('es-CO', { day: 'numeric', month: 'short', year: 'numeric' })
+  return parsearFecha(fecha).toLocaleDateString('es-CO', { day: 'numeric', month: 'short', year: 'numeric' })
+}
+
+/**
+ * Las columnas `date` llegan como 'YYYY-MM-DD'. `new Date()` las interpreta
+ * como medianoche UTC, que en Colombia (UTC-5) cae en el día anterior: se
+ * construyen como fecha local. Los timestamps con hora se parsean normal.
+ */
+export function parsearFecha(valor: string): Date {
+  const soloFecha = /^(\d{4})-(\d{2})-(\d{2})$/.exec(valor)
+  return soloFecha
+    ? new Date(Number(soloFecha[1]), Number(soloFecha[2]) - 1, Number(soloFecha[3]))
+    : new Date(valor)
 }

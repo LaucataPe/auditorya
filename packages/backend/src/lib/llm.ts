@@ -27,17 +27,15 @@ type ChatMsg = { role: 'system' | 'user' | 'assistant'; content: string }
 // Una petición colgada a OpenRouter no puede bloquear la conexión HTTP indefinidamente.
 const TIMEOUT_MS = 60_000
 
-/** Llamada base al endpoint de chat de OpenRouter. Devuelve el texto del asistente. */
-async function chat(opts: { system: string; messages: MensajeChat[]; maxTokens?: number }): Promise<string> {
+/** POST crudo a /chat/completions. `body` ya trae model/messages; devuelve el texto del asistente. */
+async function llamarOpenRouter(body: Record<string, unknown>, timeoutMs = TIMEOUT_MS): Promise<string> {
   if (!iaDisponible()) throw new Error('OPENROUTER_API_KEY no configurada')
-
-  const messages: ChatMsg[] = [{ role: 'system', content: opts.system }, ...opts.messages]
 
   let res: Response
   try {
     res = await fetch(`${BASE_URL}/chat/completions`, {
       method: 'POST',
-      signal: AbortSignal.timeout(TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
       headers: {
         Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
         'Content-Type': 'application/json',
@@ -45,15 +43,11 @@ async function chat(opts: { system: string; messages: MensajeChat[]; maxTokens?:
         'HTTP-Referer': process.env.OPENROUTER_SITE_URL ?? 'https://auditorya.app',
         'X-Title': 'AuditorYa',
       },
-      body: JSON.stringify({
-        model: MODELO,
-        max_tokens: opts.maxTokens ?? 1500,
-        messages,
-      }),
+      body: JSON.stringify(body),
     })
   } catch (err) {
     if ((err as Error).name === 'TimeoutError' || (err as Error).name === 'AbortError') {
-      throw new Error(`OpenRouter no respondió en ${TIMEOUT_MS / 1000}s (timeout)`)
+      throw new Error(`OpenRouter no respondió en ${timeoutMs / 1000}s (timeout)`)
     }
     throw err
   }
@@ -65,6 +59,12 @@ async function chat(opts: { system: string; messages: MensajeChat[]; maxTokens?:
 
   const data = (await res.json()) as { choices?: { message?: { content?: string } }[] }
   return data.choices?.[0]?.message?.content ?? ''
+}
+
+/** Llamada base de chat (solo texto). Devuelve el texto del asistente. */
+async function chat(opts: { system: string; messages: MensajeChat[]; maxTokens?: number }): Promise<string> {
+  const messages: ChatMsg[] = [{ role: 'system', content: opts.system }, ...opts.messages]
+  return llamarOpenRouter({ model: MODELO, max_tokens: opts.maxTokens ?? 1500, messages })
 }
 
 /** Llamada de texto libre. */
@@ -100,6 +100,65 @@ export async function completarJSON<T>(opts: {
   })
 
   return JSON.parse(extraerJson(texto, inicio)) as T
+}
+
+export type ArchivoLLM = {
+  nombre: string
+  /** application/pdf, image/png, image/jpeg o image/webp */
+  mime: string
+  base64: string
+}
+
+/**
+ * Llamada multimodal que espera JSON: un prompt de texto + un archivo (PDF o
+ * imagen). Los PDF van con el parser de OpenRouter: `pdf-text` (gratuito,
+ * PDFs con capa de texto) o `mistral-ocr` (OCR de pago, para PDFs escaneados
+ * o con campos de formulario XFA que pdf-text no extrae). Las imágenes van
+ * como image_url para modelos con visión.
+ */
+export async function completarJSONArchivo<T>(opts: {
+  system: string
+  prompt: string
+  archivo: ArchivoLLM
+  inicioJson?: '[' | '{'
+  maxTokens?: number
+  /** Solo PDFs; default 'pdf-text'. */
+  engine?: 'pdf-text' | 'mistral-ocr'
+}): Promise<T> {
+  const inicio = opts.inicioJson ?? '{'
+  const instruccion =
+    inicio === '['
+      ? 'Responde ÚNICAMENTE con un arreglo JSON válido, sin texto adicional ni fences de markdown.'
+      : 'Responde ÚNICAMENTE con un objeto JSON válido, sin texto adicional ni fences de markdown.'
+
+  const dataUrl = `data:${opts.archivo.mime};base64,${opts.archivo.base64}`
+  const esPdf = opts.archivo.mime === 'application/pdf'
+  const parteArchivo = esPdf
+    ? { type: 'file', file: { filename: opts.archivo.nombre, file_data: dataUrl } }
+    : { type: 'image_url', image_url: { url: dataUrl } }
+
+  const texto = await llamarOpenRouter(
+    {
+      model: MODELO,
+      max_tokens: opts.maxTokens ?? 3000,
+      messages: [
+        { role: 'system', content: opts.system },
+        {
+          role: 'user',
+          content: [{ type: 'text', text: `${opts.prompt}\n\n${instruccion}` }, parteArchivo],
+        },
+      ],
+      ...(esPdf ? { plugins: [{ id: 'file-parser', pdf: { engine: opts.engine ?? 'pdf-text' } }] } : {}),
+    },
+    // Parsear/OCRear un PDF grande tarda más que una llamada de solo texto.
+    120_000,
+  )
+
+  try {
+    return JSON.parse(extraerJson(texto, inicio)) as T
+  } catch {
+    throw new Error(`la respuesta del modelo no es JSON válido: "${texto.slice(0, 200)}"`)
+  }
 }
 
 /** Extrae el bloque JSON (arreglo u objeto) de una respuesta que puede traer prosa o fences. */

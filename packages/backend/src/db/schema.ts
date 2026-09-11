@@ -145,6 +145,7 @@ export const documentosEmpresa = pgTable('documentos_empresa', {
       'composicion_accionaria',
       'estatutos',
       'declaracion_renta',
+      'contrato',
       'otro',
     ],
   }).notNull(),
@@ -772,5 +773,138 @@ export const muestraItems = pgTable('muestra_items', {
     .notNull(),
   diferencia: numeric('diferencia', { precision: 20, scale: 2 }),
   nota: text('nota'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Módulo tributario — a NIVEL DE EMPRESA por año fiscal (vigencia), no del
+// encargo: los encargos pueden ser bimestrales/trimestrales pero las
+// obligaciones tributarias cubren el año calendario completo.
+// Una obligación por impuesto × vigencia; al crearla se generan sus revisiones
+// (una por período según la periodicidad).
+// ─────────────────────────────────────────────────────────────────────────────
+export const obligacionesTributarias = pgTable(
+  'obligaciones_tributarias',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    empresaId: uuid('empresa_id')
+      .notNull()
+      .references(() => empresas.id),
+    anioFiscal: integer('anio_fiscal').notNull(),
+    tipo: text('tipo', {
+      enum: ['retefuente', 'iva', 'reteica', 'ica', 'renta', 'exogena', 'otro'],
+    }).notNull(),
+    // Etiqueta libre: obligatoria para 'otro' (la exige la ruta), opcional en el resto.
+    nombre: text('nombre'),
+    periodicidad: text('periodicidad', {
+      enum: ['mensual', 'bimestral', 'cuatrimestral', 'anual'],
+    }).notNull(),
+    asignadoA: uuid('asignado_a').references(() => usuarios.id),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (t) => ({
+    empresaAnioIdx: index('obligaciones_trib_empresa_anio_idx').on(t.empresaId, t.anioFiscal),
+  }),
+)
+
+// Una revisión por obligación × período. Al firmarla el revisor queda sellada:
+// snapshot inmutable del contenido (constancia) y ninguna ruta permite editarla
+// sin reabrirla (solo rol socio), conservando siempre el snapshot y la pista.
+export const revisionesTributarias = pgTable(
+  'revisiones_tributarias',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    obligacionId: uuid('obligacion_id')
+      .notNull()
+      .references(() => obligacionesTributarias.id),
+    // Clave estable del período: '01'..'12' | 'B1'..'B6' | 'C1'..'C3' | 'A'.
+    periodo: text('periodo').notNull(),
+    // Vencimiento editable: el calendario DIAN/municipal cambia por resolución
+    // anual y depende del NIT, así que no se codifica.
+    fechaVencimiento: date('fecha_vencimiento'),
+    // Cuándo se presentó la declaración. Se registra con la revisión ya firmada
+    // (la presentación es posterior a la firma) y no toca el snapshot sellado.
+    fechaPresentacion: date('fecha_presentacion'),
+    estado: text('estado', { enum: ['pendiente', 'en_revision', 'revisada'] })
+      .default('pendiente')
+      .notNull(),
+    // Encabezado del papel de trabajo (NIA 230): qué se propuso revisar y con
+    // qué procedimientos. null = sin editar (el frontend muestra el borrador
+    // sugerido de types); al firmar se materializan para que la constancia sea
+    // literal y no dependa del catálogo vigente después.
+    alcance: text('alcance'),
+    procedimientos: text('procedimientos'),
+    // Checklist estándar del impuesto (catálogo en @auditorya/types); mismo
+    // patrón que pasosEstado de papeles: clave = id del ítem del catálogo.
+    checklistEstado: jsonb('checklist_estado')
+      .$type<Record<string, { hecho: boolean; nota: string | null }>>()
+      .default({})
+      .notNull(),
+    // Mini-formulario espejo del formulario oficial (CIFRAS_CATALOGO en types):
+    // clave = id del renglón digitable, valores declarado vs. libros.
+    cifras: jsonb('cifras')
+      .$type<Record<string, { declarado: number | null; libros: number | null }>>()
+      .default({})
+      .notNull(),
+    // Legado: totales sueltos, reemplazados por `cifras`.
+    valorDeclarado: numeric('valor_declarado', { precision: 20, scale: 2 }),
+    valorLibros: numeric('valor_libros', { precision: 20, scale: 2 }),
+    observaciones: text('observaciones'),
+    conclusion: text('conclusion'),
+    resultado: text('resultado', { enum: ['sin_observaciones', 'con_observaciones'] }),
+    revisadoPor: uuid('revisado_por').references(() => usuarios.id),
+    revisadoAt: timestamp('revisado_at'),
+    // Constancia: copia completa del contenido al momento de la firma.
+    snapshot: jsonb('snapshot').$type<Record<string, unknown>>(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (t) => ({
+    obligacionPeriodoUq: uniqueIndex('revisiones_trib_obligacion_periodo_uq').on(
+      t.obligacionId,
+      t.periodo,
+    ),
+  }),
+)
+
+// Soportes de la revisión (declaración presentada, recibo de pago, conciliación).
+// Archivo vía lib/storage, servido siempre con URL firmada de corta duración.
+export const adjuntosTributarios = pgTable('adjuntos_tributarios', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  revisionId: uuid('revision_id')
+    .notNull()
+    .references(() => revisionesTributarias.id),
+  nombre: text('nombre').notNull(),
+  tipo: text('tipo', { enum: ['declaracion', 'pago', 'conciliacion', 'certificado', 'otro'] })
+    .default('otro')
+    .notNull(),
+  archivoKey: text('archivo_key').notNull(),
+  archivoNombre: text('archivo_nombre').notNull(),
+  archivoMime: text('archivo_mime').notNull(),
+  archivoTamano: integer('archivo_tamano').notNull(),
+  archivoHash: text('archivo_hash').notNull(),
+  subidoPor: uuid('subido_por').references(() => usuarios.id),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+})
+
+// Hallazgos y recomendaciones de la revisión tributaria. Con la revisión
+// firmada solo se permite el seguimiento (estado + nota); crear, editar o
+// borrar exige la revisión abierta.
+export const hallazgosTributarios = pgTable('hallazgos_tributarios', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  revisionId: uuid('revision_id')
+    .notNull()
+    .references(() => revisionesTributarias.id),
+  // Sin `criterio` a propósito (a diferencia de `hallazgos` del encargo): el
+  // hallazgo tributario es situación encontrada + recomendación, y la norma se
+  // cita dentro del texto.
+  descripcion: text('descripcion').notNull(),
+  recomendacion: text('recomendacion'),
+  monto: numeric('monto', { precision: 20, scale: 2 }),
+  severidad: text('severidad', { enum: ['alta', 'media', 'baja'] }).default('media').notNull(),
+  // Columna text sin CHECK: agregar un estado no requiere migración.
+  estado: text('estado', { enum: ['abierto', 'en_tramite', 'resuelto'] }).default('abierto').notNull(),
+  seguimiento: text('seguimiento'),
+  resueltoAt: timestamp('resuelto_at'),
+  creadoPor: uuid('creado_por').references(() => usuarios.id),
   createdAt: timestamp('created_at').defaultNow().notNull(),
 })

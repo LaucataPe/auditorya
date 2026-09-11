@@ -3,6 +3,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Lock, Pencil, Plus, ShieldCheck, Trash2, Users } from 'lucide-react'
 import { api } from '../../lib/api'
 import { useAuthStore } from '../../store/auth.store'
+import { toast } from '../../store/toast.store'
+import { confirmar } from '../../store/confirm.store'
 import { Button } from '../ui/Button'
 import { Input } from '../ui/Input'
 import { Select } from '../ui/Select'
@@ -83,11 +85,15 @@ export function RolesTab() {
   const deleteMutation = useMutation({
     mutationFn: (id: string) => api.delete(`/firmas/mia/roles/${id}`),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['roles'] }),
-    onError: (e) => alert(e instanceof Error ? e.message : 'No se pudo eliminar'),
+    onError: (e) => toast.error(e instanceof Error ? e.message : 'No se pudo eliminar'),
   })
 
-  function handleDelete(rol: Rol) {
-    if (confirm(`¿Eliminar el rol "${rol.nombre}"?`)) deleteMutation.mutate(rol.id)
+  async function handleDelete(rol: Rol) {
+    const ok = await confirmar({
+      titulo: `¿Eliminar el rol "${rol.nombre}"?`,
+      descripcion: 'Los usuarios que lo tengan asignado se quedarán sin ese rol.',
+    })
+    if (ok) deleteMutation.mutate(rol.id)
   }
 
   return (

@@ -4,12 +4,14 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { CheckCircle2, FileText, Plus, Trash2, Upload, X } from 'lucide-react'
 import {
   CATALOGO_DOCUMENTOS_EMPRESA,
+  DOCUMENTO_EMPRESA_TIPO_LABEL,
   type CatalogoDocumentoEmpresa,
   type DocumentoEmpresa,
   type TipoDocumentoEmpresa,
 } from '@auditorya/types'
 import { api, BASE_URL } from '../../lib/api'
 import { cn } from '../../lib/cn'
+import { confirmar } from '../../store/confirm.store'
 import { Button } from '../../components/ui/Button'
 import { Input } from '../../components/ui/Input'
 import { Modal } from '../../components/ui/Modal'
@@ -52,6 +54,15 @@ export function EmpresaDocumentos() {
     mutationFn: (documentoId: string) => api.delete(`/empresas/documentos/${documentoId}`),
     onSuccess: invalidar,
   })
+
+  const pedirEliminar = async (doc: DocumentoEmpresa) => {
+    const nombre = doc.tipo === 'otro' ? `"${doc.nombre}"` : DOCUMENTO_EMPRESA_TIPO_LABEL[doc.tipo]
+    const ok = await confirmar({
+      titulo: `¿Eliminar ${nombre}?`,
+      descripcion: `Se borrará el archivo ${doc.archivoNombre}. No se puede deshacer.`,
+    })
+    if (ok) eliminar.mutate(doc.id)
+  }
 
   const descargar = async (documentoId: string) => {
     const { url } = await api.get<{ url: string }>(`/empresas/documentos/${documentoId}/descarga`)
@@ -99,7 +110,7 @@ export function EmpresaDocumentos() {
               subiendo={subir.isPending && subir.variables?.tipo === item.tipo}
               onSubir={(file) => subir.mutate({ tipo: item.tipo, file })}
               onDescargar={descargar}
-              onEliminar={(docId) => eliminar.mutate(docId)}
+              onEliminar={pedirEliminar}
             />
           ))}
         </div>
@@ -142,7 +153,7 @@ export function EmpresaDocumentos() {
                   Ver
                 </button>
                 <button
-                  onClick={() => eliminar.mutate(doc.id)}
+                  onClick={() => pedirEliminar(doc)}
                   disabled={eliminar.isPending}
                   className="text-gray-300 hover:text-red-500 transition-colors shrink-0"
                 >
@@ -182,7 +193,7 @@ function DocumentoCard({
   subiendo: boolean
   onSubir: (file: File) => void
   onDescargar: (documentoId: string) => void
-  onEliminar: (documentoId: string) => void
+  onEliminar: (documento: DocumentoEmpresa) => void
 }) {
   const fileRef = useRef<HTMLInputElement>(null)
 
@@ -234,7 +245,7 @@ function DocumentoCard({
               )}
             </button>
             <button
-              onClick={() => onEliminar(documento.id)}
+              onClick={() => onEliminar(documento)}
               title="Eliminar"
               className="rounded-md p-1.5 text-gray-400 hover:bg-gray-100 hover:text-red-500 transition-colors"
             >

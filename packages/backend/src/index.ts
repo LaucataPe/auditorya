@@ -20,6 +20,7 @@ import hallazgosRoutes from './routes/hallazgos'
 import cierreRoutes from './routes/cierre'
 import notificacionesRoutes from './routes/notificaciones'
 import miTrabajoRoutes from './routes/mi-trabajo'
+import tributarioRoutes from './routes/tributario'
 import archivosRoutes from './routes/archivos'
 import iaRoutes from './routes/ia'
 import superadminRoutes from './routes/superadmin'
@@ -91,6 +92,8 @@ app.route('/', cierreRoutes)
 app.route('/', notificacionesRoutes)
 // Vista transversal "Mi trabajo" (/mi-trabajo)
 app.route('/', miTrabajoRoutes)
+
+app.route('/', tributarioRoutes)
 // Descarga de archivos con URL firmada (sin cookie de sesión)
 app.route('/', archivosRoutes)
 // Funciones de IA (Claude) — /auditorias/:id/ia/..., /papeles/:id/ia/...
