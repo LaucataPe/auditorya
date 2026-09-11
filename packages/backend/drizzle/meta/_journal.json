@@ -316,6 +316,13 @@
       "when": 1786700100000,
       "tag": "0044_modo_agentico",
       "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1786700200000,
+      "tag": "0045_arranque_agente",
+      "breakpoints": true
     }
   ]
 }

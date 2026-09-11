@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
+import { useParams, useNavigate, useSearchParams, Navigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { ArrowRight, Lock, History, PartyPopper } from 'lucide-react'
 import { Button } from '../../components/ui/Button'
@@ -47,6 +47,7 @@ type Auditoria = {
   estado: FaseAuditoria
   materialidadAprobada: boolean
   agenteActivado?: boolean
+  arranqueCompletadoAt?: string | null
   empresa: { id: string; nombre: string; sector: string }
 }
 
@@ -129,6 +130,11 @@ export function EmpresaAuditoria() {
         </button>
       </div>
     )
+  }
+
+  // Encargo con agente recién creado: abre en el arranque guiado hasta completarlo.
+  if (auditoria.agenteActivado && !auditoria.arranqueCompletadoAt) {
+    return <Navigate to={`/empresas/${id}/encargos/${auditoria.id}/arranque`} replace />
   }
 
   const esAI = auditoria.tipoServicio === 'auditoria_interna'
@@ -278,7 +284,9 @@ export function EmpresaAuditoria() {
             />
           )}
           {!esAI && tabActivo === 'entendimiento' && (
-            <EntendimientoTab auditoriaId={auditoria.id} empresaId={auditoria.empresa.id} />
+            agenteActivado
+              ? <AgentePaso auditoriaId={auditoria.id} paso="entendimiento" contenidoLabel="Ver o editar el entendimiento completo"><EntendimientoTab auditoriaId={auditoria.id} empresaId={auditoria.empresa.id} /></AgentePaso>
+              : <EntendimientoTab auditoriaId={auditoria.id} empresaId={auditoria.empresa.id} />
           )}
           {!esAI && tabActivo === 'balance' && (
             agenteActivado

@@ -7,6 +7,7 @@ import { DecisionCard } from './DecisionCard'
 import { useCorrerBalance, useDecidir, usePropuestas, useResumenAgente } from '../../hooks/useAgente'
 
 const PASO_TEXTO: Record<string, { titulo: string; sinPendientes: string }> = {
+  entendimiento: { titulo: 'Entendimiento del período', sinPendientes: 'El entendimiento ya está confirmado.' },
   balance: { titulo: 'Revisión del balance', sinPendientes: 'No queda nada por decidir en el balance.' },
   materialidad: { titulo: 'Materialidad propuesta', sinPendientes: 'La materialidad ya está decidida.' },
   pbc: { titulo: 'Documentos que el agente necesita', sinPendientes: 'No hay documentos pendientes.' },
@@ -21,7 +22,7 @@ const hora = (iso?: string) => (iso ? new Date(iso).toLocaleTimeString('es-CO', 
  */
 export function AgentePaso({ auditoriaId, paso, children, contenidoLabel = 'Ver el contenido completo del paso' }: {
   auditoriaId: string
-  paso: 'balance' | 'materialidad' | 'pbc'
+  paso: 'entendimiento' | 'balance' | 'materialidad' | 'pbc'
   children: ReactNode
   contenidoLabel?: string
 }) {

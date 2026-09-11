@@ -22,6 +22,8 @@ export function EmpresaLayout() {
   // se transforma en las fases del encargo.
   const encargoMatch = useMatch('/empresas/:id/encargos/:auditoriaId/*')
   const auditoriaId = encargoMatch?.params.auditoriaId
+  // El arranque guiado del agente ocupa toda la pantalla: sin menú lateral.
+  const enArranque = !!useMatch('/empresas/:id/encargos/:auditoriaId/arranque')
 
   const { data: empresa, isLoading, isError } = useQuery<Empresa>({
     queryKey: ['empresa', id],
@@ -41,6 +43,8 @@ export function EmpresaLayout() {
   }
 
   if (isError || !empresa) return <Navigate to="/empresas" replace />
+
+  if (enArranque) return <Outlet />
 
   return (
     <div className="flex h-screen overflow-hidden bg-gray-50">

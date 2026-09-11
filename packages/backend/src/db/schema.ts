@@ -184,6 +184,8 @@ export const auditorias = pgTable('auditorias', {
   // Modo agéntico: se fija al crear el encargo (solo si la firma lo tiene habilitado) y no cambia después.
   // Con false el encargo se comporta exactamente como antes del modo agéntico.
   agenteActivado: boolean('agente_activado').default(false).notNull(),
+  // Arranque guiado (solo con agente): null = el encargo abre en la guía de primeros pasos.
+  arranqueCompletadoAt: timestamp('arranque_completado_at'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
 })
 
@@ -1076,5 +1078,24 @@ export const seudonimos = pgTable(
   (t) => ({
     firmaTokenUnq: uniqueIndex('seudonimos_firma_token_unq').on(t.firmaId, t.token),
     firmaValorUnq: uniqueIndex('seudonimos_firma_tipo_valor_unq').on(t.firmaId, t.tipo, t.valor),
+  }),
+)
+
+// Memoria del agente por empresa (P-08): respuestas que se preguntan una sola vez
+// (p. ej. si provisiona renta mensualmente) y descartes recurrentes. clave → valor.
+export const memoriaEmpresaAgente = pgTable(
+  'memoria_empresa_agente',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    empresaId: uuid('empresa_id')
+      .notNull()
+      .references(() => empresas.id),
+    clave: text('clave').notNull(),
+    valor: jsonb('valor').$type<Record<string, unknown>>().notNull(),
+    actualizadoPor: uuid('actualizado_por').references(() => usuarios.id),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (t) => ({
+    empresaClaveUnq: uniqueIndex('memoria_empresa_agente_empresa_clave_unq').on(t.empresaId, t.clave),
   }),
 )

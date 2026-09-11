@@ -123,3 +123,27 @@ export const ESTADO_PROPUESTA_LABEL: Record<EstadoPropuesta, string> = {
   omitida: 'Omitida',
   descartada: 'Descartada',
 }
+
+/** Estado del arranque guiado de un encargo con agente (GET /auditorias/:id/agente/arranque). */
+export type ArranqueAgente = {
+  completado: boolean
+  empresa: {
+    nombre: string
+    sector: string
+    ciiu: string | null
+    actividadEconomica: string | null
+    marcoContable: string
+    ciudad: string | null
+  }
+  documentos: { rut: boolean; camaraComercio: boolean; estadosAnteriores: boolean }
+  entendimiento: { cambiosSignificativos: string | null; sinCambios: boolean; confirmado: boolean } | null
+  memoria: Record<string, unknown>
+  balanceCargado: boolean
+  comparativoCargado: boolean
+  corrida: CorridaAgente | null
+  teToca: number
+  hallazgosAltos: number
+  materialidadPropuesta: number | null
+  documentosPedidos: number
+  primeraDecision: { paso: string; codigo: string | null; titulo: string; severidad: SeveridadPropuesta | null; monto: number | null } | null
+}

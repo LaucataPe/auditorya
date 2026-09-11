@@ -106,10 +106,12 @@ export function EmpresaEncargos() {
 
   const createMutation = useMutation({
     mutationFn: (body: { fechaInicio: string; fechaFin: string; tipoServicio: TipoServicio; tipo?: TipoAuditoria; socioId: string; agenteActivado?: boolean }) =>
-      api.post(`/empresas/${id}/auditorias`, body),
-    onSuccess: () => {
+      api.post<{ id: string; agenteActivado?: boolean }>(`/empresas/${id}/auditorias`, body),
+    onSuccess: (creada) => {
       queryClient.invalidateQueries({ queryKey: ['auditorias', id] })
       setModalOpen(false)
+      // Con agente, el encargo arranca guiado: nada de dashboard vacío.
+      if (creada.agenteActivado) navigate(`/empresas/${id}/encargos/${creada.id}/arranque`)
     },
   })
 

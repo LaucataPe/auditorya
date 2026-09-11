@@ -33,6 +33,7 @@ import { SuperadminPrefijos } from './pages/superadmin/SuperadminPrefijos'
 // Empresa panel pages
 import { EmpresaDashboard } from './pages/empresa/EmpresaDashboard'
 import { EmpresaEncargos } from './pages/empresa/EmpresaEncargos'
+import { EmpresaArranque } from './pages/empresa/EmpresaArranque'
 import { EmpresaAuditoria } from './pages/empresa/EmpresaAuditoria'
 import { EmpresaPapel } from './pages/empresa/EmpresaPapel'
 import { EmpresaEvaluacion } from './pages/empresa/EmpresaEvaluacion'
@@ -110,6 +111,7 @@ export default function App() {
         <Route path="dashboard" element={<EmpresaDashboard />} />
         <Route path="encargos" element={<EmpresaEncargos />} />
         <Route path="encargos/:auditoriaId" element={<EmpresaAuditoria />} />
+        <Route path="encargos/:auditoriaId/arranque" element={<EmpresaArranque />} />
         <Route path="encargos/:auditoriaId/papeles/:papelId" element={<EmpresaPapel />} />
         <Route path="evaluacion" element={<EmpresaEvaluacion />} />
         <Route path="documentos" element={<EmpresaDocumentos />} />
