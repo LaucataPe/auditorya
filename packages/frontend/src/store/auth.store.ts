@@ -19,6 +19,7 @@ export type Firma = {
   logo: string | null
   fuenteTitulos: string | null
   fuenteCuerpo: string | null
+  agenteHabilitado: boolean
   createdAt: string
 }
 

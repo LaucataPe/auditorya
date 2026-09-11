@@ -10,6 +10,7 @@ import {
   entendimientoPeriodo, cuentasBalance, balanceArchivos, perfilesBalance, cuentasBalanceComparativo, balanceMeta,
   eventos, usuarios, evidencias, ajustes, hallazgos,
   solicitudesPbc, notasRevision, cierresAuditoria, muestras, papelesSnapshots,
+  firmas,
 } from '../db/schema'
 import { authMiddleware } from '../middleware/auth'
 import { esSocioResponsable, ERROR_NO_SOCIO_RESPONSABLE } from '../lib/permisos'
@@ -781,6 +782,8 @@ app.post(
         tipoServicio: z.enum(['revisoria_fiscal', 'auditoria_interna']).default('revisoria_fiscal'),
         tipo: z.enum(['financiera', 'integral', 'especial']).optional(),
         socioId: z.string().uuid(),
+        // Modo agéntico: solo si la firma lo tiene habilitado. Se fija al crear y no cambia después.
+        agenteActivado: z.boolean().optional(),
       })
       .superRefine((val, ctx) => {
         if (val.tipoServicio === 'revisoria_fiscal' && !val.tipo) {
@@ -838,6 +841,19 @@ app.post(
       return c.json({ error: { code: 'SOCIO_INVALIDO', message: 'El socio responsable debe tener nivel de socio' } }, 400)
     }
 
+    // El agente solo se activa en encargos nuevos de firmas habilitadas por el superadmin.
+    let agenteActivado = false
+    if (body.agenteActivado) {
+      const [firma] = await db.select({ habilitado: firmas.agenteHabilitado }).from(firmas).where(eq(firmas.id, firmaId))
+      if (!firma?.habilitado) {
+        return c.json(
+          { error: { code: 'AGENTE_NO_HABILITADO', message: 'El acompañamiento del agente no está habilitado para esta firma' } },
+          409,
+        )
+      }
+      agenteActivado = true
+    }
+
     const [auditoria] = await db
       .insert(auditorias)
       .values({
@@ -847,6 +863,7 @@ app.post(
         fechaFin: body.fechaFin,
         tipoServicio: body.tipoServicio,
         tipo: body.tipo ?? null,
+        agenteActivado,
       })
       .returning()
 
@@ -856,7 +873,7 @@ app.post(
       entidadId: auditoria.id,
       auditoriaId: auditoria.id,
       empresaId,
-      detalle: { fechaInicio: body.fechaInicio, fechaFin: body.fechaFin, tipoServicio: body.tipoServicio },
+      detalle: { fechaInicio: body.fechaInicio, fechaFin: body.fechaFin, tipoServicio: body.tipoServicio, agenteActivado },
     })
 
     return c.json({ data: auditoria }, 201)

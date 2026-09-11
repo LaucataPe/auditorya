@@ -18,6 +18,8 @@ export type Auditoria = {
   tipo: TipoAuditoria | null
   estado: EstadoAuditoria
   materialidadAprobada: boolean
+  /** Modo agéntico: fijo desde la creación del encargo. */
+  agenteActivado: boolean
   createdAt: string
 }
 

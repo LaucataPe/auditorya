@@ -86,6 +86,7 @@ app.get('/firmas', superadminMiddleware, async (c) => {
       nombre: firmas.nombre,
       nit: firmas.nit,
       ciudad: firmas.ciudad,
+      agenteHabilitado: firmas.agenteHabilitado,
       createdAt: firmas.createdAt,
       totalUsuarios: sql<number>`(select count(*) from usuarios where usuarios.firma_id = firmas.id)::int`,
     })
@@ -128,6 +129,26 @@ app.post(
       .returning({ id: usuarios.id, nombre: usuarios.nombre, email: usuarios.email, rol: usuarios.rol, createdAt: usuarios.createdAt })
 
     return c.json({ data: { firma, usuario } }, 201)
+  },
+)
+
+// PATCH /superadmin/firmas/:id/agente — habilita o deshabilita el modo agéntico para la firma.
+// Solo afecta encargos NUEVOS: los existentes conservan su bandera agente_activado.
+app.patch(
+  '/firmas/:id/agente',
+  superadminMiddleware,
+  zValidator('json', z.object({ habilitado: z.boolean() })),
+  async (c) => {
+    const id = c.req.param('id')
+    const { habilitado } = c.req.valid('json')
+    const [firma] = await db
+      .update(firmas)
+      .set({ agenteHabilitado: habilitado })
+      .where(eq(firmas.id, id))
+      .returning({ id: firmas.id, nombre: firmas.nombre, agenteHabilitado: firmas.agenteHabilitado })
+    if (!firma) return c.json({ error: { code: 'NOT_FOUND', message: 'Firma no encontrada' } }, 404)
+    console.log(`[superadmin] modo agéntico ${habilitado ? 'habilitado' : 'deshabilitado'} para la firma ${firma.nombre}`)
+    return c.json({ data: firma })
   },
 )
 

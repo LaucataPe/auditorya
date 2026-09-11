@@ -14,6 +14,7 @@ type FirmaRow = {
   ciudad: string
   createdAt: string
   totalUsuarios: number
+  agenteHabilitado: boolean
 }
 
 type UsuarioRow = {
@@ -54,6 +55,12 @@ export function SuperadminFirmas() {
       queryClient.invalidateQueries({ queryKey: ['superadmin', 'firmas'] })
       setModalOpen(false)
     },
+  })
+
+  const agenteMutation = useMutation({
+    mutationFn: ({ id, habilitado }: { id: string; habilitado: boolean }) =>
+      api.patch(`/superadmin/firmas/${id}/agente`, { habilitado }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['superadmin', 'firmas'] }),
   })
 
   function toggleExpand(id: string) {
@@ -126,6 +133,22 @@ export function SuperadminFirmas() {
                     <p className="text-xs text-gray-400">NIT {firma.nit} · {firma.ciudad}</p>
                   </div>
                   <div className="flex items-center gap-4 shrink-0">
+                    <span
+                      role="switch"
+                      aria-checked={firma.agenteHabilitado}
+                      aria-label={`Modo agéntico para ${firma.nombre}`}
+                      tabIndex={0}
+                      onClick={(e) => { e.stopPropagation(); agenteMutation.mutate({ id: firma.id, habilitado: !firma.agenteHabilitado }) }}
+                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); agenteMutation.mutate({ id: firma.id, habilitado: !firma.agenteHabilitado }) } }}
+                      className={cn(
+                        'text-xs font-medium px-2.5 py-1 rounded-full border transition-colors cursor-pointer select-none',
+                        firma.agenteHabilitado
+                          ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
+                          : 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-gray-100',
+                      )}
+                    >
+                      {firma.agenteHabilitado ? 'Agente habilitado' : 'Agente apagado'}
+                    </span>
                     <div className="text-right">
                       <p className="text-sm font-semibold text-gray-900">{firma.totalUsuarios}</p>
                       <p className="text-xs text-gray-400">usuarios</p>

@@ -3,6 +3,8 @@ export type Firma = {
   nombre: string
   nit: string
   ciudad: string
+  /** El superadmin permite a la firma activar el agente en encargos nuevos. */
+  agenteHabilitado: boolean
   createdAt: string
 }
 

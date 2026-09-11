@@ -27,6 +27,7 @@ type Auditoria = {
   estado: FaseAuditoria
   materialidadAprobada: boolean
   createdAt: string
+  agenteActivado?: boolean
 }
 
 const SERVICIO_LABEL: Record<TipoServicio, string> = {
@@ -104,7 +105,7 @@ export function EmpresaEncargos() {
   const nombrePorId = (uid: string) => usuarios.find((u) => u.id === uid)?.nombre ?? '—'
 
   const createMutation = useMutation({
-    mutationFn: (body: { fechaInicio: string; fechaFin: string; tipoServicio: TipoServicio; tipo?: TipoAuditoria; socioId: string }) =>
+    mutationFn: (body: { fechaInicio: string; fechaFin: string; tipoServicio: TipoServicio; tipo?: TipoAuditoria; socioId: string; agenteActivado?: boolean }) =>
       api.post(`/empresas/${id}/auditorias`, body),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['auditorias', id] })
@@ -217,6 +218,9 @@ export function EmpresaEncargos() {
                       <span className={cn('text-xs font-medium px-2 py-0.5 rounded-full', SERVICIO_BADGE[auditoria.tipoServicio ?? 'revisoria_fiscal'])}>
                         {SERVICIO_LABEL[auditoria.tipoServicio ?? 'revisoria_fiscal']}
                       </span>
+                      {auditoria.agenteActivado && (
+                        <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700">Con agente</span>
+                      )}
                     </div>
                     <p className="font-semibold text-gray-900">
                       {auditoria.tipo ? TIPO_LABEL[auditoria.tipo] : SERVICIO_LABEL[auditoria.tipoServicio ?? 'revisoria_fiscal']}
@@ -302,7 +306,7 @@ function NuevoEncargoModal({
   usuarios: Usuario[]
   loading: boolean
   error: string | null
-  onCreate: (e: { fechaInicio: string; fechaFin: string; tipoServicio: TipoServicio; tipo?: TipoAuditoria; socioId: string }) => void
+  onCreate: (e: { fechaInicio: string; fechaFin: string; tipoServicio: TipoServicio; tipo?: TipoAuditoria; socioId: string; agenteActivado?: boolean }) => void
 }) {
   const socios = usuarios.filter((u) => u.rol === 'socio')
   const opcionesSocio = (socios.length > 0 ? socios : usuarios).map((u) => ({ value: u.id, label: u.nombre }))
@@ -314,8 +318,11 @@ function NuevoEncargoModal({
     tipoServicio: 'revisoria_fiscal' as TipoServicio,
     tipo: 'financiera' as TipoAuditoria,
     socioId: '',
+    agenteActivado: true,
   })
   const [fechaError, setFechaError] = useState<string | null>(null)
+  const firma = useAuthStore((s) => s.firma)
+  const agenteDisponible = !!firma?.agenteHabilitado
 
   const socioId = form.socioId || opcionesSocio[0]?.value || ''
   const esRevFiscal = form.tipoServicio === 'revisoria_fiscal'
@@ -328,13 +335,14 @@ function NuevoEncargoModal({
       return
     }
     setFechaError(null)
-    const body: { fechaInicio: string; fechaFin: string; tipoServicio: TipoServicio; tipo?: TipoAuditoria; socioId: string } = {
+    const body: { fechaInicio: string; fechaFin: string; tipoServicio: TipoServicio; tipo?: TipoAuditoria; socioId: string; agenteActivado?: boolean } = {
       fechaInicio: form.fechaInicio,
       fechaFin: form.fechaFin,
       tipoServicio: form.tipoServicio,
       socioId,
     }
     if (esRevFiscal) body.tipo = form.tipo
+    if (agenteDisponible) body.agenteActivado = form.agenteActivado
     onCreate(body)
   }
 
@@ -390,6 +398,24 @@ function NuevoEncargoModal({
           onChange={(e) => setForm({ ...form, socioId: e.target.value })}
           options={opcionesSocio.length > 0 ? opcionesSocio : [{ value: '', label: 'Sin usuarios' }]}
         />
+
+        {agenteDisponible && (
+          <label htmlFor="enc-agente" className="flex items-start gap-3 rounded-lg border border-gray-200 bg-gray-50 px-3 py-3 cursor-pointer">
+            <input
+              id="enc-agente"
+              type="checkbox"
+              className="mt-0.5 h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+              checked={form.agenteActivado}
+              onChange={(e) => setForm({ ...form, agenteActivado: e.target.checked })}
+            />
+            <span>
+              <span className="block text-sm font-medium text-gray-900">Acompañamiento del agente</span>
+              <span className="block text-xs text-gray-500">
+                El agente revisa el balance, propone hallazgos y materialidad, y pide los documentos que necesita. Tú apruebas cada cosa. No se puede cambiar después de crear el encargo.
+              </span>
+            </span>
+          </label>
+        )}
 
         {error && (
           <p className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{error}</p>
