@@ -43,11 +43,19 @@ pnpm install
 pnpm dev                              # levanta frontend y backend
 pnpm --filter backend db:generate    # genera migración desde schema
 pnpm --filter backend db:migrate     # aplica migraciones
+pnpm --filter backend db:rollback    # revierte la última migración con su drizzle/down/<tag>.sql (--confirmar para ejecutar)
 pnpm --filter backend db:studio      # UI visual de la DB
 pnpm build
 pnpm lint
 pnpm test                             # vitest en types y backend (lógica pura)
 ```
+
+## Migraciones con reverso (obligatorio desde 0044)
+
+Toda migración `drizzle/00XX_nombre.sql` lleva su reverso `drizzle/down/00XX_nombre.sql` (mismo tag, mismos
+`--> statement-breakpoint`) que solo toca lo que la migración creó. Antes de producción se ensaya sobre una copia
+de la base: `DATABASE_URL=<copia> db:migrate` → `db:rollback --confirmar` → `db:migrate`. Solo cambios aditivos:
+columnas nuevas NULL o con DEFAULT, tablas nuevas; nunca DROP/RENAME/ALTER TYPE de lo existente.
 
 ## Variables de entorno
 

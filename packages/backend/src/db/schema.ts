@@ -10,6 +10,8 @@ export const firmas = pgTable('firmas', {
   logo: text('logo'), // data URI (image/png|jpeg|webp) ya reducido en el cliente; null → sin logo
   fuenteTitulos: text('fuente_titulos'), // catálogo FUENTES_DOCUMENTO; null → defecto (Arial)
   fuenteCuerpo: text('fuente_cuerpo'), // catálogo FUENTES_DOCUMENTO; null → defecto (Georgia)
+  // Modo agéntico: si la firma puede activar el acompañamiento del agente en encargos nuevos.
+  agenteHabilitado: boolean('agente_habilitado').default(false).notNull(),
   createdAt: timestamp('created_at').defaultNow().notNull(),
 })
 
@@ -179,6 +181,9 @@ export const auditorias = pgTable('auditorias', {
     .default('planificacion')
     .notNull(),
   materialidadAprobada: boolean('materialidad_aprobada').default(false).notNull(),
+  // Modo agéntico: se fija al crear el encargo (solo si la firma lo tiene habilitado) y no cambia después.
+  // Con false el encargo se comporta exactamente como antes del modo agéntico.
+  agenteActivado: boolean('agente_activado').default(false).notNull(),
   createdAt: timestamp('created_at').defaultNow().notNull(),
 })
 
@@ -529,6 +534,8 @@ export const eventos = pgTable('eventos', {
   entidad: text('entidad').notNull(), // 'papel_trabajo', 'informe', 'materialidad', ...
   entidadId: uuid('entidad_id'),
   detalle: jsonb('detalle').$type<Record<string, unknown>>(),
+  // Quién ejecutó la acción: una persona o el agente (que actúa a nombre del usuario que disparó la corrida).
+  actor: text('actor', { enum: ['usuario', 'agente'] }).default('usuario').notNull(),
   createdAt: timestamp('created_at').defaultNow().notNull(),
 })
 
@@ -908,3 +915,166 @@ export const hallazgosTributarios = pgTable('hallazgos_tributarios', {
   creadoPor: uuid('creado_por').references(() => usuarios.id),
   createdAt: timestamp('created_at').defaultNow().notNull(),
 })
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Modo agéntico. Todo es ADITIVO: el agente produce propuestas con bitácora y el
+// humano decide; al aprobar se escribe en las tablas de siempre (materialidades,
+// hallazgos, papeles…). Nada de lo existente cambia de forma ni de significado.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Una corrida = una ejecución del motor determinista de un procedimiento sobre un
+// encargo (p. ej. 'balance' al importar el balance de prueba). Máximo 3 intentos.
+export const corridasAgente = pgTable(
+  'corridas_agente',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    auditoriaId: uuid('auditoria_id')
+      .notNull()
+      .references(() => auditorias.id),
+    procedimiento: text('procedimiento').notNull(), // 'balance' en el MVP
+    estado: text('estado', { enum: ['en_cola', 'corriendo', 'completada', 'error'] })
+      .default('en_cola')
+      .notNull(),
+    archivoNombre: text('archivo_nombre'),
+    archivoHash: text('archivo_hash'),
+    filas: integer('filas'),
+    filasHoja: integer('filas_hoja'),
+    filasResumen: integer('filas_resumen'),
+    // Parámetros con los que corrió (materialidad usada, convención de signos, período, umbrales).
+    parametros: jsonb('parametros').$type<Record<string, unknown>>().default({}).notNull(),
+    // Resumen estructurado: reglas ejecutadas, limitaciones (no verificables), partidas triviales agrupadas.
+    resultado: jsonb('resultado').$type<Record<string, unknown>>(),
+    intentos: integer('intentos').default(0).notNull(),
+    error: text('error'),
+    iniciadaPor: uuid('iniciada_por')
+      .notNull()
+      .references(() => usuarios.id),
+    iniciadaAt: timestamp('iniciada_at'),
+    terminadaAt: timestamp('terminada_at'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (t) => ({
+    auditoriaIdx: index('corridas_agente_auditoria_idx').on(t.auditoriaId, t.createdAt),
+  }),
+)
+
+// Propuesta del agente: hallazgo, materialidad, documento requerido, juicio o
+// ambigüedad. Vive en el paso del rail que la resuelve. Nunca se borra: omitir y
+// descartar son estados. `desbloquea_id` liga un ítem de atención al hallazgo que
+// resuelve (FK definida en SQL para evitar la autorreferencia en Drizzle).
+export const propuestasAgente = pgTable(
+  'propuestas_agente',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    auditoriaId: uuid('auditoria_id')
+      .notNull()
+      .references(() => auditorias.id),
+    corridaId: uuid('corrida_id').references(() => corridasAgente.id),
+    paso: text('paso').notNull(), // id del paso del rail: 'balance', 'materialidad', 'pbc', …
+    tipo: text('tipo', { enum: ['hallazgo', 'materialidad', 'documento', 'juicio', 'ambiguedad'] }).notNull(),
+    codigo: text('codigo'), // 'H-01' (único por encargo cuando existe)
+    titulo: text('titulo').notNull(),
+    cuentaCodigo: text('cuenta_codigo'),
+    monto: numeric('monto', { precision: 20, scale: 2 }),
+    severidad: text('severidad', { enum: ['alta', 'media', 'baja'] }),
+    certeza: text('certeza', { enum: ['verificado', 'requiere_evidencia', 'no_verificable'] }),
+    // IDs de reglas del motor que la originaron (p. ej. ['V-20','V-21']).
+    reglas: jsonb('reglas').$type<string[]>().default([]).notNull(),
+    // Datos calculados por el motor (los "facts" de la tarjeta). El LLM nunca los produce.
+    datos: jsonb('datos').$type<Record<string, unknown>>().default({}).notNull(),
+    // Redacción y opciones: descripción, norma, recomendación, opciones de un juicio, etc.
+    contenido: jsonb('contenido').$type<Record<string, unknown>>().default({}).notNull(),
+    estado: text('estado', { enum: ['propuesta', 'aprobada', 'ajustada', 'omitida', 'descartada'] })
+      .default('propuesta')
+      .notNull(),
+    desbloqueaId: uuid('desbloquea_id'),
+    // Fila creada en la tabla de siempre al aprobar (p. ej. 'hallazgo' + id en `hallazgos`).
+    entidadDestino: text('entidad_destino'),
+    entidadDestinoId: uuid('entidad_destino_id'),
+    decididaPor: uuid('decidida_por').references(() => usuarios.id),
+    decididaAt: timestamp('decidida_at'),
+    motivoDecision: text('motivo_decision'),
+    orden: integer('orden').default(0).notNull(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (t) => ({
+    auditoriaEstadoIdx: index('propuestas_agente_auditoria_estado_idx').on(t.auditoriaId, t.estado),
+    auditoriaCodigoUnq: uniqueIndex('propuestas_agente_auditoria_codigo_unq').on(t.auditoriaId, t.codigo),
+  }),
+)
+
+// Bitácora numerada y estructurada (la documentación NIA exportable). Cada línea
+// es rastreable a una regla del motor, una cita normativa o una acción humana.
+export const bitacoraAgente = pgTable(
+  'bitacora_agente',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    auditoriaId: uuid('auditoria_id')
+      .notNull()
+      .references(() => auditorias.id),
+    propuestaId: uuid('propuesta_id').references(() => propuestasAgente.id),
+    corridaId: uuid('corrida_id').references(() => corridasAgente.id),
+    numero: integer('numero').notNull(),
+    tipo: text('tipo', {
+      enum: ['lectura', 'regla', 'contraste', 'clasificacion', 'solicitud', 'llm', 'humano'],
+    }).notNull(),
+    texto: text('texto').notNull(),
+    // { regla: 'V-21', norma: 'NIA 315', paso: 'P-03', llmLlamadaId: … }
+    referencia: jsonb('referencia').$type<Record<string, unknown>>(),
+    actor: text('actor', { enum: ['agente', 'usuario'] }).default('agente').notNull(),
+    usuarioId: uuid('usuario_id').references(() => usuarios.id),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (t) => ({
+    propuestaIdx: index('bitacora_agente_propuesta_idx').on(t.propuestaId, t.numero),
+    corridaIdx: index('bitacora_agente_corrida_idx').on(t.corridaId, t.numero),
+  }),
+)
+
+// Instrumentación de costos: CADA llamada al LLM, con propósito, modelo, tokens y costo.
+// Sin FK a auditoría/propuesta a propósito: el registro de costo sobrevive al borrado.
+export const llmLlamadas = pgTable(
+  'llm_llamadas',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    firmaId: uuid('firma_id')
+      .notNull()
+      .references(() => firmas.id),
+    auditoriaId: uuid('auditoria_id'),
+    propuestaId: uuid('propuesta_id'),
+    proposito: text('proposito').notNull(), // 'redactar_hallazgo', 'preguntar', 'sugerir_riesgos', …
+    modelo: text('modelo').notNull(),
+    tokensEntrada: integer('tokens_entrada').default(0).notNull(),
+    tokensCache: integer('tokens_cache').default(0).notNull(),
+    tokensSalida: integer('tokens_salida').default(0).notNull(),
+    costoUsd: numeric('costo_usd', { precision: 12, scale: 6 }),
+    duracionMs: integer('duracion_ms'),
+    exito: boolean('exito').default(true).notNull(),
+    error: text('error'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (t) => ({
+    firmaIdx: index('llm_llamadas_firma_idx').on(t.firmaId, t.createdAt),
+  }),
+)
+
+// Seudonimización: mapa token ↔ valor real (empresa, NIT, tercero, persona). Vive
+// solo en el servidor; se aplica en el middleware del cliente LLM y se rehidrata local.
+export const seudonimos = pgTable(
+  'seudonimos',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    firmaId: uuid('firma_id')
+      .notNull()
+      .references(() => firmas.id),
+    empresaId: uuid('empresa_id').references(() => empresas.id),
+    tipo: text('tipo', { enum: ['empresa', 'nit', 'tercero', 'persona'] }).notNull(),
+    token: text('token').notNull(), // 'EMP_01', 'TERCERO_47'
+    valor: text('valor').notNull(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (t) => ({
+    firmaTokenUnq: uniqueIndex('seudonimos_firma_token_unq').on(t.firmaId, t.token),
+    firmaValorUnq: uniqueIndex('seudonimos_firma_tipo_valor_unq').on(t.firmaId, t.tipo, t.valor),
+  }),
+)
