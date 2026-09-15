@@ -973,7 +973,7 @@ export const propuestasAgente = pgTable(
       .references(() => auditorias.id),
     corridaId: uuid('corrida_id').references(() => corridasAgente.id),
     paso: text('paso').notNull(), // id del paso del rail: 'balance', 'materialidad', 'pbc', …
-    tipo: text('tipo', { enum: ['hallazgo', 'materialidad', 'documento', 'juicio', 'ambiguedad'] }).notNull(),
+    tipo: text('tipo', { enum: ['hallazgo', 'materialidad', 'documento', 'juicio', 'ambiguedad', 'riesgo'] }).notNull(),
     codigo: text('codigo'), // 'H-01' (único por encargo cuando existe)
     titulo: text('titulo').notNull(),
     cuentaCodigo: text('cuenta_codigo'),

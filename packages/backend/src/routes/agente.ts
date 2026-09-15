@@ -3,6 +3,7 @@
  *  - GET  /auditorias/:id/agente/resumen                → contadores "Te toca / Hecho", por paso, última corrida
  *  - GET  /auditorias/:id/agente/propuestas?paso=&estado= → propuestas con bitácora
  *  - POST /auditorias/:id/agente/corridas               → corre el procedimiento de balance (0 tokens)
+ *  - POST /auditorias/:id/agente/corridas/riesgos       → propone riesgos desde hallazgos, entendimiento, COSO y sector (0 tokens)
  *  - POST /propuestas/:id/decidir                       → aprobar / ajustar / omitir / descartar / retomar
  * Todas exigen encargo con agente_activado.
  */
@@ -13,15 +14,17 @@ import { zValidator } from '../lib/validacion'
 import { db } from '../db/client'
 import {
   auditorias, empresas, usuarios, materialidades, corridasAgente, propuestasAgente, bitacoraAgente,
-  documentosEmpresa, entendimientoPeriodo, memoriaEmpresaAgente, cuentasBalance, cuentasBalanceComparativo,
+  documentosEmpresa, entendimientoPeriodo, memoriaEmpresaAgente, cuentasBalance, cuentasBalanceComparativo, riesgos,
 } from '../db/schema'
 import { authMiddleware } from '../middleware/auth'
 import { encargoCerrado, ERROR_ENCARGO_CERRADO } from '../lib/encargo'
 import { esSocioResponsable } from '../lib/permisos'
 import { registrarEvento } from '../lib/eventos'
 import { correrProcedimientoBalance, intentosAgotados } from '../lib/agente/corrida-balance'
+import { correrIdentificacionRiesgosEncargo, hayCorridaRiesgos, PROCEDIMIENTO_RIESGOS } from '../lib/agente/corrida-riesgos'
+import { areaValidaParaFirma, ERROR_AREA_INVALIDA } from '../lib/areas'
 import type { JwtPayload } from '../lib/jwt'
-import type { LineaBitacora, PropuestaAgente, CorridaAgente, ResumenAgente, ArranqueAgente } from '@auditorya/types'
+import { nivelCombinado, type LineaBitacora, type PropuestaAgente, type CorridaAgente, type ResumenAgente, type ArranqueAgente, type ContenidoPropuesta } from '@auditorya/types'
 
 const app = new Hono<{ Variables: { user: JwtPayload } }>()
 app.use('*', authMiddleware)
@@ -68,10 +71,10 @@ function aPropuesta(row: typeof propuestasAgente.$inferSelect, bitacora: LineaBi
   }
 }
 
-async function ultimaCorrida(auditoriaId: string): Promise<CorridaAgente | null> {
+async function ultimaCorrida(auditoriaId: string, procedimiento: string = 'balance'): Promise<CorridaAgente | null> {
   const [c] = await db
     .select().from(corridasAgente)
-    .where(and(eq(corridasAgente.auditoriaId, auditoriaId), eq(corridasAgente.procedimiento, 'balance')))
+    .where(and(eq(corridasAgente.auditoriaId, auditoriaId), eq(corridasAgente.procedimiento, procedimiento)))
     .orderBy(desc(corridasAgente.createdAt)).limit(1)
   if (!c) return null
   const bit = (await bitacoraDe({ corridaId: c.id })).get(c.id) ?? []
@@ -89,22 +92,23 @@ app.get('/auditorias/:id/agente/resumen', async (c) => {
   const row = await cargarAuditoria(id, firmaId)
   if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Auditoría no encontrada' } }, 404)
   if (!row.auditoria.agenteActivado) {
-    const vacio: ResumenAgente = { activado: false, teToca: 0, hecho: 0, porPaso: {}, corrida: null }
+    const vacio: ResumenAgente = { activado: false, teToca: 0, hecho: 0, porPaso: {}, corrida: null, corridaRiesgos: null }
     return c.json({ data: vacio })
   }
   const filas = await db
-    .select({ paso: propuestasAgente.paso, estado: propuestasAgente.estado, n: sql<number>`count(*)::int` })
-    .from(propuestasAgente).where(eq(propuestasAgente.auditoriaId, id)).groupBy(propuestasAgente.paso, propuestasAgente.estado)
+    .select({ paso: propuestasAgente.paso, estado: propuestasAgente.estado, humana: sql<boolean>`${propuestasAgente.decididaPor} is not null`, n: sql<number>`count(*)::int` })
+    .from(propuestasAgente).where(eq(propuestasAgente.auditoriaId, id)).groupBy(propuestasAgente.paso, propuestasAgente.estado, sql`${propuestasAgente.decididaPor} is not null`)
   const porPaso: ResumenAgente['porPaso'] = {}
   let teToca = 0, decididas = 0
   for (const f of filas) {
     const p = (porPaso[f.paso] ??= { pendientes: 0, decididas: 0 })
     if (f.estado === 'propuesta') { p.pendientes += f.n; teToca += f.n }
-    else if (f.estado === 'aprobada' || f.estado === 'ajustada' || f.estado === 'descartada') { p.decididas += f.n; decididas += f.n }
+    // Solo cuentan las decisiones de personas: lo que el agente reemplazó en una corrida nueva no tiene decidida_por.
+    else if (f.humana && (f.estado === 'aprobada' || f.estado === 'ajustada' || f.estado === 'descartada')) { p.decididas += f.n; decididas += f.n }
   }
   // "Hecho" = lo que hizo el agente en la última corrida + las decisiones tomadas por personas.
-  const corrida = await ultimaCorrida(id)
-  const data: ResumenAgente = { activado: true, teToca, hecho: (corrida?.bitacora.length ?? 0) + decididas, porPaso, corrida }
+  const [corrida, corridaRiesgos] = await Promise.all([ultimaCorrida(id), ultimaCorrida(id, PROCEDIMIENTO_RIESGOS)])
+  const data: ResumenAgente = { activado: true, teToca, hecho: (corrida?.bitacora.length ?? 0) + (corridaRiesgos?.bitacora.length ?? 0) + decididas, porPaso, corrida, corridaRiesgos }
   return c.json({ data })
 })
 
@@ -152,6 +156,22 @@ app.post('/auditorias/:id/agente/corridas', async (c) => {
   }
 })
 
+// POST /auditorias/:id/agente/corridas/riesgos — propone (o vuelve a proponer) los riesgos del encargo
+app.post('/auditorias/:id/agente/corridas/riesgos', async (c) => {
+  const user = c.get('user')
+  const id = c.req.param('id')
+  const row = await cargarAuditoria(id, user.firmaId)
+  if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Auditoría no encontrada' } }, 404)
+  if (!row.auditoria.agenteActivado) return c.json({ error: ERROR_AGENTE_NO_ACTIVADO }, 409)
+  if (await encargoCerrado(id)) return c.json({ error: ERROR_ENCARGO_CERRADO }, 409)
+  try {
+    const r = await correrIdentificacionRiesgosEncargo(id, user)
+    return c.json({ data: r }, 201)
+  } catch {
+    return c.json({ error: { code: 'AGENTE_ERROR', message: 'La propuesta de riesgos no pudo completarse. Quedó registrada para reintentar.' } }, 500)
+  }
+})
+
 // POST /propuestas/:id/decidir
 app.post(
   '/propuestas/:id/decidir',
@@ -164,6 +184,13 @@ app.post(
       severidad: z.enum(['alta', 'media', 'baja']).optional(),
       /** Para tipo materialidad: valores elegidos por el socio. */
       materialidad: z.object({ montoBase: z.number().positive(), porcentaje: z.number().positive().max(100), porcentajeDesempeno: z.number().positive().max(100) }).optional(),
+      /** Para tipo riesgo: valores elegidos por el auditor. */
+      riesgo: z.object({
+        area: z.string().min(2).max(80).optional(),
+        riesgoInherente: z.enum(['bajo', 'medio', 'alto']).optional(),
+        riesgoControl: z.enum(['bajo', 'medio', 'alto']).optional(),
+        respuestaPlaneada: z.string().max(2000).optional(),
+      }).optional(),
     }).optional(),
   })),
   async (c) => {
@@ -233,6 +260,27 @@ app.post(
       registrarEvento(user, { accion: socio ? 'materialidad.aprobar' : 'materialidad.calcular', entidad: 'materialidad', entidadId: mat.id, auditoriaId: p.auditoriaId, detalle: { materialidad: valores.materialidad, base: valores.baseCalculo, origen: 'agente' } })
     }
 
+    // Riesgo: aprobar (o ajustar) escribe en la matriz de riesgos de siempre, con su respuesta planeada.
+    if (p.tipo === 'riesgo' && (decision === 'aprobar' || decision === 'ajustar')) {
+      const prop = (p.contenido as ContenidoPropuesta).riesgo
+      if (!prop) return c.json({ error: { code: 'PROPUESTA_INVALIDA', message: 'La propuesta no trae valores de riesgo' } }, 409)
+      const area = ajustes?.riesgo?.area ?? prop.area
+      if (!(await areaValidaParaFirma(user.firmaId, area))) return c.json({ error: ERROR_AREA_INVALIDA }, 400)
+      const inherente = ajustes?.riesgo?.riesgoInherente ?? prop.riesgoInherente
+      const control = ajustes?.riesgo?.riesgoControl ?? prop.riesgoControl
+      const combinado = nivelCombinado(inherente, control)
+      const respuesta = ajustes?.riesgo?.respuestaPlaneada ?? prop.respuestaPlaneada
+      const descripcion = ajustes?.descripcion ?? (p.contenido as ContenidoPropuesta).descripcion ?? p.titulo
+      const [riesgo] = await db.insert(riesgos).values({
+        auditoriaId: p.auditoriaId, area, descripcion, riesgoInherente: inherente, riesgoControl: control, riesgoCombinado: combinado,
+        respuestaPlaneada: respuesta || null, origen: prop.fuente.tipo === 'hallazgo' ? 'analitico' : 'sugerido',
+      }).returning()
+      set.entidadDestino = 'riesgo'; set.entidadDestinoId = riesgo.id
+      set.contenido = { ...(set.contenido ?? (p.contenido as Record<string, unknown>)), riesgo: { ...prop, area, riesgoInherente: inherente, riesgoControl: control, riesgoCombinado: combinado, respuestaPlaneada: respuesta } }
+      texto += ` Riesgo ${combinado} en ${area} escrito en la matriz de riesgos.`
+      registrarEvento(user, { accion: 'riesgo.crear', entidad: 'riesgo', entidadId: riesgo.id, auditoriaId: p.auditoriaId, detalle: { area, combinado, origen: 'agente', fuente: prop.fuente.tipo, codigo: p.codigo } })
+    }
+
     // Entendimiento: aprobar (o ajustar) el juicio confirma el entendimiento del período en la tabla de siempre.
     const destino = (p.contenido as { destino?: string }).destino
     if (p.tipo === 'juicio' && destino === 'entendimiento' && (decision === 'aprobar' || decision === 'ajustar')) {
@@ -257,14 +305,29 @@ app.post(
 
     registrarEvento(user, { accion: `propuesta.${decision}`, entidad: 'propuesta_agente', entidadId: id, auditoriaId: p.auditoriaId, detalle: { tipo: p.tipo, codigo: p.codigo, motivo: motivo ?? null } })
 
+    // El agente sigue solo: con la materialidad decidida propone los riesgos, y si ya los propuso,
+    // cada hallazgo del balance que decidas los vuelve a calcular (lo decidido se conserva).
+    let riesgosPropuestos: number | null = null
+    if (decision === 'aprobar' || decision === 'ajustar' || decision === 'descartar') {
+      try {
+        if (p.tipo === 'materialidad' && (decision === 'aprobar' || decision === 'ajustar')) {
+          riesgosPropuestos = (await correrIdentificacionRiesgosEncargo(p.auditoriaId, user)).propuestas
+        } else if (p.tipo === 'hallazgo' && p.paso === 'balance' && (await hayCorridaRiesgos(p.auditoriaId))) {
+          riesgosPropuestos = (await correrIdentificacionRiesgosEncargo(p.auditoriaId, user)).propuestas
+        }
+      } catch (err) {
+        console.error('[agente] no se pudieron proponer riesgos tras la decisión', p.auditoriaId, (err as Error).message)
+      }
+    }
+
     const bit = (await bitacoraDe({ propuestaIds: [id] })).get(id) ?? []
-    return c.json({ data: aPropuesta(actualizada, bit), aviso })
+    return c.json({ data: aPropuesta(actualizada, bit), aviso, riesgosPropuestos })
   },
 )
 
 // ─── Arranque guiado ─────────────────────────────────────────────────────────
 
-const ORDEN_PASOS = ['entendimiento', 'balance', 'materialidad', 'pbc']
+const ORDEN_PASOS = ['entendimiento', 'balance', 'materialidad', 'riesgos', 'pbc']
 
 // GET /auditorias/:id/agente/arranque
 app.get('/auditorias/:id/agente/arranque', async (c) => {

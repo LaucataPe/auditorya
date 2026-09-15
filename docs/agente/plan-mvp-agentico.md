@@ -31,11 +31,19 @@ Fecha: 2026-09-11. Estado: acordado en conversación, pendiente de insumos (ver 
   "Validación del balance de prueba" con índice NIA 230; alimenta cartas, ajustes y guía sin cambios.
 - LLM solo para dos cosas: redactar descripción y recomendación del hallazgo sobre los datos del motor, y
   responder "Preguntar sobre este hallazgo" citando la bitácora. Con seudonimización y costos por llamada.
-- Cabecera con contadores, rail con estado del agente, vista A en los tres pasos cubiertos. Los demás
+- Paso **Riesgos** (añadido 2026-09-15): procedimiento determinista R-xx (`packages/types/src/agente-riesgos.ts`).
+  R-01 hallazgos del balance aprobados → un riesgo por área del PUC (inherente = mayor severidad, certeza
+  heredada, respuesta planeada del programa estándar del área); R-02 riesgo de control base desde COSO (medio
+  si no hay); R-03 señales de los cambios del año del entendimiento → riesgos por área y control alto si cambió
+  el sistema o el equipo contable; R-10 catálogo del sector solo en áreas sin riesgo. Se propone solo al
+  decidir la materialidad y se recalcula con cada hallazgo del balance decidido (lo decidido se conserva; las
+  propuestas abiertas idénticas conservan su código). Aprobar escribe en `riesgos` (origen `analitico` si viene
+  del balance, `sugerido` si no) y desde ahí sigue el hilo riesgo → prueba → PBC de siempre.
+- Cabecera con contadores, rail con estado del agente, vista A en los pasos cubiertos. Los demás
   pasos se ven exactamente como hoy.
 
 **No (fase 2)**
-- Entendimiento desde RUT/cámara. Riesgos y pruebas derivados. Reprocesamiento al llegar un documento.
+- Entendimiento desde RUT/cámara. Pruebas derivadas automáticamente. Reprocesamiento al llegar un documento.
   Lectura de PDFs de evidencia. Niveles de autonomía 2 y 3. Memoria de descartes por empresa (se guarda el
   motivo desde el MVP, pero todavía no ajusta severidad).
 
@@ -48,6 +56,7 @@ Fecha: 2026-09-11. Estado: acordado en conversación, pendiente de insumos (ver 
 | 2 | Cliente LLM seguro | Middleware de seudonimización dentro de la única función de llamada. Captura de `usage`, costo y duración. Modelo económico / fuerte por variable de entorno. Caché de prompt del corpus normativo. | Las funciones de IA actuales siguen funcionando y ya no envían nombre ni NIT. |
 | 3 | Motor de balance | Paquete `motor` con P-xx y V-xx, IDs estables, salida JSON, pruebas con los fixtures. Worker en el backend con máximo 3 reintentos. `POST /auditorias/:id/agente/corridas` + `GET`. Materialidad preliminar. | Lista cruda de hallazgos sobre los balances reales, revisada con la usuaria antes de hacer UI. |
 | 4 | Vista A | Cabecera con contadores, estado del agente en el rail, tarjeta de decisión con bitácora, panel "El agente ahora", ítems de atención en Documentos, propuesta en Materialidad. | Subir balance → hallazgos visibles en minutos. |
+| 4b | Riesgos (hecho 2026-09-15) | Motor R-xx, `POST /auditorias/:id/agente/corridas/riesgos`, disparo automático al decidir materialidad y hallazgos, tarjeta con área / inherente / control / respuesta ajustables, escritura en `riesgos`. | Aprobar un riesgo propuesto lo deja en la matriz con su respuesta planeada. |
 | 5 | Aceptación y papel | Aprobar → `hallazgos` + papel automático + evidencia al recibir documento. Redacción y "Preguntar" con LLM. Eventos y notificaciones. | Hallazgo aprobado aparece en la carta de recomendaciones existente. |
 | 6 | Piloto en paralelo | Un encargo real corrido por los dos caminos. Media hora semanal de calibración de reglas y umbrales. | Criterios de §4. |
 

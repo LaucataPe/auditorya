@@ -1,15 +1,16 @@
-import { useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { ChevronRight, Sparkles } from 'lucide-react'
 import { TIPO_PROPUESTA_LABEL, type PropuestaAgente } from '@auditorya/types'
 import { Button } from '../ui/Button'
 import { cn } from '../../lib/cn'
 import { DecisionCard } from './DecisionCard'
-import { useCorrerBalance, useDecidir, usePropuestas, useResumenAgente } from '../../hooks/useAgente'
+import { useCorrerBalance, useCorrerRiesgos, useDecidir, usePropuestas, useResumenAgente } from '../../hooks/useAgente'
 
 const PASO_TEXTO: Record<string, { titulo: string; sinPendientes: string }> = {
   entendimiento: { titulo: 'Entendimiento del período', sinPendientes: 'El entendimiento ya está confirmado.' },
   balance: { titulo: 'Revisión del balance', sinPendientes: 'No queda nada por decidir en el balance.' },
   materialidad: { titulo: 'Materialidad propuesta', sinPendientes: 'La materialidad ya está decidida.' },
+  riesgos: { titulo: 'Riesgos propuestos', sinPendientes: 'No queda ningún riesgo por decidir. Los aprobados ya están en la matriz.' },
   pbc: { titulo: 'Documentos que el agente necesita', sinPendientes: 'No hay documentos pendientes.' },
 }
 
@@ -22,7 +23,7 @@ const hora = (iso?: string) => (iso ? new Date(iso).toLocaleTimeString('es-CO', 
  */
 export function AgentePaso({ auditoriaId, paso, children, contenidoLabel = 'Ver el contenido completo del paso' }: {
   auditoriaId: string
-  paso: 'entendimiento' | 'balance' | 'materialidad' | 'pbc'
+  paso: 'entendimiento' | 'balance' | 'materialidad' | 'riesgos' | 'pbc'
   children: ReactNode
   contenidoLabel?: string
 }) {
@@ -31,18 +32,52 @@ export function AgentePaso({ auditoriaId, paso, children, contenidoLabel = 'Ver 
   const todas = usePropuestas(auditoriaId, paso, 'todas')
   const decidir = useDecidir(auditoriaId)
   const correr = useCorrerBalance(auditoriaId)
+  const correrRiesgos = useCorrerRiesgos(auditoriaId)
   const [verContenido, setVerContenido] = useState(false)
   const [verHecho, setVerHecho] = useState(false)
 
-  const corrida = resumen.data?.corrida ?? null
+  const corridaBalance = resumen.data?.corrida ?? null
+  const corridaRiesgos = resumen.data?.corridaRiesgos ?? null
+  // En el paso Riesgos "la corrida" es la de identificación de riesgos; en los demás, la del balance.
+  const corrida = paso === 'riesgos' ? corridaRiesgos : corridaBalance
+
+  // Riesgos: si el balance ya está revisado y el agente aún no propuso riesgos, los propone solo al entrar.
+  const autoDisparado = useRef(false)
+  useEffect(() => {
+    if (paso !== 'riesgos' || !resumen.data || autoDisparado.current) return
+    if (corridaBalance?.estado === 'completada' && !corridaRiesgos && !correrRiesgos.isPending) {
+      autoDisparado.current = true
+      correrRiesgos.mutate()
+    }
+  }, [paso, resumen.data, corridaBalance, corridaRiesgos, correrRiesgos])
   const lista = pendientes.data ?? []
-  const decididas = (todas.data ?? []).filter((p) => p.estado !== 'propuesta' && p.estado !== 'omitida')
+  // Solo decisiones de personas: lo que el agente reemplazó al volver a correr no tiene decididaPor.
+  const decididas = (todas.data ?? []).filter((p) => p.estado !== 'propuesta' && p.estado !== 'omitida' && p.decididaPor)
   const omitidas = (todas.data ?? []).filter((p) => p.estado === 'omitida')
   const actual = lista[0]
   const texto = PASO_TEXTO[paso]
 
   // Sin corrida todavía: en el paso Balance el contenido clásico (subir el balance) va al frente.
   const sinCorrida = !corrida
+  if (sinCorrida && paso === 'riesgos') {
+    return (
+      <div className="space-y-4">
+        <div className="flex items-start gap-3 rounded-2xl border border-indigo-100 bg-indigo-50/60 px-4 py-3">
+          <Sparkles size={16} className="mt-0.5 shrink-0 text-indigo-500" />
+          <div className="text-sm text-indigo-900">
+            <p className="font-medium">{correrRiesgos.isPending ? 'Proponiendo riesgos…' : 'El agente está listo para proponer riesgos.'}</p>
+            <p className="text-indigo-800/80">
+              {corridaBalance?.estado === 'completada'
+                ? 'Los arma con los hallazgos del balance que aprobaste, lo que contaste en el entendimiento, el control interno y el sector.'
+                : 'Sube y revisa el balance primero: de ahí salen los riesgos con evidencia. Igual puedes pedirle los del sector ahora.'}
+            </p>
+          </div>
+          <Button size="sm" variant="secondary" className="ml-auto shrink-0" loading={correrRiesgos.isPending} onClick={() => correrRiesgos.mutate()}>Proponer riesgos</Button>
+        </div>
+        {children}
+      </div>
+    )
+  }
   if (sinCorrida && paso === 'balance') {
     return (
       <div className="space-y-4">
@@ -71,15 +106,29 @@ export function AgentePaso({ auditoriaId, paso, children, contenidoLabel = 'Ver 
       {/* Estado del agente en este paso */}
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[13px] text-gray-500">
         <span className="inline-flex items-center gap-1.5 font-medium text-gray-700"><Sparkles size={14} className="text-indigo-500" />{texto?.titulo}</span>
-        {corrida?.estado === 'completada' && corrida.resultado && (
+        {paso !== 'riesgos' && corrida?.estado === 'completada' && corrida.resultado && (
           <span>
             {corrida.filas?.toLocaleString('es-CO')} filas · {String((corrida.resultado as { reglasEjecutadas?: string[] }).reglasEjecutadas?.length ?? 0)} reglas · {String((corrida.resultado as { hallazgos?: number }).hallazgos ?? 0)} hallazgos
           </span>
         )}
+        {paso === 'riesgos' && corrida?.estado === 'completada' && corrida.resultado && (() => {
+          const r = corrida.resultado as { riesgos?: number; hallazgosUsados?: number; hallazgosPendientes?: number; porFuente?: { hallazgo: number; sector: number; entendimiento: number } }
+          return (
+            <span>
+              {r.riesgos ?? 0} riesgos · {r.porFuente?.hallazgo ?? 0} del balance · {r.porFuente?.entendimiento ?? 0} del entendimiento · {r.porFuente?.sector ?? 0} del sector
+              {(r.hallazgosPendientes ?? 0) > 0 && <span className="text-amber-700"> · {r.hallazgosPendientes} hallazgos del balance sin decidir</span>}
+            </span>
+          )
+        })()}
         {corrida?.estado === 'error' && <span className="text-red-600">La última revisión falló. Puedes reintentar.</span>}
         {paso === 'balance' && (
           <button type="button" onClick={() => correr.mutate()} disabled={correr.isPending} className="text-indigo-600 hover:underline disabled:opacity-50">
             {correr.isPending ? 'Revisando…' : 'Volver a revisar'}
+          </button>
+        )}
+        {paso === 'riesgos' && (
+          <button type="button" onClick={() => correrRiesgos.mutate()} disabled={correrRiesgos.isPending} className="text-indigo-600 hover:underline disabled:opacity-50">
+            {correrRiesgos.isPending ? 'Proponiendo…' : 'Volver a proponer'}
           </button>
         )}
       </div>
@@ -133,11 +182,11 @@ export function AgentePaso({ auditoriaId, paso, children, contenidoLabel = 'Ver 
         <div>
           <button type="button" onClick={() => setVerHecho((v) => !v)} aria-expanded={verHecho} className="flex items-center gap-1.5 text-[13px] font-medium text-gray-600 hover:text-gray-900">
             <ChevronRight size={14} className={cn('transition-transform motion-reduce:transition-none', verHecho && 'rotate-90')} />
-            Lo que el agente ya hizo en este paso · {(paso === 'balance' ? corrida?.bitacora.length ?? 0 : 0) + decididas.length}
+            Lo que el agente ya hizo en este paso · {(paso === 'balance' || paso === 'riesgos' ? corrida?.bitacora.length ?? 0 : 0) + decididas.length}
           </button>
           {verHecho && (
             <div className="mt-2 space-y-1">
-              {paso === 'balance' && corrida?.bitacora.map((l) => (
+              {(paso === 'balance' || paso === 'riesgos') && corrida?.bitacora.map((l) => (
                 <div key={l.numero} className="flex gap-3 border-l-2 border-emerald-400 py-1.5 pl-3 text-[13px] text-gray-600">
                   <span className="font-mono text-[11px] text-gray-400 shrink-0 pt-0.5">{hora(l.createdAt)}</span>
                   <span>{l.texto}</span>

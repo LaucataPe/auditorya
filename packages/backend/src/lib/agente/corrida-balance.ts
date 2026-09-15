@@ -23,7 +23,7 @@ export async function correrProcedimientoBalance(auditoriaId: string, user: Pick
 
   // Continuidad entre corridas: los códigos no se repiten y lo ya decidido por una persona no se vuelve a proponer.
   const previas = await db
-    .select({ tipo: propuestasAgente.tipo, reglas: propuestasAgente.reglas, cuentaCodigo: propuestasAgente.cuentaCodigo, codigo: propuestasAgente.codigo, decididaPor: propuestasAgente.decididaPor })
+    .select({ tipo: propuestasAgente.tipo, reglas: propuestasAgente.reglas, cuentaCodigo: propuestasAgente.cuentaCodigo, codigo: propuestasAgente.codigo, decididaPor: propuestasAgente.decididaPor, estado: propuestasAgente.estado })
     .from(propuestasAgente)
     .where(eq(propuestasAgente.auditoriaId, auditoriaId))
   const numeracion = { H: 0, D: 0, A: 0 }
@@ -31,7 +31,8 @@ export async function correrProcedimientoBalance(auditoriaId: string, user: Pick
     const m = /^([HDA])-(\d+)$/.exec(p.codigo ?? '')
     if (m) numeracion[m[1] as 'H' | 'D' | 'A'] = Math.max(numeracion[m[1] as 'H' | 'D' | 'A'], Number(m[2]))
   }
-  const huellasDecididas = previas.filter((p) => p.decididaPor).map((p) => huellaPropuesta({ tipo: p.tipo, reglas: p.reglas, cuentaCodigo: p.cuentaCodigo }))
+  // Omitir no es decidir: una propuesta omitida se vuelve a proponer en la corrida siguiente.
+  const huellasDecididas = previas.filter((p) => p.decididaPor && p.estado !== 'omitida').map((p) => huellaPropuesta({ tipo: p.tipo, reglas: p.reglas, cuentaCodigo: p.cuentaCodigo }))
 
   const [corrida] = await db
     .insert(corridasAgente)

@@ -299,7 +299,9 @@ export function EmpresaAuditoria() {
               : <MaterialidadTab auditoriaId={auditoria.id} />
           )}
           {!esAI && tabActivo === 'riesgos' && (
-            <RiesgosTab auditoriaId={auditoria.id} sector={auditoria.empresa.sector} materialidadAprobada={auditoria.materialidadAprobada} />
+            agenteActivado
+              ? <AgentePaso auditoriaId={auditoria.id} paso="riesgos" contenidoLabel="Ver la matriz de riesgos completa"><RiesgosTab auditoriaId={auditoria.id} sector={auditoria.empresa.sector} materialidadAprobada={auditoria.materialidadAprobada} /></AgentePaso>
+              : <RiesgosTab auditoriaId={auditoria.id} sector={auditoria.empresa.sector} materialidadAprobada={auditoria.materialidadAprobada} />
           )}
           {!esAI && tabActivo === 'tareas' && (
             <TareasTab auditoriaId={auditoria.id} materialidadAprobada={auditoria.materialidadAprobada} />

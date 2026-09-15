@@ -1,22 +1,25 @@
 import { useState } from 'react'
 import { ChevronRight } from 'lucide-react'
-import { CERTEZA_LABEL, TIPO_PROPUESTA_LABEL, type PropuestaAgente, type DecisionPropuesta } from '@auditorya/types'
+import { CERTEZA_LABEL, TIPO_PROPUESTA_LABEL, nivelCombinado, type PropuestaAgente, type DecisionPropuesta, type NivelRiesgo } from '@auditorya/types'
 import { Button } from '../ui/Button'
 import { cn } from '../../lib/cn'
 import { confirmar } from '../../store/confirm.store'
+import { useAreas } from '../../hooks/useAreas'
+import type { AjustesDecision } from '../../hooks/useAgente'
 
 const money = (n: number) => `${n < 0 ? '−' : ''}$${Math.abs(Math.round(n)).toLocaleString('es-CO')}`
 
 const TIPO_COLOR: Record<PropuestaAgente['tipo'], string> = {
-  hallazgo: 'text-red-700', materialidad: 'text-indigo-700', juicio: 'text-indigo-700', documento: 'text-amber-700', ambiguedad: 'text-red-700',
+  hallazgo: 'text-red-700', materialidad: 'text-indigo-700', juicio: 'text-indigo-700', documento: 'text-amber-700', ambiguedad: 'text-red-700', riesgo: 'text-orange-700',
 }
+const NIVEL_LABEL: Record<NivelRiesgo, string> = { alto: 'Alto', medio: 'Medio', bajo: 'Bajo' }
 const SEV: Record<string, string> = { alta: 'bg-red-50 text-red-700', media: 'bg-amber-50 text-amber-700', baja: 'bg-gray-100 text-gray-600' }
 const CERT: Record<string, string> = { verificado: 'bg-emerald-50 text-emerald-700', requiere_evidencia: 'bg-amber-50 text-amber-700', no_verificable: 'bg-gray-100 text-gray-500 border border-gray-200' }
 
 type Props = {
   propuesta: PropuestaAgente
   posicion?: { actual: number; total: number }
-  onDecidir: (decision: DecisionPropuesta, extra?: { motivo?: string; ajustes?: { titulo?: string; descripcion?: string; severidad?: 'alta' | 'media' | 'baja' } }) => void
+  onDecidir: (decision: DecisionPropuesta, extra?: { motivo?: string; ajustes?: AjustesDecision }) => void
   decidiendo?: boolean
   soloLectura?: boolean
 }
@@ -27,12 +30,24 @@ export function DecisionCard({ propuesta: p, posicion, onDecidir, decidiendo, so
   const [descripcion, setDescripcion] = useState(p.contenido.descripcion ?? '')
   const [severidad, setSeveridad] = useState<'alta' | 'media' | 'baja' | ''>(p.severidad ?? '')
   const [bitacoraAbierta, setBitacoraAbierta] = useState(false)
+  const riesgo = p.tipo === 'riesgo' ? p.contenido.riesgo ?? null : null
+  const [area, setArea] = useState(riesgo?.area ?? '')
+  const [inherente, setInherente] = useState<NivelRiesgo>(riesgo?.riesgoInherente ?? 'medio')
+  const [control, setControl] = useState<NivelRiesgo>(riesgo?.riesgoControl ?? 'medio')
+  const [respuesta, setRespuesta] = useState(riesgo?.respuestaPlaneada ?? '')
+  const { areas } = useAreas()
 
   const accionPrincipal =
     p.tipo === 'materialidad' ? `Confirmar ${p.monto != null ? money(p.monto) : 'materialidad'}`
       : p.tipo === 'documento' ? 'Marcar como recibido'
         : p.tipo === 'ambiguedad' || p.tipo === 'juicio' ? (p.contenido.opciones?.[0]?.label ?? 'Confirmar')
-          : 'Aprobar hallazgo'
+          : p.tipo === 'riesgo' ? 'Aprobar riesgo'
+            : 'Aprobar hallazgo'
+
+  const ajustes = (): AjustesDecision => ({
+    titulo, descripcion, severidad: severidad || undefined,
+    ...(riesgo ? { riesgo: { area, riesgoInherente: inherente, riesgoControl: control, respuestaPlaneada: respuesta } } : {}),
+  })
 
   async function descartar() {
     const ok = await confirmar({
@@ -54,9 +69,9 @@ export function DecisionCard({ propuesta: p, posicion, onDecidir, decidiendo, so
         </span>
         <h3 className="text-[17px] font-semibold leading-snug text-gray-900 text-balance">{p.titulo}</h3>
         <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500">
-          {p.severidad && <span className={cn('font-mono text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded', SEV[p.severidad])}>Riesgo {p.severidad}</span>}
+          {p.severidad && <span className={cn('font-mono text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded', SEV[p.severidad])}>{riesgo ? `Combinado ${NIVEL_LABEL[riesgo.riesgoCombinado]}` : `Riesgo ${p.severidad}`}</span>}
           {p.certeza && <span className={cn('font-mono text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded', CERT[p.certeza])}>{CERTEZA_LABEL[p.certeza]}</span>}
-          {p.monto != null && p.tipo === 'hallazgo' && (
+          {p.monto != null && (p.tipo === 'hallazgo' || p.tipo === 'riesgo') && (
             <span className={cn('font-mono tabular-nums font-semibold text-sm', p.monto < 0 ? 'text-red-700' : 'text-gray-900')}>{money(p.monto)}</span>
           )}
           {p.reglas.length > 0 && <span className="font-mono text-[11px] text-gray-400">{p.reglas.join(' · ')}</span>}
@@ -82,6 +97,35 @@ export function DecisionCard({ propuesta: p, posicion, onDecidir, decidiendo, so
                 </select>
               </label>
             )}
+            {riesgo && (
+              <>
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <label className="block">
+                    <span className="text-xs font-medium text-gray-700">Área</span>
+                    <select value={area} onChange={(e) => setArea(e.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900">
+                      {areas.map((a) => <option key={a.clave} value={a.clave}>{a.nombre}</option>)}
+                    </select>
+                  </label>
+                  <label className="block">
+                    <span className="text-xs font-medium text-gray-700">Riesgo inherente</span>
+                    <select value={inherente} onChange={(e) => setInherente(e.target.value as NivelRiesgo)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900">
+                      <option value="alto">Alto</option><option value="medio">Medio</option><option value="bajo">Bajo</option>
+                    </select>
+                  </label>
+                  <label className="block">
+                    <span className="text-xs font-medium text-gray-700">Riesgo de control</span>
+                    <select value={control} onChange={(e) => setControl(e.target.value as NivelRiesgo)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900">
+                      <option value="alto">Alto</option><option value="medio">Medio</option><option value="bajo">Bajo</option>
+                    </select>
+                  </label>
+                </div>
+                <p className="text-xs text-gray-500">Riesgo combinado: <span className="font-medium text-gray-800">{NIVEL_LABEL[nivelCombinado(inherente, control)]}</span></p>
+                <label className="block">
+                  <span className="text-xs font-medium text-gray-700">Respuesta planeada</span>
+                  <textarea value={respuesta} onChange={(e) => setRespuesta(e.target.value)} rows={3} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900" />
+                </label>
+              </>
+            )}
           </div>
         ) : (
           <>
@@ -95,6 +139,9 @@ export function DecisionCard({ propuesta: p, posicion, onDecidir, decidiendo, so
                   </div>
                 ))}
               </dl>
+            )}
+            {riesgo && p.contenido.recomendacion && (
+              <p className="text-[13px]"><span className="font-medium text-gray-700">Respuesta planeada:</span> {p.contenido.recomendacion}</p>
             )}
             {p.contenido.norma && (
               <p className="text-xs text-gray-500"><span className="font-medium text-gray-700">Norma:</span> {p.contenido.norma}</p>
@@ -140,7 +187,7 @@ export function DecisionCard({ propuesta: p, posicion, onDecidir, decidiendo, so
         <div className="flex flex-wrap items-center gap-2 border-t border-gray-100 px-5 py-3">
           {ajustando ? (
             <>
-              <Button size="sm" loading={decidiendo} onClick={() => onDecidir('ajustar', { ajustes: { titulo, descripcion, severidad: severidad || undefined } })}>Guardar y aprobar</Button>
+              <Button size="sm" loading={decidiendo} onClick={() => onDecidir('ajustar', { ajustes: ajustes() })}>Guardar y aprobar</Button>
               <Button size="sm" variant="secondary" onClick={() => setAjustando(false)}>Cancelar</Button>
             </>
           ) : (

@@ -3,7 +3,7 @@
  * el humano decide (aprobar / ajustar / omitir / descartar). Nada se borra.
  */
 
-export type TipoPropuesta = 'hallazgo' | 'materialidad' | 'documento' | 'juicio' | 'ambiguedad'
+export type TipoPropuesta = 'hallazgo' | 'materialidad' | 'documento' | 'juicio' | 'ambiguedad' | 'riesgo'
 export type EstadoPropuesta = 'propuesta' | 'aprobada' | 'ajustada' | 'omitida' | 'descartada'
 export type CertezaPropuesta = 'verificado' | 'requiere_evidencia' | 'no_verificable'
 export type SeveridadPropuesta = 'alta' | 'media' | 'baja'
@@ -41,6 +41,15 @@ export type ContenidoPropuesta = {
     materialidad: number
     materialidadDesempeno: number
     justificacion: string
+  }
+  /** Valores propuestos de un riesgo (tipo 'riesgo'); al aprobar se escriben en `riesgos`. */
+  riesgo?: {
+    area: string
+    riesgoInherente: 'bajo' | 'medio' | 'alto'
+    riesgoControl: 'bajo' | 'medio' | 'alto'
+    riesgoCombinado: 'bajo' | 'medio' | 'alto'
+    respuestaPlaneada: string
+    fuente: { tipo: 'hallazgo' | 'sector' | 'entendimiento'; codigos: string[] }
   }
 }
 
@@ -100,6 +109,8 @@ export type ResumenAgente = {
   porPaso: Record<string, { pendientes: number; decididas: number }>
   /** Última corrida del procedimiento de balance, si existe. */
   corrida: CorridaAgente | null
+  /** Última corrida de identificación de riesgos, si existe. */
+  corridaRiesgos: CorridaAgente | null
 }
 
 export const TIPO_PROPUESTA_LABEL: Record<TipoPropuesta, string> = {
@@ -108,6 +119,7 @@ export const TIPO_PROPUESTA_LABEL: Record<TipoPropuesta, string> = {
   documento: 'Documento requerido',
   juicio: 'Requiere tu juicio',
   ambiguedad: 'Interpretación ambigua',
+  riesgo: 'Riesgo para aprobar',
 }
 
 export const CERTEZA_LABEL: Record<CertezaPropuesta, string> = {
