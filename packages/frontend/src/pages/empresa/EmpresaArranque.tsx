@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Check, Sparkles, Upload } from 'lucide-react'
+import { ArrowLeft, Check, Sparkles, Upload } from 'lucide-react'
 import type { ArranqueAgente } from '@auditorya/types'
 import { Button } from '../../components/ui/Button'
 import { BalanceImportWizard, type ArchivoBalance, type ImportarBalancePayload } from '../../components/auditoria/BalanceImportWizard'
@@ -135,6 +135,15 @@ export function EmpresaArranque() {
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="flex items-center gap-4 border-b border-gray-200 bg-white px-6 py-3">
+        <button
+          type="button"
+          onClick={() => navigate(`/empresas/${id}/encargos`)}
+          aria-label="Volver a los encargos"
+          title="Volver a los encargos"
+          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-gray-500 hover:bg-gray-100 hover:text-gray-900"
+        >
+          <ArrowLeft size={18} />
+        </button>
         <div className="min-w-0"><p className="truncate text-sm font-semibold text-gray-900">{empresaNombre}</p><p className="text-xs text-gray-400">{auditoria ? `${fmtFecha(auditoria.fechaInicio)} – ${fmtFecha(auditoria.fechaFin)}` : ''} · recién creado</p></div>
         <div className="flex-1" />
         <div className="flex items-center gap-1.5" aria-label={`Paso ${idx + 1} de ${ORDEN.length}`}>
