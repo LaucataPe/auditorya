@@ -1083,6 +1083,26 @@ export const seudonimos = pgTable(
 
 // Memoria del agente por empresa (P-08): respuestas que se preguntan una sola vez
 // (p. ej. si provisiona renta mensualmente) y descartes recurrentes. clave → valor.
+// Cuestionario de control interno (COSO pyme) del modo agéntico: una fila por pregunta y encargo.
+export const respuestasCosoAgente = pgTable(
+  'respuestas_coso_agente',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    auditoriaId: uuid('auditoria_id')
+      .notNull()
+      .references(() => auditorias.id),
+    pregunta: text('pregunta').notNull(),
+    respuesta: text('respuesta', { enum: ['si', 'parcial', 'no', 'no_aplica', 'no_se'] }).notNull(),
+    nota: text('nota'),
+    respondidoPor: uuid('respondido_por').references(() => usuarios.id),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (t) => ({
+    auditoriaPreguntaUnq: uniqueIndex('respuestas_coso_agente_auditoria_pregunta_unq').on(t.auditoriaId, t.pregunta),
+  }),
+)
+
 export const memoriaEmpresaAgente = pgTable(
   'memoria_empresa_agente',
   {
