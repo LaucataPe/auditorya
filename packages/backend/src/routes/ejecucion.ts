@@ -87,7 +87,7 @@ async function usuarioDeFirma(usuarioId: string, firmaId: string) {
  * Siguiente índice de referenciación (NIA 230) para un papel del área en el encargo:
  * prefijo del área + consecutivo. Los huecos por borrado no se reutilizan.
  */
-async function siguienteIndicePapel(auditoriaId: string, firmaId: string, area: string) {
+export async function siguienteIndicePapel(auditoriaId: string, firmaId: string, area: string) {
   let prefijo: string
   if (AREAS_BASE_CLAVES.includes(area)) {
     // Área base: el superadmin puede haber cambiado el prefijo del catálogo.

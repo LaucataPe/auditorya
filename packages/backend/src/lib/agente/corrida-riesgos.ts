@@ -13,6 +13,7 @@ import {
 } from '../../db/schema'
 import { correrIdentificacionRiesgos, huellaRiesgo, type EntradaCorridaRiesgos, type PropuestaBorrador, type ContenidoPropuesta } from '@auditorya/types'
 import { sugerirRiesgos } from '../ia'
+import { controlPorAreaDe } from './corrida-control-interno'
 import { registrarEvento } from '../eventos'
 import type { JwtPayload } from '../jwt'
 
@@ -50,13 +51,15 @@ export async function correrIdentificacionRiesgosEncargo(auditoriaId: string, us
     .returning()
 
   try {
-    const [[ent], coso, existentes, [mat]] = await Promise.all([
+    const [[ent], coso, existentes, [mat], controlPorArea] = await Promise.all([
       db.select().from(entendimientoPeriodo).where(eq(entendimientoPeriodo.auditoriaId, auditoriaId)),
       db.select({ componente: controlesCoso.componente, calificacion: controlesCoso.calificacion }).from(controlesCoso).where(eq(controlesCoso.auditoriaId, auditoriaId)),
       db.select({ area: riesgos.area, descripcion: riesgos.descripcion, origen: riesgos.origen }).from(riesgos).where(eq(riesgos.auditoriaId, auditoriaId)),
       db.select().from(materialidades).where(eq(materialidades.auditoriaId, auditoriaId)),
+      controlPorAreaDe(auditoriaId),
     ])
     const entrada: EntradaCorridaRiesgos = {
+      controlPorArea,
       sector: row.sector,
       hallazgos, hallazgosPendientes,
       catalogoSector: sugerirRiesgos(row.sector),

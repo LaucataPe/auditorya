@@ -13,6 +13,7 @@ import {
 import { authMiddleware } from '../middleware/auth'
 import { encargoCerrado, ERROR_ENCARGO_CERRADO } from '../lib/encargo'
 import { registrarEvento } from '../lib/eventos'
+import { anotarRecepcionDocumento } from '../lib/agente/materializar'
 import type { JwtPayload } from '../lib/jwt'
 
 const app = new Hono<{ Variables: { user: JwtPayload } }>()
@@ -239,6 +240,14 @@ app.post('/pbc/:id/recibir', async (c) => {
     auditoriaId: row.solicitud.auditoriaId,
     detalle: { descripcion: row.solicitud.descripcion, evidenciaId },
   })
+
+  // Si el documento lo pidió el agente, deja constancia en la propuesta y en el hallazgo que desbloquea.
+  try {
+    const [papel] = await db.select({ indice: papelesTrabajo.indice }).from(papelesTrabajo).where(eq(papelesTrabajo.id, row.solicitud.papelTrabajoId))
+    await anotarRecepcionDocumento(solicitudId, user, papel?.indice ?? null)
+  } catch (err) {
+    console.error('[agente] no se pudo anotar la recepción del documento', solicitudId, (err as Error).message)
+  }
 
   return c.json({ data: { ...actualizada, evidenciaId } })
 })

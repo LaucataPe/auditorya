@@ -18,6 +18,7 @@ import { encargoCerrado, ERROR_ENCARGO_CERRADO } from '../lib/encargo'
 import { areaValidaParaFirma, ERROR_AREA_INVALIDA } from '../lib/areas'
 import { registrarEvento } from '../lib/eventos'
 import { correrProcedimientoBalance } from '../lib/agente/corrida-balance'
+import { materializarPendientes } from '../lib/agente/materializar'
 import { storage } from '../lib/storage'
 import { sugerirRiesgos } from '../lib/ia'
 import { claseDesdeCodigo, esClaseBalance, nivelCombinado, calcularRatios, detectarBanderas, evaluarCompletitud, evaluarOpinion, resumirHallazgos } from '@auditorya/types'
@@ -1299,6 +1300,11 @@ app.post('/auditorias/:id/materialidad/aprobar', async (c) => {
     auditoriaId: id,
     detalle: { materialidad: aprobada.materialidad, base: aprobada.baseCalculo },
   })
+
+  // Modo agéntico: los hallazgos del balance ya aprobados pasan a sus papeles de trabajo.
+  if (row.auditoria.agenteActivado) {
+    try { await materializarPendientes(id, user) } catch (err) { console.error('[agente] materializar tras aprobar materialidad', (err as Error).message) }
+  }
 
   return c.json({ data: aprobada })
 })
