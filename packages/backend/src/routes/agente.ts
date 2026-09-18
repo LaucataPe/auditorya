@@ -4,6 +4,9 @@
  *  - GET  /auditorias/:id/agente/propuestas?paso=&estado= → propuestas con bitácora
  *  - POST /auditorias/:id/agente/corridas               → corre el procedimiento de balance (0 tokens)
  *  - POST /auditorias/:id/agente/corridas/riesgos       → propone riesgos desde hallazgos, entendimiento, COSO y sector (0 tokens)
+ *  - GET  /auditorias/:id/agente/control-interno        → cuestionario COSO pyme: respuestas, memoria del año anterior, última corrida
+ *  - PUT  /auditorias/:id/agente/control-interno/respuestas → guarda respuestas (y la memoria por empresa)
+ *  - POST /auditorias/:id/agente/corridas/control-interno → califica los 5 componentes desde respuestas, balance y entendimiento (0 tokens)
  *  - POST /propuestas/:id/decidir                       → aprobar / ajustar / omitir / descartar / retomar
  * Todas exigen encargo con agente_activado.
  */
@@ -15,6 +18,7 @@ import { db } from '../db/client'
 import {
   auditorias, empresas, usuarios, materialidades, corridasAgente, propuestasAgente, bitacoraAgente,
   documentosEmpresa, entendimientoPeriodo, memoriaEmpresaAgente, cuentasBalance, cuentasBalanceComparativo, riesgos,
+  controlesCoso, respuestasCosoAgente, papelesTrabajo,
 } from '../db/schema'
 import { authMiddleware } from '../middleware/auth'
 import { encargoCerrado, ERROR_ENCARGO_CERRADO } from '../lib/encargo'
@@ -22,9 +26,15 @@ import { esSocioResponsable } from '../lib/permisos'
 import { registrarEvento } from '../lib/eventos'
 import { correrProcedimientoBalance, intentosAgotados } from '../lib/agente/corrida-balance'
 import { correrIdentificacionRiesgosEncargo, hayCorridaRiesgos, PROCEDIMIENTO_RIESGOS } from '../lib/agente/corrida-riesgos'
+import { cargarRespuestasCoso, correrEvaluacionControlInternoEncargo, MEMORIA_COSO, PROCEDIMIENTO_CONTROL_INTERNO } from '../lib/agente/corrida-control-interno'
+import { materializarDeficienciasCoso, materializarDocumento, materializarHallazgo, materializarPendientes, materializarPruebaDeRiesgo } from '../lib/agente/materializar'
+import { detalleCiclo, iniciarCiclo, listarCiclos, proponerConclusion, riesgosPorCiclo } from '../lib/agente/ciclos'
 import { areaValidaParaFirma, ERROR_AREA_INVALIDA } from '../lib/areas'
 import type { JwtPayload } from '../lib/jwt'
-import { nivelCombinado, type LineaBitacora, type PropuestaAgente, type CorridaAgente, type ResumenAgente, type ArranqueAgente, type ContenidoPropuesta } from '@auditorya/types'
+import {
+  nivelCombinado, CUESTIONARIO_COSO_PYME, COMPONENTE_COSO_LABEL, CALIFICACION_COSO_LABEL,
+  type LineaBitacora, type PropuestaAgente, type CorridaAgente, type ResumenAgente, type ArranqueAgente, type ContenidoPropuesta, type RespuestaCosoRegistrada,
+} from '@auditorya/types'
 
 const app = new Hono<{ Variables: { user: JwtPayload } }>()
 app.use('*', authMiddleware)
@@ -92,7 +102,7 @@ app.get('/auditorias/:id/agente/resumen', async (c) => {
   const row = await cargarAuditoria(id, firmaId)
   if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Auditoría no encontrada' } }, 404)
   if (!row.auditoria.agenteActivado) {
-    const vacio: ResumenAgente = { activado: false, teToca: 0, hecho: 0, porPaso: {}, corrida: null, corridaRiesgos: null }
+    const vacio: ResumenAgente = { activado: false, teToca: 0, hecho: 0, porPaso: {}, corrida: null, corridaRiesgos: null, corridaControlInterno: null }
     return c.json({ data: vacio })
   }
   const filas = await db
@@ -107,8 +117,11 @@ app.get('/auditorias/:id/agente/resumen', async (c) => {
     else if (f.humana && (f.estado === 'aprobada' || f.estado === 'ajustada' || f.estado === 'descartada')) { p.decididas += f.n; decididas += f.n }
   }
   // "Hecho" = lo que hizo el agente en la última corrida + las decisiones tomadas por personas.
-  const [corrida, corridaRiesgos] = await Promise.all([ultimaCorrida(id), ultimaCorrida(id, PROCEDIMIENTO_RIESGOS)])
-  const data: ResumenAgente = { activado: true, teToca, hecho: (corrida?.bitacora.length ?? 0) + (corridaRiesgos?.bitacora.length ?? 0) + decididas, porPaso, corrida, corridaRiesgos }
+  const [corrida, corridaRiesgos, corridaControlInterno] = await Promise.all([ultimaCorrida(id), ultimaCorrida(id, PROCEDIMIENTO_RIESGOS), ultimaCorrida(id, PROCEDIMIENTO_CONTROL_INTERNO)])
+  const data: ResumenAgente = {
+    activado: true, teToca, porPaso, corrida, corridaRiesgos, corridaControlInterno,
+    hecho: (corrida?.bitacora.length ?? 0) + (corridaRiesgos?.bitacora.length ?? 0) + (corridaControlInterno?.bitacora.length ?? 0) + decididas,
+  }
   return c.json({ data })
 })
 
@@ -172,6 +185,159 @@ app.post('/auditorias/:id/agente/corridas/riesgos', async (c) => {
   }
 })
 
+// ─── Control interno (cuestionario COSO pyme) ────────────────────────────────
+
+// GET /auditorias/:id/agente/control-interno
+app.get('/auditorias/:id/agente/control-interno', async (c) => {
+  const { firmaId } = c.get('user')
+  const id = c.req.param('id')
+  const row = await cargarAuditoria(id, firmaId)
+  if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Auditoría no encontrada' } }, 404)
+  if (!row.auditoria.agenteActivado) return c.json({ error: ERROR_AGENTE_NO_ACTIVADO }, 409)
+  const [respuestas, [memoria], evaluados, corrida] = await Promise.all([
+    cargarRespuestasCoso(id),
+    db.select().from(memoriaEmpresaAgente).where(and(eq(memoriaEmpresaAgente.empresaId, row.empresa.id), eq(memoriaEmpresaAgente.clave, MEMORIA_COSO))),
+    db.select({ componente: controlesCoso.componente, calificacion: controlesCoso.calificacion }).from(controlesCoso).where(eq(controlesCoso.auditoriaId, id)),
+    ultimaCorrida(id, PROCEDIMIENTO_CONTROL_INTERNO),
+  ])
+  const valor = memoria?.valor as { respuestas?: RespuestaCosoRegistrada[]; auditoriaId?: string; fecha?: string } | undefined
+  const memoriaPrevia = valor && valor.auditoriaId !== id && valor.respuestas?.length
+    ? { respuestas: valor.respuestas, fecha: valor.fecha ?? memoria.updatedAt.toISOString() }
+    : null
+  return c.json({ data: { respuestas, memoria: memoriaPrevia, evaluados, corrida, total: CUESTIONARIO_COSO_PYME.length } })
+})
+
+// PUT /auditorias/:id/agente/control-interno/respuestas — guarda una o varias respuestas (upsert) y la memoria de la empresa
+app.put(
+  '/auditorias/:id/agente/control-interno/respuestas',
+  zValidator('json', z.object({
+    respuestas: z.array(z.object({
+      pregunta: z.string().max(10),
+      respuesta: z.enum(['si', 'parcial', 'no', 'no_aplica', 'no_se']),
+      nota: z.string().max(1000).optional(),
+    })).min(1).max(30),
+  })),
+  async (c) => {
+    const user = c.get('user')
+    const id = c.req.param('id')
+    const { respuestas } = c.req.valid('json')
+    const row = await cargarAuditoria(id, user.firmaId)
+    if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Auditoría no encontrada' } }, 404)
+    if (!row.auditoria.agenteActivado) return c.json({ error: ERROR_AGENTE_NO_ACTIVADO }, 409)
+    if (await encargoCerrado(id)) return c.json({ error: ERROR_ENCARGO_CERRADO }, 409)
+    const validas = new Set(CUESTIONARIO_COSO_PYME.map((p) => p.id))
+    const invalida = respuestas.find((r) => !validas.has(r.pregunta))
+    if (invalida) return c.json({ error: { code: 'PREGUNTA_INVALIDA', message: `La pregunta ${invalida.pregunta} no existe en el cuestionario` } }, 400)
+
+    for (const r of respuestas) {
+      await db.insert(respuestasCosoAgente)
+        .values({ auditoriaId: id, pregunta: r.pregunta, respuesta: r.respuesta, nota: r.nota?.trim() || null, respondidoPor: user.sub })
+        .onConflictDoUpdate({ target: [respuestasCosoAgente.auditoriaId, respuestasCosoAgente.pregunta], set: { respuesta: r.respuesta, nota: r.nota?.trim() || null, respondidoPor: user.sub, updatedAt: new Date() } })
+    }
+    // Memoria por empresa: el año siguiente el agente arranca con estas respuestas.
+    const todas = await cargarRespuestasCoso(id)
+    const valor = { respuestas: todas, auditoriaId: id, fecha: new Date().toISOString(), fuente: 'cuestionario' }
+    await db.insert(memoriaEmpresaAgente)
+      .values({ empresaId: row.empresa.id, clave: MEMORIA_COSO, valor, actualizadoPor: user.sub })
+      .onConflictDoUpdate({ target: [memoriaEmpresaAgente.empresaId, memoriaEmpresaAgente.clave], set: { valor, actualizadoPor: user.sub, updatedAt: new Date() } })
+    registrarEvento(user, { accion: 'coso.responder_cuestionario', entidad: 'auditoria', entidadId: id, auditoriaId: id, detalle: { preguntas: respuestas.map((r) => r.pregunta), total: todas.length } })
+    return c.json({ data: { guardadas: respuestas.length, total: todas.length, de: CUESTIONARIO_COSO_PYME.length } })
+  },
+)
+
+// POST /auditorias/:id/agente/corridas/control-interno — califica (o vuelve a calificar) los componentes COSO
+app.post('/auditorias/:id/agente/corridas/control-interno', async (c) => {
+  const user = c.get('user')
+  const id = c.req.param('id')
+  const row = await cargarAuditoria(id, user.firmaId)
+  if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Auditoría no encontrada' } }, 404)
+  if (!row.auditoria.agenteActivado) return c.json({ error: ERROR_AGENTE_NO_ACTIVADO }, 409)
+  if (await encargoCerrado(id)) return c.json({ error: ERROR_ENCARGO_CERRADO }, 409)
+  try {
+    const r = await correrEvaluacionControlInternoEncargo(id, user)
+    return c.json({ data: r }, 201)
+  } catch {
+    return c.json({ error: { code: 'AGENTE_ERROR', message: 'La evaluación del control interno no pudo completarse. Quedó registrada para reintentar.' } }, 500)
+  }
+})
+
+// ─── Ejecución por ciclo ─────────────────────────────────────────────────────
+
+// GET /auditorias/:id/agente/ciclos — ciclos con estado, ordenados por lo que ya se puede hacer
+app.get('/auditorias/:id/agente/ciclos', async (c) => {
+  const { firmaId } = c.get('user')
+  const id = c.req.param('id')
+  const row = await cargarAuditoria(id, firmaId)
+  if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Auditoría no encontrada' } }, 404)
+  if (!row.auditoria.agenteActivado) return c.json({ error: ERROR_AGENTE_NO_ACTIVADO }, 409)
+  return c.json({ data: await listarCiclos(id, firmaId) })
+})
+
+// GET /auditorias/:id/agente/riesgos-por-ciclo — propuestas, matriz y catálogo por ciclo
+app.get('/auditorias/:id/agente/riesgos-por-ciclo', async (c) => {
+  const { firmaId } = c.get('user')
+  const id = c.req.param('id')
+  const row = await cargarAuditoria(id, firmaId)
+  if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Auditoría no encontrada' } }, 404)
+  if (!row.auditoria.agenteActivado) return c.json({ error: ERROR_AGENTE_NO_ACTIVADO }, 409)
+  return c.json({ data: await riesgosPorCiclo(id, firmaId) })
+})
+
+// POST /auditorias/:id/agente/riesgos/:riesgoId/prueba — crea la prueba de un riesgo de la matriz
+app.post('/auditorias/:id/agente/riesgos/:riesgoId/prueba', async (c) => {
+  const user = c.get('user')
+  const id = c.req.param('id')
+  const row = await cargarAuditoria(id, user.firmaId)
+  if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Auditoría no encontrada' } }, 404)
+  if (!row.auditoria.agenteActivado) return c.json({ error: ERROR_AGENTE_NO_ACTIVADO }, 409)
+  if (await encargoCerrado(id)) return c.json({ error: ERROR_ENCARGO_CERRADO }, 409)
+  const [r] = await db.select({ id: riesgos.id, area: riesgos.area, respuestaPlaneada: riesgos.respuestaPlaneada }).from(riesgos).where(and(eq(riesgos.id, c.req.param('riesgoId')), eq(riesgos.auditoriaId, id)))
+  if (!r) return c.json({ error: { code: 'NOT_FOUND', message: 'Riesgo no encontrado' } }, 404)
+  const prueba = await materializarPruebaDeRiesgo(id, r, user)
+  return c.json({ data: prueba }, prueba.creado ? 201 : 200)
+})
+
+// GET /auditorias/:id/agente/ciclos/:area — detalle de un ciclo con las acciones sugeridas
+app.get('/auditorias/:id/agente/ciclos/:area', async (c) => {
+  const { firmaId } = c.get('user')
+  const id = c.req.param('id')
+  const row = await cargarAuditoria(id, firmaId)
+  if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Auditoría no encontrada' } }, 404)
+  if (!row.auditoria.agenteActivado) return c.json({ error: ERROR_AGENTE_NO_ACTIVADO }, 409)
+  const data = await detalleCiclo(id, firmaId, c.req.param('area'))
+  if (!data) return c.json({ error: { code: 'NOT_FOUND', message: 'Ciclo no encontrado' } }, 404)
+  return c.json({ data })
+})
+
+// POST /auditorias/:id/agente/ciclos/:area/iniciar — crea riesgo (si falta) y la prueba del ciclo
+app.post('/auditorias/:id/agente/ciclos/:area/iniciar', async (c) => {
+  const user = c.get('user')
+  const id = c.req.param('id')
+  const area = c.req.param('area')
+  const row = await cargarAuditoria(id, user.firmaId)
+  if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Auditoría no encontrada' } }, 404)
+  if (!row.auditoria.agenteActivado) return c.json({ error: ERROR_AGENTE_NO_ACTIVADO }, 409)
+  if (await encargoCerrado(id)) return c.json({ error: ERROR_ENCARGO_CERRADO }, 409)
+  if (!(await areaValidaParaFirma(user.firmaId, area))) return c.json({ error: ERROR_AREA_INVALIDA }, 400)
+  const r = await iniciarCiclo(id, area, user)
+  return c.json({ data: r }, 201)
+})
+
+// POST /auditorias/:id/agente/papeles/:papelId/conclusion — el agente propone la conclusión del papel
+app.post('/auditorias/:id/agente/papeles/:papelId/conclusion', async (c) => {
+  const user = c.get('user')
+  const id = c.req.param('id')
+  const row = await cargarAuditoria(id, user.firmaId)
+  if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Auditoría no encontrada' } }, 404)
+  if (!row.auditoria.agenteActivado) return c.json({ error: ERROR_AGENTE_NO_ACTIVADO }, 409)
+  if (await encargoCerrado(id)) return c.json({ error: ERROR_ENCARGO_CERRADO }, 409)
+  try {
+    return c.json({ data: await proponerConclusion(id, c.req.param('papelId'), user) }, 201)
+  } catch (err) {
+    return c.json({ error: { code: 'NOT_FOUND', message: err instanceof Error ? err.message : 'Papel no encontrado' } }, 404)
+  }
+})
+
 // POST /propuestas/:id/decidir
 app.post(
   '/propuestas/:id/decidir',
@@ -183,7 +349,16 @@ app.post(
       descripcion: z.string().optional(),
       severidad: z.enum(['alta', 'media', 'baja']).optional(),
       /** Para tipo materialidad: valores elegidos por el socio. */
-      materialidad: z.object({ montoBase: z.number().positive(), porcentaje: z.number().positive().max(100), porcentajeDesempeno: z.number().positive().max(100) }).optional(),
+      materialidad: z.object({
+        baseCalculo: z.enum(['activos', 'ingresos', 'utilidad_antes_impuestos', 'patrimonio']).optional(),
+        montoBase: z.number().positive(), porcentaje: z.number().positive().max(100), porcentajeDesempeno: z.number().positive().max(100),
+        justificacion: z.string().max(2000).optional(),
+      }).optional(),
+      /** Para juicio con destino coso: calificación y observaciones elegidas por el auditor. */
+      coso: z.object({
+        calificacion: z.enum(['efectivo', 'con_deficiencias', 'deficiente']).optional(),
+        observaciones: z.string().max(4000).optional(),
+      }).optional(),
       /** Para tipo riesgo: valores elegidos por el auditor. */
       riesgo: z.object({
         area: z.string().min(2).max(80).optional(),
@@ -224,12 +399,33 @@ app.post(
       const contenido = { ...(p.contenido as Record<string, unknown>) }
       if (ajustes?.descripcion) contenido.descripcion = ajustes.descripcion
       set = { estado: 'ajustada', motivoDecision: motivo ?? null, titulo: ajustes?.titulo ?? p.titulo, severidad: ajustes?.severidad ?? p.severidad, contenido }
-      const cambios = [ajustes?.titulo ? 'título' : null, ajustes?.descripcion ? 'descripción' : null, ajustes?.severidad ? `severidad → ${ajustes.severidad}` : null].filter(Boolean).join(', ')
+      const cambios = [ajustes?.titulo ? 'título' : null, ajustes?.descripcion ? 'descripción' : null, ajustes?.severidad ? `severidad → ${ajustes.severidad}` : null, ajustes?.materialidad ? 'valores de materialidad' : null, ajustes?.riesgo ? 'área o niveles del riesgo' : null, ajustes?.coso ? 'calificación u observaciones del control interno' : null].filter(Boolean).join(', ')
       texto = `${nombre} aprobó con ajustes (${cambios || 'sin cambios de texto'})${motivo ? `: ${motivo}` : ''}.`
     }
     if (decision === 'aprobar') {
       set = { estado: 'aprobada', motivoDecision: motivo ?? null }
       texto = `${nombre} aprobó la propuesta${motivo ? `: ${motivo}` : ''}.`
+    }
+
+    // Hallazgo del balance: aprobar (o ajustar) lo escribe en `hallazgos` dentro del papel de trabajo de su ciclo.
+    if (p.tipo === 'hallazgo' && p.paso === 'balance' && (decision === 'aprobar' || decision === 'ajustar')) {
+      const r = await materializarHallazgo(p, user, ajustes)
+      if (r.escrito) {
+        set.entidadDestino = 'hallazgo'; set.entidadDestinoId = r.hallazgoId
+        texto += ` Hallazgo escrito en el papel ${r.indice} · ${r.papelTitulo}${r.papelCreado ? ' (creé el papel del ciclo)' : ''}.`
+      } else if (r.motivo === 'sin_cuenta') {
+        texto += ' Es un problema del archivo, no de un ciclo: no va a un papel de trabajo.'
+      } else {
+        texto += ' Lo escribo en el papel de su ciclo cuando se apruebe la materialidad.'
+        aviso = 'El hallazgo queda aprobado. Se escribe en el papel de trabajo de su ciclo cuando el socio apruebe la materialidad.'
+      }
+    }
+
+    // Documento pedido por el agente: aprobar lo convierte en solicitud PBC ligada al papel del área del hallazgo.
+    if (p.tipo === 'documento' && decision === 'aprobar') {
+      const r = await materializarDocumento(p, user)
+      set.entidadDestino = 'solicitud_pbc'; set.entidadDestinoId = r.solicitudId
+      texto += ` Solicitud PBC creada${r.papelIndice ? ` en el papel ${r.papelIndice}` : ' (sin papel: el documento no es de un ciclo)'}.`
     }
 
     // Materialidad: al aprobar (o ajustar) se escribe en la tabla de siempre. Si quien decide es el
@@ -243,10 +439,12 @@ app.post(
       const materialidad = montoBase * (porcentaje / 100)
       const materialidadDesempeno = materialidad * (porcentajeDesempeno / 100)
       const socio = esSocioResponsable(user, row.auditoria)
+      const baseCalculo = ajustes?.materialidad?.baseCalculo ?? prop.baseCalculo
+      const justificacionBase = ajustes?.materialidad?.justificacion?.trim() || prop.justificacion
       const valores = {
-        baseCalculo: prop.baseCalculo, montoBase: montoBase.toFixed(2), porcentaje: porcentaje.toFixed(2), materialidad: materialidad.toFixed(2),
+        baseCalculo, montoBase: montoBase.toFixed(2), porcentaje: porcentaje.toFixed(2), materialidad: materialidad.toFixed(2),
         porcentajeDesempeno: porcentajeDesempeno.toFixed(2), materialidadDesempeno: materialidadDesempeno.toFixed(2),
-        justificacion: `${prop.justificacion} Propuesta por el agente y ${socio ? 'aprobada' : 'confirmada'} por ${nombre}.`,
+        justificacion: `${justificacionBase} Propuesta por el agente y ${socio ? 'aprobada' : 'confirmada'}${decision === 'ajustar' ? ' con ajustes' : ''} por ${nombre}.`,
         aprobada: socio, aprobadaPor: socio ? user.sub : null, aprobadaAt: socio ? new Date() : null,
       }
       const [existente] = await db.select({ id: materialidades.id }).from(materialidades).where(eq(materialidades.auditoriaId, p.auditoriaId))
@@ -255,9 +453,18 @@ app.post(
         : await db.insert(materialidades).values({ auditoriaId: p.auditoriaId, ...valores }).returning()
       await db.update(auditorias).set({ materialidadAprobada: socio }).where(eq(auditorias.id, p.auditoriaId))
       set.entidadDestino = 'materialidad'; set.entidadDestinoId = mat.id
+      set.monto = materialidad.toFixed(2)
+      if (decision === 'ajustar') set.titulo = `Materialidad ajustada: ${new Intl.NumberFormat('es-CO', { maximumFractionDigits: 0 }).format(Math.round(materialidad))}`
+      set.contenido = { ...(set.contenido ?? (p.contenido as Record<string, unknown>)), materialidad: { ...prop, baseCalculo, montoBase, porcentaje, porcentajeDesempeno, materialidad, materialidadDesempeno, justificacion: justificacionBase } }
       texto += socio ? ` Materialidad ${valores.materialidad} escrita y aprobada.` : ` Materialidad ${valores.materialidad} escrita; falta la aprobación del socio responsable.`
       aviso = socio ? null : 'La materialidad quedó calculada. Solo el socio responsable puede aprobarla.'
       registrarEvento(user, { accion: socio ? 'materialidad.aprobar' : 'materialidad.calcular', entidad: 'materialidad', entidadId: mat.id, auditoriaId: p.auditoriaId, detalle: { materialidad: valores.materialidad, base: valores.baseCalculo, origen: 'agente' } })
+      // Con la materialidad aprobada, lo que esperaba pasa a los papeles: hallazgos, pruebas de riesgos y deficiencias COSO.
+      if (socio) {
+        const m = await materializarPendientes(p.auditoriaId, user)
+        const partes = [m.hallazgos ? `${m.hallazgos} hallazgo(s)` : null, m.pruebas ? `${m.pruebas} prueba(s)` : null, m.deficiencias ? `${m.deficiencias} deficiencia(s)` : null].filter(Boolean)
+        if (partes.length) texto += ` Escribí ${partes.join(', ')} en ${m.papeles.join(', ')}.`
+      }
     }
 
     // Riesgo: aprobar (o ajustar) escribe en la matriz de riesgos de siempre, con su respuesta planeada.
@@ -279,10 +486,50 @@ app.post(
       set.contenido = { ...(set.contenido ?? (p.contenido as Record<string, unknown>)), riesgo: { ...prop, area, riesgoInherente: inherente, riesgoControl: control, riesgoCombinado: combinado, respuestaPlaneada: respuesta } }
       texto += ` Riesgo ${combinado} en ${area} escrito en la matriz de riesgos.`
       registrarEvento(user, { accion: 'riesgo.crear', entidad: 'riesgo', entidadId: riesgo.id, auditoriaId: p.auditoriaId, detalle: { area, combinado, origen: 'agente', fuente: prop.fuente.tipo, codigo: p.codigo } })
+      // La respuesta planeada se vuelve prueba: papel de trabajo del programa estándar con sus PBC.
+      const prueba = await materializarPruebaDeRiesgo(p.auditoriaId, { id: riesgo.id, area, respuestaPlaneada: respuesta || null }, user)
+      if (prueba.creado) texto += ` Prueba "${prueba.titulo}" creada como papel ${prueba.indice}${prueba.documentos ? ` con ${prueba.documentos} documento(s) pedidos` : ''}.`
+      else if (prueba.motivo === 'materialidad_no_aprobada') texto += ' La prueba se crea como papel cuando se apruebe la materialidad.'
+    }
+
+    const destino = (p.contenido as { destino?: string }).destino
+
+    // Control interno: aprobar (o ajustar) el juicio escribe la calificación del componente en controles_coso.
+    if (p.tipo === 'juicio' && destino === 'coso' && (decision === 'aprobar' || decision === 'ajustar')) {
+      const coso = (p.contenido as ContenidoPropuesta).coso
+      if (!coso) return c.json({ error: { code: 'PROPUESTA_INVALIDA', message: 'La propuesta no trae la calificación del componente' } }, 409)
+      const calificacion = ajustes?.coso?.calificacion ?? coso.calificacion
+      const observaciones = (ajustes?.coso?.observaciones ?? ajustes?.descripcion ?? coso.observaciones).trim() || null
+      const [existente] = await db.select({ id: controlesCoso.id }).from(controlesCoso).where(and(eq(controlesCoso.auditoriaId, p.auditoriaId), eq(controlesCoso.componente, coso.componente)))
+      const [ctrl] = existente
+        ? await db.update(controlesCoso).set({ calificacion, observaciones }).where(eq(controlesCoso.id, existente.id)).returning()
+        : await db.insert(controlesCoso).values({ auditoriaId: p.auditoriaId, componente: coso.componente, calificacion, observaciones }).returning()
+      set.entidadDestino = 'control_coso'; set.entidadDestinoId = ctrl.id
+      set.severidad = calificacion === 'deficiente' ? 'alta' : calificacion === 'con_deficiencias' ? 'media' : 'baja'
+      if (calificacion !== coso.calificacion) set.titulo = `${COMPONENTE_COSO_LABEL[coso.componente]}: ${CALIFICACION_COSO_LABEL[calificacion].toLowerCase()}`
+      set.contenido = { ...(set.contenido ?? (p.contenido as Record<string, unknown>)), coso: { ...coso, calificacion, observaciones: observaciones ?? '' } }
+      texto += ` ${COMPONENTE_COSO_LABEL[coso.componente]} queda "${CALIFICACION_COSO_LABEL[calificacion].toLowerCase()}" en la evaluación COSO.`
+      registrarEvento(user, { accion: 'coso.evaluar', entidad: 'control_coso', entidadId: ctrl.id, auditoriaId: p.auditoriaId, detalle: { componente: coso.componente, calificacion, origen: 'agente', codigo: p.codigo } })
+      // Cada deficiencia con área va como hallazgo de control al papel del área (referencia de la carta NIA 265).
+      const def = await materializarDeficienciasCoso(p.auditoriaId, { componente: coso.componente, calificacion, deficiencias: coso.deficiencias }, user)
+      if (def.escritas > 0) { texto += ` ${def.escritas} deficiencia(s) escritas como hallazgos en ${def.papeles.join(', ')} para la carta de control interno.`; (set.contenido as Record<string, unknown>).deficienciasEscritas = true }
+      else if (def.pendiente) texto += ' Las deficiencias con área van a sus papeles cuando se apruebe la materialidad.'
+      else (set.contenido as Record<string, unknown>).deficienciasEscritas = true
+    }
+
+    // Conclusión de un papel: aprobar (o ajustar el texto) la escribe en el papel de trabajo.
+    if (p.tipo === 'juicio' && destino === 'conclusion' && (decision === 'aprobar' || decision === 'ajustar')) {
+      const papelId = (p.contenido as { papelId?: string }).papelId
+      const conclusion = (ajustes?.descripcion ?? (p.contenido as ContenidoPropuesta).descripcion ?? '').trim()
+      if (!papelId || !conclusion) return c.json({ error: { code: 'PROPUESTA_INVALIDA', message: 'La propuesta no trae papel o texto de conclusión' } }, 409)
+      const [papel] = await db.update(papelesTrabajo).set({ conclusion }).where(and(eq(papelesTrabajo.id, papelId), eq(papelesTrabajo.auditoriaId, p.auditoriaId))).returning({ id: papelesTrabajo.id, indice: papelesTrabajo.indice })
+      if (!papel) return c.json({ error: { code: 'NOT_FOUND', message: 'Papel no encontrado' } }, 404)
+      set.entidadDestino = 'papel'; set.entidadDestinoId = papel.id
+      texto += ` Conclusión escrita en el papel ${papel.indice}.`
+      registrarEvento(user, { accion: 'papel.editar', entidad: 'papel_trabajo', entidadId: papel.id, auditoriaId: p.auditoriaId, detalle: { campos: ['conclusion'], origen: 'agente', codigo: p.codigo } })
     }
 
     // Entendimiento: aprobar (o ajustar) el juicio confirma el entendimiento del período en la tabla de siempre.
-    const destino = (p.contenido as { destino?: string }).destino
     if (p.tipo === 'juicio' && destino === 'entendimiento' && (decision === 'aprobar' || decision === 'ajustar')) {
       const [ent] = await db.select().from(entendimientoPeriodo).where(eq(entendimientoPeriodo.auditoriaId, p.auditoriaId))
       const cambios = ajustes?.descripcion ?? ent?.cambiosSignificativos ?? null
@@ -312,7 +559,7 @@ app.post(
       try {
         if (p.tipo === 'materialidad' && (decision === 'aprobar' || decision === 'ajustar')) {
           riesgosPropuestos = (await correrIdentificacionRiesgosEncargo(p.auditoriaId, user)).propuestas
-        } else if (p.tipo === 'hallazgo' && p.paso === 'balance' && (await hayCorridaRiesgos(p.auditoriaId))) {
+        } else if (((p.tipo === 'hallazgo' && p.paso === 'balance') || (p.tipo === 'juicio' && destino === 'coso')) && (await hayCorridaRiesgos(p.auditoriaId))) {
           riesgosPropuestos = (await correrIdentificacionRiesgosEncargo(p.auditoriaId, user)).propuestas
         }
       } catch (err) {
@@ -327,7 +574,7 @@ app.post(
 
 // ─── Arranque guiado ─────────────────────────────────────────────────────────
 
-const ORDEN_PASOS = ['entendimiento', 'balance', 'materialidad', 'riesgos', 'pbc']
+const ORDEN_PASOS = ['entendimiento', 'balance', 'control_interno', 'materialidad', 'riesgos', 'pbc']
 
 // GET /auditorias/:id/agente/arranque
 app.get('/auditorias/:id/agente/arranque', async (c) => {

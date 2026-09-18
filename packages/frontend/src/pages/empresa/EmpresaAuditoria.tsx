@@ -25,6 +25,9 @@ import { PanelDerecho } from '../../components/auditoria/PanelDerecho'
 import { AsistenteIA } from '../../components/auditoria/AsistenteIA'
 import { ActividadModal } from '../../components/auditoria/ActividadModal'
 import { AgentePaso } from '../../components/agente/AgentePaso'
+import { PanelAgente } from '../../components/agente/PanelAgente'
+import { CiclosAgente } from '../../components/agente/CiclosAgente'
+import { RiesgosPorCiclo } from '../../components/agente/RiesgosPorCiclo'
 import { useResumenAgente } from '../../hooks/useAgente'
 import {
   tabsPorServicio, FASE_ID, TIPO_LABEL, SERVICIO_LABEL,
@@ -146,9 +149,11 @@ export function EmpresaAuditoria() {
   const tabActivo: SubTab = pasoParam === 'resumen'
     ? 'resumen'
     : tabs.find((t) => t.id === pasoParam) ? (pasoParam as SubTab) : 'resumen'
-  const setTab = (t: SubTab) => {
+  const setTab = (t: SubTab, propuestaId?: string) => {
     const next = new URLSearchParams(searchParams)
     next.set('paso', t)
+    if (propuestaId) next.set('propuesta', propuestaId)
+    else next.delete('propuesta')
     setSearchParams(next, { replace: true })
   }
 
@@ -171,25 +176,21 @@ export function EmpresaAuditoria() {
     <div className="p-8 space-y-6">
       {/* Actividad (pista de auditoría) + contadores del agente */}
       <div className="flex items-center justify-end gap-2">
-        {agenteActivado && resumenAgente.data && (
-          <>
-            <button
-              onClick={() => {
-                const paso = Object.entries(resumenAgente.data!.porPaso).find(([, v]) => v.pendientes > 0)?.[0]
-                if (paso) setTab(paso as SubTab)
-              }}
-              className={cn(
-                'flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors',
-                resumenAgente.data.teToca > 0 ? 'border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100' : 'border-gray-200 bg-white text-gray-500',
-              )}
-              title="Decisiones pendientes"
-            >
-              Te toca <span className="font-mono tabular-nums font-semibold">{resumenAgente.data.teToca}</span>
-            </button>
-            <span className="flex items-center gap-1.5 rounded-full border border-emerald-200 bg-white px-3 py-1 text-xs font-medium text-emerald-700" title="Acciones del agente y decisiones tomadas">
-              Hecho por el agente <span className="font-mono tabular-nums font-semibold">{resumenAgente.data.hecho}</span>
-            </span>
-          </>
+        {/* En el dashboard (sin panel derecho) los contadores del agente van en la cabecera; en los pasos viven en el panel. */}
+        {agenteActivado && resumenAgente.data && tabActivo === 'resumen' && (
+          <button
+            onClick={() => {
+              const paso = Object.entries(resumenAgente.data!.porPaso).find(([, v]) => v.pendientes > 0)?.[0]
+              if (paso) setTab(paso as SubTab)
+            }}
+            className={cn(
+              'flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors',
+              resumenAgente.data.teToca > 0 ? 'border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100' : 'border-gray-200 bg-white text-gray-500',
+            )}
+            title="Decisiones pendientes"
+          >
+            Te toca <span className="font-mono tabular-nums font-semibold">{resumenAgente.data.teToca}</span>
+          </button>
         )}
         <button
           onClick={() => setActividadOpen(true)}
@@ -300,14 +301,16 @@ export function EmpresaAuditoria() {
           )}
           {!esAI && tabActivo === 'riesgos' && (
             agenteActivado
-              ? <AgentePaso auditoriaId={auditoria.id} paso="riesgos" contenidoLabel="Ver la matriz de riesgos completa"><RiesgosTab auditoriaId={auditoria.id} sector={auditoria.empresa.sector} materialidadAprobada={auditoria.materialidadAprobada} /></AgentePaso>
+              ? <RiesgosPorCiclo auditoriaId={auditoria.id} materialidadAprobada={auditoria.materialidadAprobada}><RiesgosTab auditoriaId={auditoria.id} sector={auditoria.empresa.sector} materialidadAprobada={auditoria.materialidadAprobada} /></RiesgosPorCiclo>
               : <RiesgosTab auditoriaId={auditoria.id} sector={auditoria.empresa.sector} materialidadAprobada={auditoria.materialidadAprobada} />
           )}
           {!esAI && tabActivo === 'tareas' && (
             <TareasTab auditoriaId={auditoria.id} materialidadAprobada={auditoria.materialidadAprobada} />
           )}
           {!esAI && tabActivo === 'papeles' && (
-            <PapelesTab auditoriaId={auditoria.id} materialidadAprobada={auditoria.materialidadAprobada} />
+            agenteActivado
+              ? <CiclosAgente auditoriaId={auditoria.id} empresaId={auditoria.empresa.id} materialidadAprobada={auditoria.materialidadAprobada}><PapelesTab auditoriaId={auditoria.id} materialidadAprobada={auditoria.materialidadAprobada} /></CiclosAgente>
+              : <PapelesTab auditoriaId={auditoria.id} materialidadAprobada={auditoria.materialidadAprobada} />
           )}
           {!esAI && tabActivo === 'pbc' && (
             agenteActivado ? (
@@ -334,7 +337,9 @@ export function EmpresaAuditoria() {
             />
           )}
           {!esAI && tabActivo === 'control_interno' && (
-            <ControlInternoTab auditoriaId={auditoria.id} />
+            agenteActivado
+              ? <AgentePaso auditoriaId={auditoria.id} paso="control_interno" contenidoLabel="Ver o editar la evaluación COSO completa"><ControlInternoTab auditoriaId={auditoria.id} /></AgentePaso>
+              : <ControlInternoTab auditoriaId={auditoria.id} />
           )}
           {!esAI && tabActivo === 'informes' && (
             <InformesTab
@@ -369,6 +374,7 @@ export function EmpresaAuditoria() {
             onIr={(t) => setTab(t as SubTab)}
             pasoActivo={tabActivo}
             pasoLabel={pasoLabel}
+            arriba={agenteActivado ? <PanelAgente auditoriaId={auditoria.id} tabs={tabs} onIr={(paso, propuestaId) => setTab(paso as SubTab, propuestaId)} /> : undefined}
           />
         </div>
       </div>

@@ -67,6 +67,8 @@ export type EntradaCorridaRiesgos = {
   /** Riesgos que ya están en la matriz (de cualquier origen). */
   riesgosExistentes: { area: string; descripcion: string; origen: string }[]
   materialidad: { monto: number; aprobada: boolean } | null
+  /** Riesgo de control por área desde el cuestionario de control interno (deficiencias por área). */
+  controlPorArea?: Record<string, NivelRiesgo>
   /** Números R- ya usados en corridas anteriores del encargo. */
   numeracion?: { R?: number }
   /** Huellas (ver huellaRiesgo) ya decididas por una persona: no se vuelven a proponer. */
@@ -183,9 +185,9 @@ export function correrIdentificacionRiesgos(entrada: EntradaCorridaRiesgos): Res
   const texto = entrada.entendimiento?.cambiosSignificativos ? normalizar(entrada.entendimiento.cambiosSignificativos) : ''
   const senales = texto ? SENALES_ENTENDIMIENTO.filter((s) => s.patron.test(texto)) : []
   const controlPorEntendimiento = senales.some((s) => s.area === null)
-  let control: NivelRiesgo = controlBase
+  let controlGlobal: NivelRiesgo = controlBase
   if (controlPorEntendimiento) {
-    control = 'alto'
+    controlGlobal = 'alto'
     bit.push({ tipo: 'contraste', texto: 'En el entendimiento reportaste un cambio en el sistema o el equipo contable: subí el riesgo de control a ALTO para todos los riesgos de este año.', referencia: { regla: 'R-03', norma: 'NIA 315' } })
   }
   if (entrada.entendimiento && !entrada.entendimiento.confirmado && texto) {
@@ -197,6 +199,15 @@ export function correrIdentificacionRiesgos(entrada: EntradaCorridaRiesgos): Res
     bit.push({ tipo: 'regla', texto: `Apliqué R-03 sobre los cambios del año reportados: ${senales.length} señal(es) reconocidas.`, referencia: { regla: 'R-03', norma: 'NIA 315' } })
   }
 
+  // Riesgo de control de un área: el global del encargo, subido si el cuestionario COSO marcó deficiencias en esa área.
+  const porArea = entrada.controlPorArea ?? {}
+  const areasConDeficiencia = Object.keys(porArea)
+  if (areasConDeficiencia.length) bit.push({ tipo: 'contraste', texto: `El cuestionario de control interno sube el riesgo de control en ${areasConDeficiencia.map((a) => `${nombreArea(a)} (${NIVEL_LABEL[porArea[a]].toLowerCase()})`).join(', ')}.`, referencia: { regla: 'R-02', norma: 'NIA 315' } })
+  const controlDe = (area: string): NivelRiesgo => mayor(controlGlobal, porArea[area] ?? 'bajo')
+  const motivoControl = (area: string) =>
+    porArea[area] && PESO[porArea[area]] > PESO[controlGlobal] ? 'por las deficiencias de esta área en el cuestionario de control interno'
+      : controlPorEntendimiento ? 'por el cambio de sistema o equipo contable del entendimiento'
+        : entrada.coso.length ? 'desde la evaluación COSO' : 'valor por defecto sin evaluación COSO'
   const existentesPorArea = new Map<string, number>()
   for (const r of entrada.riesgosExistentes) existentesPorArea.set(r.area, (existentesPorArea.get(r.area) ?? 0) + 1)
   const propuestasPorArea = new Set<string>()
@@ -215,6 +226,7 @@ export function correrIdentificacionRiesgos(entrada: EntradaCorridaRiesgos): Res
   bit.push({ tipo: 'regla', texto: `Apliqué R-01: agrupé los hallazgos por área del PUC → ${grupos.size} área(s) con riesgo.`, referencia: { regla: 'R-01', norma: 'NIA 315' } })
 
   for (const [area, hs] of grupos) {
+    const control = controlDe(area)
     const ordenados = [...hs].sort((a, b) => Math.abs(b.monto ?? 0) - Math.abs(a.monto ?? 0))
     const inherente = ordenados.reduce<NivelRiesgo>((acc, h) => mayor(acc, SEV_A_NIVEL[h.severidad ?? 'media']), 'bajo')
     const combinado = nivelCombinado(inherente, control)
@@ -237,7 +249,7 @@ export function correrIdentificacionRiesgos(entrada: EntradaCorridaRiesgos): Res
     const bitac: PropuestaBorrador['bitacora'] = [
       { tipo: 'lectura', texto: `Tomé ${ordenados.length} hallazgo(s) aprobados con cuentas del área ${nombreArea(area)}: ${codigos.join(', ') || lineas[0]}.`, referencia: { regla: 'R-01' } },
       { tipo: 'clasificacion', texto: `Riesgo inherente ${NIVEL_LABEL[inherente].toUpperCase()}: la mayor severidad de los hallazgos (${ordenados.map((h) => h.severidad ?? 'media').join(', ')}).`, referencia: { regla: 'R-01', norma: 'NIA 315' } },
-      { tipo: 'clasificacion', texto: `Riesgo de control ${NIVEL_LABEL[control].toUpperCase()}: ${controlPorEntendimiento ? 'por el cambio de sistema o equipo contable del entendimiento' : entrada.coso.length ? 'desde la evaluación COSO' : 'valor por defecto sin evaluación COSO'}. Combinado ${NIVEL_LABEL[combinado].toUpperCase()}.`, referencia: { regla: 'R-02' } },
+      { tipo: 'clasificacion', texto: `Riesgo de control ${NIVEL_LABEL[control].toUpperCase()}: ${motivoControl(area)}. Combinado ${NIVEL_LABEL[combinado].toUpperCase()}.`, referencia: { regla: 'R-02' } },
       { tipo: 'regla', texto: `Respuesta planeada desde el programa estándar del área (NIA 330): ${respuesta}`, referencia: { norma: 'NIA 330' } },
     ]
     if (yaHay > 0) bitac.push({ tipo: 'contraste', texto: `Ya hay ${yaHay} riesgo(s) en ${nombreArea(area)} en la matriz; este se suma porque viene de evidencia del balance.`, referencia: { regla: 'R-01' } })
@@ -256,6 +268,7 @@ export function correrIdentificacionRiesgos(entrada: EntradaCorridaRiesgos): Res
   // ── R-03 · riesgos por área desde el entendimiento ──
   for (const s of senales.filter((x) => x.area !== null)) {
     const area = s.area!
+    const control = controlDe(area)
     if (propuestasPorArea.has(area)) {
       bit.push({ tipo: 'contraste', texto: `La señal "${s.titulo}" cae en ${nombreArea(area)}, que ya tiene riesgo desde el balance: la dejo anotada ahí.`, referencia: { regla: 'R-03' } })
       const p = propuestas.find((x) => x.clave === `R-01:${area}`)
@@ -294,6 +307,7 @@ export function correrIdentificacionRiesgos(entrada: EntradaCorridaRiesgos): Res
   for (const r of entrada.catalogoSector) {
     if (sectorEmitidos >= TOPE_SECTOR) break
     if (propuestasPorArea.has(r.area) || (existentesPorArea.get(r.area) ?? 0) > 0) { sectorSaltados++; continue }
+    const control = controlDe(r.area)
     const combinado = nivelCombinado(r.riesgoInherente, control)
     const riesgo: ContenidoRiesgo = { area: r.area, riesgoInherente: r.riesgoInherente, riesgoControl: control, riesgoCombinado: combinado, respuestaPlaneada: r.respuestaPlaneada, fuente: { tipo: 'sector', codigos: [] } }
     propuestasPorArea.add(r.area)

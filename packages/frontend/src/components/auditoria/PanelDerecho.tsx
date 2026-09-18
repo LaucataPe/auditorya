@@ -9,19 +9,23 @@ export function PanelDerecho({
   onIr,
   pasoActivo,
   pasoLabel,
+  arriba,
 }: {
   faseLabel: string
   items: GuiaItem[]
   onIr: (tab: string) => void
   pasoActivo: string
   pasoLabel: string
+  /** Reemplaza la tarjeta del checklist (en modo agéntico va el panel del agente; el rail ya muestra el avance). */
+  arriba?: React.ReactNode
 }) {
   const info = CATALOGO_ETAPAS[pasoActivo]
   const faltan = items.filter((i) => i.requerido && !i.hecho).length
 
   return (
     <aside className="w-80 shrink-0 space-y-4">
-      {/* Card 1 · Checklist de la etapa */}
+      {/* Card 1 · Checklist de la etapa (o el panel del agente) */}
+      {arriba ?? (
       <div className="rounded-2xl border border-gray-200 bg-white p-4">
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-sm font-semibold text-gray-900">Checklist · {faseLabel}</h3>
@@ -58,6 +62,7 @@ export function PanelDerecho({
           ))}
         </div>
       </div>
+      )}
 
       {/* Card 2 · Normativa y tips del paso activo */}
       {info && (
