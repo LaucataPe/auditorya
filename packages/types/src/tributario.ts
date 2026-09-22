@@ -1008,6 +1008,7 @@ export const TIPOS_ADJUNTO_TRIBUTARIO = [
   'pago',
   'conciliacion',
   'certificado',
+  'evidencia',
   'otro',
 ] as const
 export type TipoAdjuntoTributario = (typeof TIPOS_ADJUNTO_TRIBUTARIO)[number]
@@ -1017,8 +1018,21 @@ export const TIPO_ADJUNTO_LABELS: Record<TipoAdjuntoTributario, string> = {
   pago: 'Recibo de pago',
   conciliacion: 'Conciliación',
   certificado: 'Certificado',
+  evidencia: 'Evidencia de hallazgo',
   otro: 'Otro soporte',
 }
+
+/**
+ * Tipos que se ofrecen al adjuntar evidencia de un hallazgo; el primero es el
+ * predeterminado. "Declaración presentada" y "Recibo de pago" quedan fuera:
+ * son soportes de la revisión, no de un hallazgo.
+ */
+export const TIPOS_ADJUNTO_EVIDENCIA: readonly TipoAdjuntoTributario[] = [
+  'evidencia',
+  'certificado',
+  'conciliacion',
+  'otro',
+]
 
 /**
  * Soportes que se pueden incorporar con la revisión ya firmada: la declaración
@@ -1030,6 +1044,8 @@ export const TIPOS_ADJUNTO_POST_FIRMA: readonly TipoAdjuntoTributario[] = ['decl
 export type AdjuntoTributario = {
   id: string
   revisionId: string
+  /** Evidencia de ese hallazgo; null = soporte de la revisión. */
+  hallazgoId: string | null
   nombre: string
   tipo: TipoAdjuntoTributario
   archivoNombre: string

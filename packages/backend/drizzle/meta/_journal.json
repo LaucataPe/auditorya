@@ -309,6 +309,13 @@
       "when": 1786700000000,
       "tag": "0043_tributario_presentacion",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1786800000000,
+      "tag": "0044_tributario_evidencia_hallazgo",
+      "breakpoints": true
     }
   ]
 }

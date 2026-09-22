@@ -18,6 +18,7 @@ import {
   Sparkles,
   Trash2,
   Upload,
+  X,
 } from 'lucide-react'
 import {
   CIFRAS_CATALOGO,
@@ -25,6 +26,7 @@ import {
   ESTADOS_HALLAZGO_TRIBUTARIO,
   IMPUESTOS_CATALOGO,
   TIPO_ADJUNTO_LABELS,
+  TIPOS_ADJUNTO_EVIDENCIA,
   TIPOS_ADJUNTO_POST_FIRMA,
   TIPOS_ADJUNTO_TRIBUTARIO,
   alcanceSugerido,
@@ -34,6 +36,7 @@ import {
   presentacionExtemporanea,
   procedimientosSugeridos,
   resolverCifras,
+  type AdjuntoTributario,
   type HallazgoTributario,
   type RenglonCifra,
   type ResultadoRevisionTributaria,
@@ -92,9 +95,12 @@ export function EmpresaTributarioRevision() {
   const seccion: Seccion = seccionParam && SECCIONES.includes(seccionParam) ? seccionParam : 'alcance'
   const irASeccion = (s: Seccion) => setSearchParams({ seccion: s }, { replace: true })
   const [modalFirma, setModalFirma] = useState(false)
-  const [modalAdjunto, setModalAdjunto] = useState(false)
+  // null = cerrado. `hallazgoId` distingue evidencia de un hallazgo de un soporte de la revisión.
+  const [modalAdjunto, setModalAdjunto] = useState<{ hallazgoId: string | null } | null>(null)
   // Fila recién creada: la tabla le pone el foco y selecciona el texto para escribir encima.
   const [nuevoHallazgoId, setNuevoHallazgoId] = useState<string | null>(null)
+  // Fila borrador de hallazgo abierta en la tabla (todavía no existe en la base).
+  const [borradorHallazgo, setBorradorHallazgo] = useState(false)
 
   const { data: revision, isLoading } = useQuery<RevisionTributariaDetalle>({
     queryKey: ['tributario-revision', revisionId],
@@ -137,11 +143,16 @@ export function EmpresaTributarioRevision() {
   // Crear desde el botón "Nuevo" o desde una diferencia de cifras: en ambos
   // casos la fila nace en la tabla y se edita ahí mismo (sin modal).
   const crearHallazgo = useMutation({
-    mutationFn: (campos: { descripcion: string; monto?: number | null }) =>
-      api.post<HallazgoTributario>(`/tributario/revisiones/${revisionId}/hallazgos`, campos),
-    onSuccess: (h) => {
+    mutationFn: (vars: { descripcion: string; monto?: number | null; enfocar?: boolean }) =>
+      api.post<HallazgoTributario>(`/tributario/revisiones/${revisionId}/hallazgos`, {
+        descripcion: vars.descripcion,
+        ...(vars.monto !== undefined ? { monto: vars.monto } : {}),
+      }),
+    onSuccess: (h, vars) => {
       invalidar()
-      setNuevoHallazgoId(h.id)
+      setBorradorHallazgo(false)
+      // En la fila borrador el auditor ya está escribiendo: robarle el foco molesta.
+      if (vars.enfocar !== false) setNuevoHallazgoId(h.id)
       irASeccion('hallazgos')
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : 'No se pudo crear el hallazgo'),
@@ -189,6 +200,8 @@ export function EmpresaTributarioRevision() {
   const cifrasResueltas = resolverCifras(revision.obligacion.tipo, revision.cifras)
 
   const tieneMatriz = CIFRAS_CATALOGO[revision.obligacion.tipo].some((s) => s.matriz)
+  // La evidencia de un hallazgo se lista dentro de su fila, no en Soportes.
+  const soportesRevision = revision.adjuntos.filter((a) => a.hallazgoId === null)
 
   // Hallazgo prellenado desde una diferencia de cifras (lista o matriz).
   const crearHallazgoDiferencia = (
@@ -414,7 +427,12 @@ export function EmpresaTributarioRevision() {
                     <CheckCircle2 size={12} /> Declaración presentada adjunta
                   </span>
                 ) : (
-                  <Button size="sm" variant="secondary" className="gap-1.5" onClick={() => setModalAdjunto(true)}>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    className="gap-1.5"
+                    onClick={() => setModalAdjunto({ hallazgoId: null })}
+                  >
                     <Upload size={12} /> Adjuntar declaración presentada
                   </Button>
                 )}
@@ -741,8 +759,8 @@ export function EmpresaTributarioRevision() {
                   size="sm"
                   variant="secondary"
                   className="gap-1.5"
-                  loading={crearHallazgo.isPending}
-                  onClick={() => crearHallazgo.mutate({ descripcion: 'Nuevo hallazgo' })}
+                  disabled={borradorHallazgo}
+                  onClick={() => setBorradorHallazgo(true)}
                 >
                   <Plus size={13} /> Nuevo hallazgo
                 </Button>
@@ -755,6 +773,13 @@ export function EmpresaTributarioRevision() {
                 iaDisponible={!!ia?.disponible}
                 nuevoId={nuevoHallazgoId}
                 onEnfocadoNuevo={() => setNuevoHallazgoId(null)}
+                borrador={borradorHallazgo}
+                onCerrarBorrador={() => setBorradorHallazgo(false)}
+                onCrear={(descripcion) => crearHallazgo.mutate({ descripcion, enfocar: false })}
+                adjuntos={revision.adjuntos}
+                onAdjuntar={(hallazgoId) => setModalAdjunto({ hallazgoId })}
+                onDescargar={descargar}
+                onEliminarAdjunto={(adjuntoId) => eliminarAdjunto.mutate(adjuntoId)}
                 onCambio={invalidar}
               />
             </div>
@@ -809,7 +834,12 @@ export function EmpresaTributarioRevision() {
               <h2 className="flex items-center gap-2 text-sm font-semibold text-teal-900">
                 <Paperclip size={14} className="text-teal-500" /> Soportes
               </h2>
-              <Button size="sm" variant="secondary" className="gap-1.5" onClick={() => setModalAdjunto(true)}>
+              <Button
+                size="sm"
+                variant="secondary"
+                className="gap-1.5"
+                onClick={() => setModalAdjunto({ hallazgoId: null })}
+              >
                 <Upload size={13} /> Adjuntar
               </Button>
             </div>
@@ -817,16 +847,17 @@ export function EmpresaTributarioRevision() {
             <p className="mb-3 text-xs text-gray-400">
               {sellada
                 ? 'Revisión firmada: puedes agregar la declaración presentada y el recibo de pago. Quedan marcados como incorporados después de la firma.'
-                : 'Declaración presentada, recibo de pago, conciliación. Quedan en la constancia al firmar.'}
+                : 'Declaración presentada, recibo de pago, conciliación. Quedan en la constancia al firmar.'}{' '}
+              La evidencia de un hallazgo se adjunta desde su fila, en la pestaña de hallazgos.
             </p>
-            {revision.adjuntos.length === 0 ? (
+            {soportesRevision.length === 0 ? (
               <div className="flex flex-col items-center gap-1.5 rounded-lg border border-dashed border-gray-200 py-6 text-center">
                 <Paperclip size={16} className="text-gray-300" />
                 <p className="text-xs text-gray-400">Sin soportes aún</p>
               </div>
             ) : (
               <ul className="space-y-2">
-                {revision.adjuntos.map((a) => (
+                {soportesRevision.map((a) => (
                   <li key={a.id} className="flex items-center gap-2 rounded-lg border border-gray-100 px-3 py-2">
                     <FileText size={15} className="shrink-0 text-gray-400" />
                     <div className="min-w-0 flex-1">
@@ -882,9 +913,10 @@ export function EmpresaTributarioRevision() {
         }}
       />
       <ModalAdjunto
-        open={modalAdjunto}
-        onClose={() => setModalAdjunto(false)}
+        open={modalAdjunto !== null}
+        onClose={() => setModalAdjunto(null)}
         revisionId={revision.id}
+        hallazgoId={modalAdjunto?.hallazgoId ?? null}
         onSubido={invalidar}
         soloPostFirma={sellada}
       />
@@ -1110,6 +1142,7 @@ function TextareaCelda({
   deshabilitado,
   enfocar,
   onEnfocado,
+  onBlurVacio,
   filas = 2,
   className,
   onGuardar,
@@ -1120,6 +1153,8 @@ function TextareaCelda({
   enfocar?: boolean
   /** Se avisa tras enfocar para que quien pidió el foco lo desarme. */
   onEnfocado?: () => void
+  /** Salir del campo dejándolo vacío (la fila borrador se cancela). */
+  onBlurVacio?: () => void
   filas?: number
   className?: string
   onGuardar: (valor: string) => boolean | void
@@ -1156,6 +1191,10 @@ function TextareaCelda({
       onInput={ajustar}
       onBlur={(e) => {
         const nuevo = e.target.value.trim()
+        if (nuevo === '' && onBlurVacio) {
+          onBlurVacio()
+          return
+        }
         if (nuevo === (valor ?? '').trim()) return
         if (onGuardar(nuevo) === false) {
           e.target.value = valor ?? ''
@@ -1172,12 +1211,17 @@ function TextareaCelda({
   )
 }
 
+/** Id de la fila borrador: existe solo en pantalla, nunca en la base. */
+const ID_BORRADOR = 'borrador'
+
 /**
  * Hallazgos como tabla editable en línea (sin modal): cada celda guarda al
  * salir del foco. Lo que falta por documentar se marca en ámbar —placeholder y
  * aviso junto al estado— para ver de un vistazo qué hallazgos están a medias.
- * Con la revisión firmada el contenido queda de solo lectura y solo se pueden
- * mover el estado y el seguimiento (la grieta deliberada del sello).
+ * "Nuevo hallazgo" abre una fila borrador vacía (solo con el placeholder) que
+ * se crea al salir del campo con texto. Con la revisión firmada el contenido
+ * queda de solo lectura y solo se pueden mover el estado y el seguimiento (la
+ * grieta deliberada del sello).
  */
 function HallazgosTabla({
   hallazgos,
@@ -1185,6 +1229,13 @@ function HallazgosTabla({
   iaDisponible,
   nuevoId,
   onEnfocadoNuevo,
+  borrador,
+  onCerrarBorrador,
+  onCrear,
+  adjuntos,
+  onAdjuntar,
+  onDescargar,
+  onEliminarAdjunto,
   onCambio,
 }: {
   hallazgos: HallazgoTributario[]
@@ -1192,6 +1243,15 @@ function HallazgosTabla({
   iaDisponible: boolean
   nuevoId: string | null
   onEnfocadoNuevo: () => void
+  /** Hay una fila borrador abierta al final de la tabla. */
+  borrador: boolean
+  onCerrarBorrador: () => void
+  onCrear: (descripcion: string) => void
+  /** Todos los adjuntos de la revisión; los que traen hallazgoId son evidencia. */
+  adjuntos: AdjuntoTributario[]
+  onAdjuntar: (hallazgoId: string) => void
+  onDescargar: (adjuntoId: string) => void
+  onEliminarAdjunto: (adjuntoId: string) => void
   onCambio: () => void
 }) {
   const actualizar = useMutation({
@@ -1223,6 +1283,37 @@ function HallazgosTabla({
     onError: (e) => toast.error(e instanceof Error ? e.message : 'No se pudo generar el borrador'),
   })
 
+  // La fila borrador se crea en la base al salir del campo con texto: el
+  // backend exige descripción, así no quedan hallazgos en blanco dentro de una
+  // constancia firmada.
+  const filas: HallazgoTributario[] = borrador
+    ? [
+        ...hallazgos,
+        {
+          id: ID_BORRADOR,
+          revisionId: '',
+          descripcion: '',
+          recomendacion: null,
+          monto: null,
+          severidad: 'media',
+          estado: 'abierto',
+          seguimiento: null,
+          resueltoAt: null,
+          creadoPor: null,
+          createdAt: '',
+        },
+      ]
+    : hallazgos
+
+  // Evidencia por hallazgo; el resto de adjuntos son soportes de la revisión.
+  const evidenciaPorHallazgo = new Map<string, AdjuntoTributario[]>()
+  for (const a of adjuntos) {
+    if (!a.hallazgoId) continue
+    const lista = evidenciaPorHallazgo.get(a.hallazgoId)
+    if (lista) lista.push(a)
+    else evidenciaPorHallazgo.set(a.hallazgoId, [a])
+  }
+
   // Sin useMemo a propósito: las celdas cierran sobre el estado de las
   // mutaciones (isPending por fila), que cambia en cada render.
   const columnas: ColumnDef<HallazgoTributario, any>[] = [
@@ -1242,20 +1333,24 @@ function HallazgosTabla({
       meta: { className: 'align-top' },
       cell: ({ row }) => {
         const h = row.original
+        const esBorrador = h.id === ID_BORRADOR
         return (
           <TextareaCelda
             valor={h.descripcion}
             placeholder="Situación encontrada…"
             deshabilitado={sellada}
-            enfocar={h.id === nuevoId}
-            onEnfocado={onEnfocadoNuevo}
+            // El borrador nace enfocado; salir dejándolo vacío lo cancela.
+            enfocar={esBorrador || h.id === nuevoId}
+            onEnfocado={esBorrador ? undefined : onEnfocadoNuevo}
+            onBlurVacio={esBorrador ? onCerrarBorrador : undefined}
             className="min-w-[18rem] text-[13px] text-gray-800"
             onGuardar={(v) => {
               if (v.length < 2) {
                 toast.error('El hallazgo no puede quedar vacío')
                 return false
               }
-              actualizar.mutate({ id: h.id, descripcion: v })
+              if (esBorrador) onCrear(v)
+              else actualizar.mutate({ id: h.id, descripcion: v })
             }}
           />
         )
@@ -1266,15 +1361,18 @@ function HallazgosTabla({
       header: 'Recomendación',
       enableSorting: false,
       meta: { className: 'align-top' },
-      cell: ({ row }) => (
-        <TextareaCelda
-          valor={row.original.recomendacion}
-          placeholder="¿Qué debe hacer el cliente para corregirlo?"
-          deshabilitado={sellada}
-          className="min-w-[16rem]"
-          onGuardar={(v) => actualizar.mutate({ id: row.original.id, recomendacion: v || null })}
-        />
-      ),
+      cell: ({ row }) =>
+        row.original.id === ID_BORRADOR ? (
+          <span className="px-2 text-[11px] text-gray-400">Se habilita al crear el hallazgo</span>
+        ) : (
+          <TextareaCelda
+            valor={row.original.recomendacion}
+            placeholder="¿Qué debe hacer el cliente para corregirlo?"
+            deshabilitado={sellada}
+            className="min-w-[16rem]"
+            onGuardar={(v) => actualizar.mutate({ id: row.original.id, recomendacion: v || null })}
+          />
+        ),
     },
     {
       accessorKey: 'monto',
@@ -1283,6 +1381,7 @@ function HallazgosTabla({
       meta: { align: 'right', className: 'w-32 align-top' },
       cell: ({ row }) => {
         const h = row.original
+        if (h.id === ID_BORRADOR) return <span className="px-2 text-gray-300">—</span>
         const actual = h.monto === null ? null : Number(h.monto)
         return (
           <InputMiles
@@ -1304,6 +1403,7 @@ function HallazgosTabla({
       meta: { align: 'center', className: 'w-28 align-top' },
       cell: ({ row }) => {
         const h = row.original
+        if (h.id === ID_BORRADOR) return <span className="text-gray-300">—</span>
         return (
           <select
             value={h.severidad}
@@ -1332,6 +1432,7 @@ function HallazgosTabla({
       meta: { align: 'center', className: 'w-32 align-top' },
       cell: ({ row }) => {
         const h = row.original
+        if (h.id === ID_BORRADOR) return <span className="text-gray-300">—</span>
         // Lo que falta documentar del hallazgo: el aviso que responde "¿qué me
         // queda por revisar?" sin abrir cada fila.
         const faltaRecomendacion = !(h.recomendacion ?? '').trim()
@@ -1367,12 +1468,30 @@ function HallazgosTabla({
       id: 'acciones',
       header: '',
       enableSorting: false,
-      meta: { align: 'center', className: 'w-16 align-top' },
+      meta: { align: 'center', className: 'w-24 align-top' },
       cell: ({ row }) => {
         const h = row.original
+        if (h.id === ID_BORRADOR) {
+          return (
+            <button
+              onClick={onCerrarBorrador}
+              title="Cancelar"
+              className="rounded p-1 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600"
+            >
+              <X size={13} />
+            </button>
+          )
+        }
         if (sellada) return null
         return (
           <div className="flex items-center justify-center gap-0.5">
+            <button
+              onClick={() => onAdjuntar(h.id)}
+              title="Adjuntar evidencia (archivo o foto)"
+              className="rounded p-1 text-gray-400 transition-colors hover:bg-teal-50 hover:text-teal-600"
+            >
+              <Paperclip size={13} />
+            </button>
             {iaDisponible && (
               <button
                 onClick={() => redactar.mutate(h)}
@@ -1410,33 +1529,69 @@ function HallazgosTabla({
       </p>
       <DataTable
         columns={columnas}
-        data={hallazgos}
+        data={filas}
         minWidth={1100}
         pageSize={25}
+        rowClassName={(h) => (h.id === ID_BORRADOR ? 'bg-indigo-50/40' : undefined)}
         searchPlaceholder={hallazgos.length > 3 ? 'Buscar hallazgo…' : undefined}
         emptyMessage={
           sellada
             ? 'No se registraron hallazgos en este período.'
             : 'Sin hallazgos. Usa "Nuevo hallazgo", o créalo desde una diferencia en la pestaña de cifras.'
         }
-        subRow={(h) =>
-          // El seguimiento solo tiene sentido después de la firma: es lo único
-          // que puede seguir cambiando cuando el contenido ya quedó sellado.
-          sellada ? (
-            <div className="flex items-start gap-2">
-              <span className="mt-1.5 shrink-0 text-[10px] font-semibold uppercase tracking-wide text-gray-400">
-                Qué pasó después
-              </span>
-              <TextareaCelda
-                valor={h.seguimiento}
-                placeholder="Seguimiento posterior a la firma: gestión con el cliente, corrección presentada, fecha…"
-                deshabilitado={false}
-                filas={1}
-                onGuardar={(v) => actualizar.mutate({ id: h.id, seguimiento: v || null })}
-              />
+        subRow={(h) => {
+          const evidencia = evidenciaPorHallazgo.get(h.id) ?? []
+          if (evidencia.length === 0 && !sellada) return null
+          return (
+            <div className="space-y-2">
+              {evidencia.length > 0 && (
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">Evidencia</span>
+                  {evidencia.map((a) => (
+                    <span
+                      key={a.id}
+                      className="flex items-center gap-1 rounded-full border border-teal-200 bg-teal-50 py-0.5 pl-2 pr-1 text-[11px] text-teal-800"
+                    >
+                      <button
+                        onClick={() => onDescargar(a.id)}
+                        title="Descargar (URL firmada, 15 min)"
+                        className="max-w-[16rem] truncate hover:underline"
+                      >
+                        {a.nombre}
+                      </button>
+                      <span className="text-teal-600/70">{formatoTamano(a.archivoTamano)}</span>
+                      {!sellada && (
+                        <button
+                          onClick={() => onEliminarAdjunto(a.id)}
+                          title="Quitar evidencia"
+                          className="rounded-full p-0.5 text-teal-600/70 transition-colors hover:bg-teal-100 hover:text-rose-600"
+                        >
+                          <X size={11} />
+                        </button>
+                      )}
+                    </span>
+                  ))}
+                </div>
+              )}
+              {/* El seguimiento solo tiene sentido después de la firma: es lo
+                  único que puede cambiar con el contenido ya sellado. */}
+              {sellada && (
+                <div className="flex items-start gap-2">
+                  <span className="mt-1.5 shrink-0 text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+                    Qué pasó después
+                  </span>
+                  <TextareaCelda
+                    valor={h.seguimiento}
+                    placeholder="Seguimiento posterior a la firma: gestión con el cliente, corrección presentada, fecha…"
+                    deshabilitado={false}
+                    filas={1}
+                    onGuardar={(v) => actualizar.mutate({ id: h.id, seguimiento: v || null })}
+                  />
+                </div>
+              )}
             </div>
-          ) : null
-        }
+          )
+        }}
       />
     </>
   )
@@ -1591,12 +1746,15 @@ function ModalAdjunto({
   open,
   onClose,
   revisionId,
+  hallazgoId,
   onSubido,
   soloPostFirma,
 }: {
   open: boolean
   onClose: () => void
   revisionId: string
+  /** Evidencia de ese hallazgo; null = soporte de la revisión. */
+  hallazgoId: string | null
   onSubido: () => void
   /** Revisión firmada: solo declaración presentada o recibo de pago. */
   soloPostFirma: boolean
@@ -1605,22 +1763,29 @@ function ModalAdjunto({
   const [tipo, setTipo] = useState<TipoAdjuntoTributario>('declaracion')
   const [archivo, setArchivo] = useState<File | null>(null)
   const inputArchivo = useRef<HTMLInputElement>(null)
-  // El modal no se desmonta: un tipo elegido antes de firmar (p. ej. conciliación)
-  // quedaría seleccionado aunque ya no esté permitido y el backend respondería 409.
-  const tipoEfectivo: TipoAdjuntoTributario =
-    soloPostFirma && !TIPOS_ADJUNTO_POST_FIRMA.includes(tipo) ? 'declaracion' : tipo
+  // Opciones según el destino: la evidencia solo aplica a un hallazgo y, con la
+  // revisión firmada, solo entran declaración y pago.
+  const opciones: readonly TipoAdjuntoTributario[] = hallazgoId
+    ? TIPOS_ADJUNTO_EVIDENCIA
+    : soloPostFirma
+      ? TIPOS_ADJUNTO_POST_FIRMA
+      : TIPOS_ADJUNTO_TRIBUTARIO.filter((t) => t !== 'evidencia')
+  // El modal no se desmonta: si el tipo elegido antes no aplica al destino
+  // actual, cae en el primero válido (el backend rechazaría el que no aplica).
+  const tipoEfectivo: TipoAdjuntoTributario = opciones.includes(tipo) ? tipo : opciones[0]
 
   const subir = useMutation({
     mutationFn: () => {
       const fd = new FormData()
       fd.append('archivo', archivo!)
       fd.append('tipo', tipoEfectivo)
+      if (hallazgoId) fd.append('hallazgoId', hallazgoId)
       if (nombre.trim()) fd.append('nombre', nombre.trim())
       return api.upload(`/tributario/revisiones/${revisionId}/adjuntos`, fd)
     },
     onSuccess: () => {
       onSubido()
-      toast.success('Soporte adjuntado')
+      toast.success(hallazgoId ? 'Evidencia adjuntada' : 'Soporte adjuntado')
       setNombre('')
       setArchivo(null)
       onClose()
@@ -1632,7 +1797,13 @@ function ModalAdjunto({
     <Modal
       open={open}
       onClose={onClose}
-      title={soloPostFirma ? 'Adjuntar soporte posterior a la firma' : 'Adjuntar soporte'}
+      title={
+        hallazgoId
+          ? 'Adjuntar evidencia del hallazgo'
+          : soloPostFirma
+            ? 'Adjuntar soporte posterior a la firma'
+            : 'Adjuntar soporte'
+      }
       size="sm"
     >
       <div className="space-y-4">
@@ -1640,10 +1811,7 @@ function ModalAdjunto({
           label="Tipo de soporte"
           value={tipoEfectivo}
           onChange={(e) => setTipo(e.target.value as TipoAdjuntoTributario)}
-          options={(soloPostFirma ? TIPOS_ADJUNTO_POST_FIRMA : TIPOS_ADJUNTO_TRIBUTARIO).map((t) => ({
-            value: t,
-            label: TIPO_ADJUNTO_LABELS[t],
-          }))}
+          options={opciones.map((t) => ({ value: t, label: TIPO_ADJUNTO_LABELS[t] }))}
         />
         <Input
           label="Nombre del soporte"
