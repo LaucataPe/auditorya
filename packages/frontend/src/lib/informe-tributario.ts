@@ -52,6 +52,11 @@ function textoHallazgos(revision: RevisionTributariaDetalle, opts: { conSeguimie
         }] ${h.descripcion}`,
       ]
       if (h.recomendacion) lineas.push(`   Recomendación: ${h.recomendacion}`)
+      // La evidencia se lista dentro de su hallazgo, no en los soportes generales.
+      const evidencia = revision.adjuntos.filter((a) => a.hallazgoId === h.id)
+      if (evidencia.length > 0) {
+        lineas.push(`   Evidencia: ${evidencia.map((a) => a.archivoNombre).join(' · ')}`)
+      }
       if (opts.conSeguimiento && h.seguimiento) lineas.push(`   Seguimiento: ${h.seguimiento}`)
       return lineas.join('\n')
     })
@@ -152,11 +157,12 @@ export function exportOptsRevisionTributaria(args: {
     secciones.push({ label: 'Conclusión', contenido: revision.conclusion })
   }
 
-  if (revision.adjuntos.length > 0) {
+  const soportes = revision.adjuntos.filter((a) => a.hallazgoId === null)
+  if (soportes.length > 0) {
     secciones.push({
       label: 'Soportes de la revisión',
       // Lo subido después de firmar no estaba en el snapshot: se declara como tal.
-      contenido: revision.adjuntos
+      contenido: soportes
         .map((a) => `• ${a.nombre} (${a.archivoNombre})${a.posteriorAFirma ? ' — incorporado después de la firma' : ''}`)
         .join('\n'),
     })

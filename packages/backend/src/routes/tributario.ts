@@ -437,8 +437,10 @@ app.delete('/tributario/obligaciones/:id', async (c) => {
 
   await db.transaction(async (tx) => {
     if (revisionIds.length) {
-      await tx.delete(hallazgosTributarios).where(inArray(hallazgosTributarios.revisionId, revisionIds))
+      // Adjuntos primero: la evidencia de un hallazgo referencia al hallazgo
+      // (FK hallazgo_id) y bloquearía su borrado.
       await tx.delete(adjuntosTributarios).where(inArray(adjuntosTributarios.revisionId, revisionIds))
+      await tx.delete(hallazgosTributarios).where(inArray(hallazgosTributarios.revisionId, revisionIds))
       await tx.delete(revisionesTributarias).where(eq(revisionesTributarias.obligacionId, obligacionId))
     }
     await tx.delete(obligacionesTributarias).where(eq(obligacionesTributarias.id, obligacionId))
@@ -701,6 +703,7 @@ app.post(
             revisadoAt: r.revisadoAt,
             adjuntos: adjuntos.map((a) => ({
               id: a.id,
+              hallazgoId: a.hallazgoId,
               nombre: a.nombre,
               tipo: a.tipo,
               archivoNombre: a.archivoNombre,
@@ -864,6 +867,32 @@ app.post('/tributario/revisiones/:id/adjuntos', async (c) => {
     )
   }
 
+  // Evidencia de un hallazgo: debe ser de esta misma revisión. Es contenido
+  // revisado, así que exige la revisión abierta (no aplica el post-firma).
+  const hallazgoIdCrudo = typeof body['hallazgoId'] === 'string' ? body['hallazgoId'].trim() : ''
+  if (hallazgoIdCrudo && !/^[0-9a-f-]{36}$/i.test(hallazgoIdCrudo)) {
+    return c.json({ error: { code: 'BAD_REQUEST', message: 'hallazgoId inválido' } }, 400)
+  }
+  const hallazgoId = hallazgoIdCrudo || null
+  if (hallazgoId) {
+    if (sellada) return c.json({ error: ERROR_REVISION_SELLADA }, 409)
+    const [hallazgo] = await db
+      .select({ id: hallazgosTributarios.id })
+      .from(hallazgosTributarios)
+      .where(and(eq(hallazgosTributarios.id, hallazgoId), eq(hallazgosTributarios.revisionId, revisionId)))
+    if (!hallazgo) {
+      return c.json({ error: { code: 'NOT_FOUND', message: 'Hallazgo no encontrado en esta revisión' } }, 404)
+    }
+  }
+  // El tipo "evidencia" solo existe atado a un hallazgo: si no, sería un
+  // soporte de la revisión mal etiquetado.
+  if (tipo === 'evidencia' && !hallazgoId) {
+    return c.json(
+      { error: { code: 'BAD_REQUEST', message: 'La evidencia de hallazgo debe ir asociada a un hallazgo' } },
+      400,
+    )
+  }
+
   const archivo = body['archivo']
   if (!(archivo instanceof File)) {
     return c.json({ error: { code: 'ARCHIVO_REQUERIDO', message: 'Adjunta el archivo en el campo "archivo"' } }, 400)
@@ -884,6 +913,7 @@ app.post('/tributario/revisiones/:id/adjuntos', async (c) => {
     .insert(adjuntosTributarios)
     .values({
       revisionId,
+      hallazgoId,
       nombre,
       tipo,
       archivoKey: key,
@@ -906,6 +936,7 @@ app.post('/tributario/revisiones/:id/adjuntos', async (c) => {
       nombre: archivo.name,
       tamano: archivo.size,
       hash,
+      hallazgoId,
       posteriorAFirma: sellada,
     },
   })
@@ -949,6 +980,13 @@ app.patch(
     const row = await cargarAdjunto(adjuntoId, user.firmaId)
     if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Adjunto no encontrado' } }, 404)
     if (row.revision.estado === 'revisada') return c.json({ error: ERROR_REVISION_SELLADA }, 409)
+    // Misma regla que al subir: el tipo "evidencia" solo existe atado a un hallazgo.
+    if (body.tipo === 'evidencia' && !row.adjunto.hallazgoId) {
+      return c.json(
+        { error: { code: 'BAD_REQUEST', message: 'La evidencia de hallazgo debe ir asociada a un hallazgo' } },
+        400,
+      )
+    }
 
     const updates: Record<string, string> = {}
     if (body.nombre !== undefined) updates.nombre = body.nombre
@@ -1155,6 +1193,16 @@ app.delete('/tributario/hallazgos/:id', async (c) => {
   if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Hallazgo no encontrado' } }, 404)
   if (row.revision.estado === 'revisada') return c.json({ error: ERROR_REVISION_SELLADA }, 409)
 
+  // La evidencia del hallazgo se va con él: primero, o la FK bloquea el borrado.
+  const evidencias = await db
+    .select({ archivoKey: adjuntosTributarios.archivoKey })
+    .from(adjuntosTributarios)
+    .where(eq(adjuntosTributarios.hallazgoId, hallazgoId))
+  if (evidencias.length > 0) {
+    await db.delete(adjuntosTributarios).where(eq(adjuntosTributarios.hallazgoId, hallazgoId))
+    await Promise.all(evidencias.map((e) => storage.eliminar(e.archivoKey).catch(() => {})))
+  }
+
   await db.delete(hallazgosTributarios).where(eq(hallazgosTributarios.id, hallazgoId))
 
   registrarEvento(user, {
@@ -1162,7 +1210,11 @@ app.delete('/tributario/hallazgos/:id', async (c) => {
     entidad: 'hallazgo_tributario',
     entidadId: hallazgoId,
     empresaId: row.obligacion.empresaId,
-    detalle: { descripcion: row.hallazgo.descripcion, periodo: row.revision.periodo },
+    detalle: {
+      descripcion: row.hallazgo.descripcion,
+      periodo: row.revision.periodo,
+      evidencias: evidencias.length,
+    },
   })
 
   return c.json({ data: { id: hallazgoId } })

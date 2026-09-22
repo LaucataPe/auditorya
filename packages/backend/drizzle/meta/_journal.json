@@ -330,6 +330,13 @@
       "when": 1786700300000,
       "tag": "0046_cuestionario_coso",
       "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1786800000000,
+      "tag": "0047_tributario_evidencia_hallazgo",
+      "breakpoints": true
     }
   ]
 }
