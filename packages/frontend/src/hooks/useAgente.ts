@@ -49,6 +49,8 @@ export function useInvalidarAgente(auditoriaId: string) {
 }
 
 export type AjustesDecision = {
+  /** Clave de la opción elegida en una ambigüedad o juicio con varias opciones. */
+  opcion?: string
   titulo?: string
   descripcion?: string
   severidad?: 'alta' | 'media' | 'baja'

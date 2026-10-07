@@ -10,6 +10,8 @@
  * libros, adjuntos (declaración, pago, conciliación) y se sella con la firma del
  * revisor (snapshot inmutable) para dejar constancia.
  */
+import type { ResumenAgenteRevision } from './agente-iva'
+import { municipioDeTexto, nombreMunicipio, normalizarMunicipio } from './municipios'
 
 // ─── Impuestos y periodicidades ──────────────────────────────────────────────
 
@@ -75,6 +77,59 @@ export function etiquetaPeriodo(periodicidad: Periodicidad, periodo: string): st
     return `Cuat. ${n} (${MESES_CORTOS[(n - 1) * 4]}–${MESES_CORTOS[(n - 1) * 4 + 3]})`
   }
   return 'Anual'
+}
+
+/** Meses (1–12) que cubre un período; vacío si la clave no es válida. */
+export function mesesDePeriodo(periodicidad: Periodicidad, periodo: string): number[] {
+  if (periodicidad === 'mensual') {
+    const m = Number(periodo)
+    return m >= 1 && m <= 12 ? [m] : []
+  }
+  if (periodicidad === 'anual') return [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+  const n = Number(periodo.slice(1))
+  const tam = periodicidad === 'bimestral' ? 2 : 4
+  if (!n || n < 1 || n * tam > 12) return []
+  return Array.from({ length: tam }, (_, i) => (n - 1) * tam + i + 1)
+}
+
+/** Rango de fechas YYYY-MM-DD (inclusive) de un período de la vigencia. */
+export function rangoPeriodo(
+  periodicidad: Periodicidad,
+  periodo: string,
+  anio: number,
+): { desde: string; hasta: string } | null {
+  const meses = mesesDePeriodo(periodicidad, periodo)
+  if (meses.length === 0) return null
+  const m1 = meses[0]
+  const m2 = meses[meses.length - 1]
+  const ultimoDia = new Date(Date.UTC(anio, m2, 0)).getUTCDate()
+  const mm = (m: number) => String(m).padStart(2, '0')
+  return { desde: `${anio}-${mm(m1)}-01`, hasta: `${anio}-${mm(m2)}-${mm(ultimoDia)}` }
+}
+
+/** Clave del período anterior dentro de la misma vigencia; null si es el primero. */
+export function periodoAnterior(periodicidad: Periodicidad, periodo: string): string | null {
+  if (periodicidad === 'anual') return null
+  if (periodicidad === 'mensual') {
+    const m = Number(periodo)
+    return m > 1 ? String(m - 1).padStart(2, '0') : null
+  }
+  const n = Number(periodo.slice(1))
+  return n > 1 ? `${periodo[0]}${n - 1}` : null
+}
+
+/**
+ * Inicio de la ventana en la que una factura recibida soporta el descontable
+ * del período (art. 496 ET): el período más los dos anteriores si es bimestral,
+ * más el anterior si es cuatrimestral. Devuelve YYYY-MM-DD.
+ */
+export function inicioVentanaDescontables(periodicidad: Periodicidad, desde: string): string {
+  const [a, m] = desde.split('-').map(Number)
+  const atras = periodicidad === 'bimestral' ? 4 : periodicidad === 'cuatrimestral' ? 4 : periodicidad === 'mensual' ? 2 : 0
+  const total = a * 12 + (m - 1) - atras
+  const anio = Math.floor(total / 12)
+  const mes = (total % 12) + 1
+  return `${anio}-${String(mes).padStart(2, '0')}-01`
 }
 
 /** Etiqueta corta para la cabecera de la matriz: 'Ene', 'B2', 'C1', 'Año'. */
@@ -378,6 +433,8 @@ export type MatrizCifras = {
   filas: Array<{ label: string; ayuda?: string; celdas: Array<string | null> }>
   /** Fila de totales al pie; null en las columnas que no suman. */
   total?: { label: string; celdas: Array<string | null> }
+  /** Muestra solo las filas con valor y una vacía para seguir digitando (actividades del ICA). */
+  compacta?: boolean
 }
 
 export type SeccionCifras = {
@@ -510,6 +567,43 @@ function digitablesPorCasilla(tipo: TipoImpuesto): Record<string, string[]> {
       .filter((r) => r.tipo === 'digitable' && r.casilla)
       .map((r) => [r.id, [r.casilla as string]]),
   )
+}
+
+// ─── ICA: discriminación de actividades gravadas (sección C del formulario) ──
+// El Formulario Único Nacional trae 3 actividades en la primera hoja y 12 más
+// en la de "otras actividades". De cada una se guardan los ingresos gravados y
+// el impuesto; la tarifa por mil sale de dividirlos (el código de actividad no
+// es una cifra y queda en el borrador adjunto).
+
+export const ACTIVIDADES_ICA = 15
+export const idActividadIca = (n: number, campo: 'ingresos' | 'impuesto') => `ica-act-${n}-${campo}`
+
+function seccionActividadesIca(): SeccionCifras {
+  const renglones: RenglonCifra[] = []
+  const filas: MatrizCifras['filas'] = []
+  for (let n = 1; n <= ACTIVIDADES_ICA; n++) {
+    const etiqueta = n === 1 ? 'Actividad principal' : `Actividad ${n}`
+    renglones.push(
+      { id: idActividadIca(n, 'ingresos'), label: `${etiqueta}: ingresos gravados`, tipo: 'digitable', ayuda: 'Sección C del formulario.' },
+      { id: idActividadIca(n, 'impuesto'), label: `${etiqueta}: impuesto`, tipo: 'digitable', ayuda: 'Ingresos gravados × tarifa por mil de la actividad.' },
+    )
+    filas.push({ label: etiqueta, celdas: [idActividadIca(n, 'ingresos'), idActividadIca(n, 'impuesto')] })
+  }
+  const suma = (campo: 'ingresos' | 'impuesto') => Array.from({ length: ACTIVIDADES_ICA }, (_, i) => ({ id: idActividadIca(i + 1, campo), signo: 1 as const }))
+  renglones.push(
+    { id: 'ica-act-ingresos', label: 'Total ingresos gravados por actividad', tipo: 'total', formula: suma('ingresos'), ayuda: 'Debe ser igual al renglón 16.' },
+    { id: 'ica-act-impuesto', label: 'Total impuesto por actividad', tipo: 'total', formula: suma('impuesto'), ayuda: 'Debe ser igual al renglón 17 (redondeado a miles).' },
+  )
+  return {
+    titulo: 'Discriminación de actividades gravadas (sección C)',
+    renglones,
+    matriz: {
+      grupos: [{ label: 'Actividades gravadas', columnas: ['Ingresos gravados', 'Impuesto'] }],
+      filas,
+      total: { label: 'Total', celdas: ['ica-act-ingresos', 'ica-act-impuesto'] },
+      compacta: true,
+    },
+  }
 }
 
 export const CIFRAS_CATALOGO: Record<TipoImpuesto, SeccionCifras[]> = {
@@ -663,41 +757,94 @@ export const CIFRAS_CATALOGO: Record<TipoImpuesto, SeccionCifras[]> = {
       ],
     },
   ],
+  // Cada municipio tiene su formulario (Bogotá 131, Cali bimestral…), pero todos
+  // traen lo mismo: bases, retenciones, autorretenciones, descuento por
+  // devoluciones y sanciones. Los renglones nuevos (2026-10-01) son aditivos.
   reteica: [
+    {
+      titulo: 'Bases de retención',
+      renglones: [
+        { id: 'ri-base', label: 'Base de retenciones del período', tipo: 'digitable', ayuda: 'Pagos gravados a proveedores por actividades en el municipio (Bogotá renglón 6, Cali renglón 10).' },
+        { id: 'ri-base-autorretencion', label: 'Base de autorretenciones', tipo: 'digitable', ayuda: 'Solo si la empresa es autorretenedora de ICA en el municipio (Cali renglón 11).' },
+      ],
+    },
     {
       titulo: 'Retenciones de ICA practicadas',
       renglones: [
-        { id: 'ri-base', label: 'Base de retenciones del período', tipo: 'digitable', ayuda: 'Pagos gravados a proveedores del municipio.' },
-        { id: 'ri-retenciones', label: 'Retenciones practicadas', tipo: 'digitable', ayuda: 'Base × tarifa por mil del código de actividad; cruzar cuenta 2368.' },
+        { id: 'ri-retenciones', label: 'Retenciones practicadas', tipo: 'digitable', ayuda: 'Base × tarifa por mil de la actividad del proveedor; cruzar con los créditos de la 2368 del municipio (Bogotá renglón 7, Cali renglón 13).' },
+        { id: 'ri-autorretenciones', label: 'Autorretenciones practicadas', tipo: 'digitable', ayuda: 'Cali renglón 14.' },
+        { id: 'ri-devoluciones', label: 'Menos: descuento por devolución de retenciones', tipo: 'digitable', ayuda: 'Retenciones devueltas por anulaciones o rescisiones (Bogotá renglón 8). Debe tener soporte.' },
         { id: 'ri-sanciones', label: 'Sanciones e intereses', tipo: 'digitable' },
         { id: 'ri-total', label: 'Total a pagar', tipo: 'total', formula: [
-          { id: 'ri-retenciones', signo: 1 }, { id: 'ri-sanciones', signo: 1 },
+          { id: 'ri-retenciones', signo: 1 }, { id: 'ri-autorretenciones', signo: 1 }, { id: 'ri-devoluciones', signo: -1 }, { id: 'ri-sanciones', signo: 1 },
         ] },
       ],
     },
   ],
+  // Espejo del Formulario Único Nacional de declaración y pago del ICA
+  // (Resolución 4056 de 2016 de MinHacienda), que usan Bogotá y los demás
+  // municipios: renglones 8 a 38, con la discriminación de actividades
+  // gravadas (sección C) en matriz. Se conservan los ids anteriores donde el
+  // renglón significa lo mismo (8, 16, 17, 21, 22, 27, 33/34).
   ica: [
     {
-      titulo: 'Base gravable',
+      titulo: 'Base gravable (renglones 8–16)',
       renglones: [
-        { id: 'ica-ingresos', label: 'Ingresos brutos del período', tipo: 'digitable', ayuda: 'Ingresos totales, incluidos los de otros municipios.' },
-        { id: 'ica-deducciones', label: 'Deducciones, exenciones y otros municipios', tipo: 'digitable', ayuda: 'Exportaciones, devoluciones, actividades no sujetas, ingresos gravados en otros municipios.' },
-        { id: 'ica-base', label: 'Base gravable', tipo: 'calculado', formula: [
-          { id: 'ica-ingresos', signo: 1 }, { id: 'ica-deducciones', signo: -1 },
-        ] },
+        { id: 'ica-ingresos', label: 'Total ingresos ordinarios y extraordinarios del período en todo el país', tipo: 'digitable', casilla: '8', ayuda: 'Renglón 8. Todos los ingresos brutos del período, incluidos los de otros municipios: créditos de la clase 4.' },
+        { id: 'ica-fuera-municipio', label: 'Menos: ingresos fuera del municipio o distrito', tipo: 'digitable', casilla: '9', ayuda: 'Renglón 9. Ingresos de actividades ejecutadas en otros municipios (allá se declaran).' },
+        { id: 'ica-ingresos-municipio', label: 'Total ingresos ordinarios y extraordinarios en el municipio', tipo: 'calculado', formula: [
+          { id: 'ica-ingresos', signo: 1 }, { id: 'ica-fuera-municipio', signo: -1 },
+        ], ayuda: 'Renglón 10 (8 − 9).' },
+        { id: 'ica-devoluciones', label: 'Menos: ingresos por devoluciones, rebajas y descuentos', tipo: 'digitable', casilla: '11', ayuda: 'Renglón 11. Cuenta 4175 y equivalentes.' },
+        { id: 'ica-exportaciones', label: 'Menos: ingresos por exportaciones', tipo: 'digitable', casilla: '12', ayuda: 'Renglón 12. Soportados con la declaración de exportación o el certificado al proveedor.' },
+        { id: 'ica-activos-fijos', label: 'Menos: ingresos por venta de activos fijos', tipo: 'digitable', casilla: '13', ayuda: 'Renglón 13.' },
+        { id: 'ica-no-sujetos', label: 'Menos: ingresos por actividades excluidas o no sujetas y otros ingresos no gravados', tipo: 'digitable', casilla: '14', ayuda: 'Renglón 14. Requiere la norma que excluye cada ingreso.' },
+        { id: 'ica-exentos', label: 'Menos: ingresos por actividades exentas en el municipio (por acuerdo)', tipo: 'digitable', casilla: '15', ayuda: 'Renglón 15. Requiere el acuerdo municipal que la exime.' },
+        { id: 'ica-base', label: 'Total ingresos gravables', tipo: 'total', formula: [
+          { id: 'ica-ingresos-municipio', signo: 1 }, { id: 'ica-devoluciones', signo: -1 }, { id: 'ica-exportaciones', signo: -1 },
+          { id: 'ica-activos-fijos', signo: -1 }, { id: 'ica-no-sujetos', signo: -1 }, { id: 'ica-exentos', signo: -1 },
+        ], ayuda: 'Renglón 16 (10 − 11 − 12 − 13 − 14 − 15). Debe ser igual al total de ingresos gravados por actividad.' },
+      ],
+    },
+    seccionActividadesIca(),
+    {
+      titulo: 'Liquidación privada (renglones 17–34)',
+      renglones: [
+        { id: 'ica-impuesto', label: 'Total impuestos por actividades', tipo: 'digitable', casilla: '17', ayuda: 'Renglón 17. Suma del impuesto de cada actividad (ingresos gravados × tarifa por mil del municipio).' },
+        { id: 'ica-ley56', label: 'Impuesto Ley 56 de 1981 (generación de energía)', tipo: 'digitable', casilla: '19', ayuda: 'Renglón 19. Solo generadoras de energía (renglón 18: capacidad instalada en kW).' },
+        { id: 'ica-total-ica', label: 'Total impuesto de industria y comercio', tipo: 'calculado', formula: [
+          { id: 'ica-impuesto', signo: 1 }, { id: 'ica-ley56', signo: 1 },
+        ], ayuda: 'Renglón 20 (17 + 19).' },
+        { id: 'ica-avisos', label: 'Impuesto de avisos y tableros', tipo: 'digitable', casilla: '21', ayuda: 'Renglón 21. 15 % del renglón 20 si tiene avisos.' },
+        { id: 'ica-unidades', label: 'Pago por unidades comerciales adicionales del sector financiero', tipo: 'digitable', casilla: '22', ayuda: 'Renglón 22.' },
+        { id: 'ica-bomberil', label: 'Sobretasa bomberil', tipo: 'digitable', casilla: '23', ayuda: 'Renglón 23. Según el acuerdo municipal (Ley 1575 de 2012).' },
+        { id: 'ica-seguridad', label: 'Sobretasa de seguridad', tipo: 'digitable', casilla: '24', ayuda: 'Renglón 24. Según el acuerdo municipal (Ley 1421 de 2010).' },
+        { id: 'ica-impuesto-cargo', label: 'Total impuesto a cargo', tipo: 'total', formula: [
+          { id: 'ica-total-ica', signo: 1 }, { id: 'ica-avisos', signo: 1 }, { id: 'ica-unidades', signo: 1 },
+          { id: 'ica-bomberil', signo: 1 }, { id: 'ica-seguridad', signo: 1 },
+        ], ayuda: 'Renglón 25 (20 + 21 + 22 + 23 + 24). Cruzar con la causación en 2412.' },
+        { id: 'ica-exencion', label: 'Menos: exención o exoneración sobre el impuesto', tipo: 'digitable', casilla: '26', ayuda: 'Renglón 26. Exenciones sobre el impuesto, no sobre los ingresos.' },
+        { id: 'ica-retenciones', label: 'Menos: retenciones que le practicaron a favor del municipio', tipo: 'digitable', casilla: '27', ayuda: 'Renglón 27. Certificados de reteICA de los clientes; cuenta 135518.' },
+        { id: 'ica-autorretenciones', label: 'Menos: autorretenciones practicadas a favor del municipio', tipo: 'digitable', casilla: '28', ayuda: 'Renglón 28.' },
+        { id: 'ica-anticipo-ant', label: 'Menos: anticipo liquidado en el año anterior', tipo: 'digitable', casilla: '29', ayuda: 'Renglón 29. Debe coincidir con el renglón 30 de la declaración del año anterior.' },
+        { id: 'ica-anticipo-sig', label: 'Anticipo del año siguiente', tipo: 'digitable', casilla: '30', ayuda: 'Renglón 30. Si el municipio lo exige (porcentaje del acuerdo municipal).' },
+        { id: 'ica-sanciones', label: 'Sanciones', tipo: 'digitable', casilla: '31', ayuda: 'Renglón 31. Extemporaneidad, corrección, inexactitud u otra.' },
+        { id: 'ica-saldo-favor-ant', label: 'Menos: saldo a favor del período anterior sin solicitud de devolución o compensación', tipo: 'digitable', casilla: '32', ayuda: 'Renglón 32. Debe coincidir con el renglón 34 de la declaración anterior.' },
+        { id: 'ica-saldo', label: 'Total saldo a cargo (o a favor si es negativo)', tipo: 'total', formula: [
+          { id: 'ica-impuesto-cargo', signo: 1 }, { id: 'ica-exencion', signo: -1 }, { id: 'ica-retenciones', signo: -1 },
+          { id: 'ica-autorretenciones', signo: -1 }, { id: 'ica-anticipo-ant', signo: -1 }, { id: 'ica-anticipo-sig', signo: 1 },
+          { id: 'ica-sanciones', signo: 1 }, { id: 'ica-saldo-favor-ant', signo: -1 },
+        ], ayuda: 'Renglones 33/34 (25 − 26 − 27 − 28 − 29 + 30 + 31 − 32).' },
       ],
     },
     {
-      titulo: 'Liquidación',
+      titulo: 'Pago (renglones 35–38)',
       renglones: [
-        { id: 'ica-impuesto', label: 'Impuesto de industria y comercio', tipo: 'digitable', ayuda: 'Base × tarifa por mil del código de actividad del municipio.' },
-        { id: 'ica-avisos', label: 'Avisos y tableros', tipo: 'digitable', ayuda: '15% del ICA, si tiene avisos.' },
-        { id: 'ica-unidades', label: 'Sobretasas y unidades adicionales', tipo: 'digitable', ayuda: 'Sobretasa bomberil u otras según el municipio.' },
-        { id: 'ica-retenciones', label: 'Menos: retenciones y anticipos', tipo: 'digitable', ayuda: 'Certificados de reteICA de clientes y anticipo liquidado el año anterior.' },
-        { id: 'ica-saldo', label: 'Saldo a pagar (o a favor si es negativo)', tipo: 'calculado', formula: [
-          { id: 'ica-impuesto', signo: 1 }, { id: 'ica-avisos', signo: 1 },
-          { id: 'ica-unidades', signo: 1 }, { id: 'ica-retenciones', signo: -1 },
-        ] },
+        { id: 'ica-descuento-pronto-pago', label: 'Menos: descuento por pronto pago', tipo: 'digitable', casilla: '36', ayuda: 'Renglón 36. Si el acuerdo municipal lo prevé.' },
+        { id: 'ica-intereses-mora', label: 'Intereses de mora', tipo: 'digitable', casilla: '37', ayuda: 'Renglón 37.' },
+        { id: 'ica-total-pagar', label: 'Total a pagar (o saldo a favor si es negativo)', tipo: 'total', formula: [
+          { id: 'ica-saldo', signo: 1 }, { id: 'ica-descuento-pronto-pago', signo: -1 }, { id: 'ica-intereses-mora', signo: 1 },
+        ], ayuda: 'Renglón 38 (35 − 36 + 37). El pago voluntario (39–40) no hace parte de la revisión.' },
       ],
     },
   ],
@@ -836,7 +983,57 @@ export const LECTURA_FORMULARIO: Partial<Record<TipoImpuesto, LecturaFormulario>
     // cero legítimamente si se pagó con recibo 490: no se verifica contra la 138.
     ignorar: ['1', '3', '4', '5', '6', '12', '25', '26', '27', '28', '139', '140', '980', '981', '982', '983', '994', '996', '997'],
   },
+  // Formulario Único Nacional del ICA: la "casilla" es el número de renglón. Las
+  // actividades de la sección C no tienen número: se transcriben con las claves
+  // actN_ingresos / actN_impuesto (ver CASILLAS_ACTIVIDADES_ICA).
+  ica: {
+    digitables: {
+      'ica-ingresos': ['8'],
+      'ica-fuera-municipio': ['9'],
+      'ica-devoluciones': ['11'],
+      'ica-exportaciones': ['12'],
+      'ica-activos-fijos': ['13'],
+      'ica-no-sujetos': ['14'],
+      'ica-exentos': ['15'],
+      'ica-impuesto': ['17'],
+      'ica-ley56': ['19'],
+      'ica-avisos': ['21'],
+      'ica-unidades': ['22'],
+      'ica-bomberil': ['23'],
+      'ica-seguridad': ['24'],
+      'ica-exencion': ['26'],
+      'ica-retenciones': ['27'],
+      'ica-autorretenciones': ['28'],
+      'ica-anticipo-ant': ['29'],
+      'ica-anticipo-sig': ['30'],
+      'ica-sanciones': ['31'],
+      'ica-saldo-favor-ant': ['32'],
+      'ica-descuento-pronto-pago': ['36'],
+      'ica-intereses-mora': ['37'],
+      ...Object.fromEntries(Array.from({ length: ACTIVIDADES_ICA }, (_, i) => [
+        [idActividadIca(i + 1, 'ingresos'), [`act${i + 1}_ingresos`]],
+        [idActividadIca(i + 1, 'impuesto'), [`act${i + 1}_impuesto`]],
+      ]).flat()),
+    },
+    verificaciones: [
+      { id: 'ica-ingresos-municipio', casillas: [{ casilla: '10', signo: 1 }] },
+      { id: 'ica-base', casillas: [{ casilla: '16', signo: 1 }] },
+      // Cuadre de la sección C contra el renglón 16 (solo si se transcribieron las actividades).
+      { id: 'ica-act-ingresos', casillas: [{ casilla: '16', signo: 1 }] },
+      { id: 'ica-total-ica', casillas: [{ casilla: '20', signo: 1 }] },
+      { id: 'ica-impuesto-cargo', casillas: [{ casilla: '25', signo: 1 }] },
+      // Saldo a cargo y a favor son excluyentes; el total a pagar va en cero cuando hay saldo a favor.
+      { id: 'ica-saldo', casillas: [{ casilla: '33', signo: 1 }, { casilla: '34', signo: -1 }] },
+      { id: 'ica-total-pagar', casillas: [{ casilla: '38', signo: 1 }, { casilla: '34', signo: -1 }] },
+    ],
+    // Identificación (1–7), capacidad instalada en kW (18), valor a pagar (35 = 33) y pago voluntario (39–40).
+    // El impuesto por actividad no se redondea y el 17 sí: ese cuadre lo hace el agente con tolerancia.
+    ignorar: ['1', '2', '3', '4', '5', '6', '7', '18', '35', '39', '40'],
+  },
 }
+
+/** Claves con que la lectura transcribe la sección C del ICA (actividades sin número de renglón). */
+export const CASILLAS_ACTIVIDADES_ICA = Array.from({ length: ACTIVIDADES_ICA }, (_, i) => [`act${i + 1}_ingresos`, `act${i + 1}_impuesto`]).flat()
 
 /**
  * Convierte las casillas transcritas del formulario en cifras por renglón y
@@ -969,16 +1166,50 @@ export type ObligacionTributaria = {
   tipo: TipoImpuesto
   /** Etiqueta libre; obligatoria para tipo 'otro', opcional para personalizar las demás. */
   nombre: string | null
+  /** Impuestos municipales (reteICA, ICA): clave de MUNICIPIOS_RETEICA o el nombre escrito. Una obligación por municipio. */
+  municipio: string | null
   periodicidad: Periodicidad
   asignadoA: string | null
   asignadoNombre: string | null
   createdAt: string
 }
 
+// ─── Programa de trabajo dinámico (revisión guiada) ──────────────────────────
+// El auditor decide, antes de analizar, qué pasos sigue el agente y cuáles
+// agrega por su cuenta. Los pasos del agente traen sus reglas; los propios son
+// manuales y se marcan a mano. Al guardarse se materializa también como texto
+// en `procedimientos`, así el informe y la constancia lo imprimen igual.
+
+export type PasoPrograma = {
+  id: string
+  texto: string
+  /** 'agente' = lo ejecuta el motor de reglas; 'propio' = lo agregó el auditor y lo marca a mano. */
+  origen: 'agente' | 'propio'
+  activo: boolean
+  /** Solo pasos propios: hecho a mano por el auditor. */
+  hecho?: boolean
+  nota?: string | null
+}
+
+export type ProgramaRevision = {
+  pasos: PasoPrograma[]
+  actualizadoAt?: string
+}
+
+/** El programa como texto numerado (solo pasos activos): lo que imprime el informe. */
+export function textoProcedimientos(programa: ProgramaRevision): string {
+  return programa.pasos
+    .filter((p) => p.activo)
+    .map((p, i) => `${i + 1}. ${p.texto.replace(/\.?$/, '.')}`)
+    .join('\n')
+}
+
 export type RevisionTributaria = {
   id: string
   obligacionId: string
   periodo: string
+  /** Programa de trabajo decidido por el auditor (revisión guiada). null = aún no se ha definido. */
+  programa: ProgramaRevision | null
   fechaVencimiento: string | null
   /** Fecha de presentación (YYYY-MM-DD). Solo se registra con la revisión firmada. */
   fechaPresentacion: string | null
@@ -1009,6 +1240,10 @@ export const TIPOS_ADJUNTO_TRIBUTARIO = [
   'conciliacion',
   'certificado',
   'evidencia',
+  // Insumos del agente de IVA: el auxiliar contable del período y el reporte de
+  // documentos electrónicos de la DIAN (ver docs/agente/procedimiento-iva-v1.md).
+  'auxiliar',
+  'reporte_dian',
   'otro',
 ] as const
 export type TipoAdjuntoTributario = (typeof TIPOS_ADJUNTO_TRIBUTARIO)[number]
@@ -1019,6 +1254,8 @@ export const TIPO_ADJUNTO_LABELS: Record<TipoAdjuntoTributario, string> = {
   conciliacion: 'Conciliación',
   certificado: 'Certificado',
   evidencia: 'Evidencia de hallazgo',
+  auxiliar: 'Auxiliar contable del período',
+  reporte_dian: 'Reporte de documentos electrónicos (DIAN)',
   otro: 'Otro soporte',
 }
 
@@ -1109,11 +1346,20 @@ export type RevisionTributariaDetalle = RevisionTributaria & {
   obligacion: ObligacionTributaria
   adjuntos: AdjuntoTributario[]
   hallazgos: HallazgoTributario[]
+  /** Último análisis del agente (revisiones de IVA en modo agéntico); null si nunca corrió. */
+  agente?: ResumenAgenteRevision | null
 }
 
-/** Nombre a mostrar de una obligación: la etiqueta propia o el nombre del catálogo. */
-export function nombreObligacion(o: Pick<ObligacionTributaria, 'tipo' | 'nombre'>): string {
-  return o.nombre?.trim() || IMPUESTOS_CATALOGO[o.tipo].nombre
+/**
+ * Nombre a mostrar de una obligación: la etiqueta propia o el nombre del
+ * catálogo, con el municipio en los impuestos municipales ("ReteICA · Bogotá D.C.")
+ * salvo que la etiqueta ya lo diga.
+ */
+export function nombreObligacion(o: Pick<ObligacionTributaria, 'tipo' | 'nombre'> & { municipio?: string | null }): string {
+  const base = o.nombre?.trim() || IMPUESTOS_CATALOGO[o.tipo].nombre
+  if (!o.municipio) return base
+  const yaLoDice = municipioDeTexto(o.nombre)?.clave === normalizarMunicipio(o.municipio)
+  return yaLoDice ? base : `${base} · ${nombreMunicipio(o.municipio)}`
 }
 
 // ─── Encabezado del papel de trabajo (NIA 230) ───────────────────────────────

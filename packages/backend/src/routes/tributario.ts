@@ -24,6 +24,7 @@ import { registrarEvento } from '../lib/eventos'
 import { mergeJsonbPatch } from '../lib/jsonb'
 import { notificar } from '../lib/notificaciones'
 import { storage, firmarDescarga } from '../lib/storage'
+import { borrarAgenteDeRevisiones, resumenAgenteRevision } from '../lib/agente/corrida-iva'
 import {
   CIFRAS_CATALOGO,
   ESTADOS_HALLAZGO_TRIBUTARIO,
@@ -33,6 +34,11 @@ import {
   TIPOS_ADJUNTO_TRIBUTARIO,
   TIPOS_IMPUESTO,
   alcanceSugerido,
+  cedulasSinConcluir,
+  esImpuestoMunicipal,
+  mismoMunicipio,
+  nombreMunicipio,
+  normalizarMunicipio,
   etiquetaPeriodo,
   hallazgoTributarioPendiente,
   nombreObligacion,
@@ -154,8 +160,20 @@ app.get('/empresas/:id/tributario', async (c) => {
         .orderBy(asc(revisionesTributarias.periodo))
     : []
 
+  // Agrupadas por impuesto (en el orden en que se creó el primero de cada uno):
+  // las reteICA de varios municipios quedan juntas, ordenadas por municipio.
+  const primeraDeTipo = new Map<string, number>()
+  obligaciones.forEach((o, i) => { if (!primeraDeTipo.has(o.tipo)) primeraDeTipo.set(o.tipo, i) })
+  const ordenadas = obligaciones
+    .map((o, i) => ({ o, i }))
+    .sort((a, b) =>
+      primeraDeTipo.get(a.o.tipo)! - primeraDeTipo.get(b.o.tipo)! ||
+      (a.o.municipio && b.o.municipio ? nombreMunicipio(a.o.municipio).localeCompare(nombreMunicipio(b.o.municipio)) : 0) ||
+      a.i - b.i)
+    .map((x) => x.o)
+
   const nombres = await nombresUsuarios(firmaId)
-  const data = obligaciones.map((o) => ({
+  const data = ordenadas.map((o) => ({
     ...o,
     asignadoNombre: (o.asignadoA && nombres.get(o.asignadoA)) ?? null,
     revisiones: revisiones
@@ -182,6 +200,7 @@ app.post(
       anioFiscal: z.number().int().min(2000).max(2100),
       tipo: z.enum(TIPOS_IMPUESTO),
       nombre: z.string().trim().max(120).optional(),
+      municipio: z.string().trim().max(80).optional(),
       periodicidad: z.enum(PERIODICIDADES),
       asignadoA: z.string().uuid().nullable().optional(),
     }),
@@ -190,6 +209,8 @@ app.post(
     const user = c.get('user')
     const empresaId = c.req.param('id')
     const body = c.req.valid('json')
+    const municipal = esImpuestoMunicipal(body.tipo)
+    const municipio = municipal ? normalizarMunicipio(body.municipio) : null
 
     const empresa = await cargarEmpresa(empresaId, user.firmaId)
     if (!empresa) {
@@ -203,7 +224,16 @@ app.post(
       )
     }
 
-    // Evita duplicar la misma obligación en la vigencia ('otro' se distingue por nombre).
+    if (municipal && !municipio) {
+      return c.json(
+        { error: { code: 'MUNICIPIO_REQUERIDO', message: 'Indica el municipio: la declaración de este impuesto es por municipio' } },
+        400,
+      )
+    }
+
+    // Evita duplicar la misma obligación en la vigencia: 'otro' se distingue por
+    // nombre y los impuestos municipales por municipio (una empresa declara reteICA
+    // en cada municipio donde retiene).
     const existentes = await db
       .select()
       .from(obligacionesTributarias)
@@ -217,10 +247,17 @@ app.post(
     const duplicada =
       body.tipo === 'otro'
         ? existentes.some((o) => (o.nombre ?? '').toLowerCase() === (body.nombre ?? '').toLowerCase())
-        : existentes.length > 0
+        : municipal
+          ? existentes.some((o) => mismoMunicipio(o.municipio, municipio))
+          : existentes.length > 0
     if (duplicada) {
       return c.json(
-        { error: { code: 'OBLIGACION_DUPLICADA', message: 'Esa obligación ya existe en la vigencia' } },
+        {
+          error: {
+            code: 'OBLIGACION_DUPLICADA',
+            message: municipal ? `Ya existe ${IMPUESTOS_CATALOGO[body.tipo].nombre} de ${nombreMunicipio(municipio)} en la vigencia` : 'Esa obligación ya existe en la vigencia',
+          },
+        },
         409,
       )
     }
@@ -233,6 +270,7 @@ app.post(
           anioFiscal: body.anioFiscal,
           tipo: body.tipo,
           nombre: body.nombre || null,
+          municipio,
           periodicidad: body.periodicidad,
           asignadoA: body.asignadoA ?? null,
         })
@@ -254,6 +292,7 @@ app.post(
       detalle: {
         tipo: creada.tipo,
         nombre: nombreObligacion(creada),
+        municipio: creada.municipio,
         anioFiscal: creada.anioFiscal,
         periodicidad: creada.periodicidad,
         periodos: creada.revisiones.length,
@@ -311,7 +350,13 @@ app.post(
 
     const yaExiste = (o: (typeof origen)[number]) =>
       destino.some(
-        (d) => d.tipo === o.tipo && (o.tipo !== 'otro' || (d.nombre ?? '').toLowerCase() === (o.nombre ?? '').toLowerCase()),
+        (d) =>
+          d.tipo === o.tipo &&
+          (o.tipo === 'otro'
+            ? (d.nombre ?? '').toLowerCase() === (o.nombre ?? '').toLowerCase()
+            : esImpuestoMunicipal(o.tipo)
+              ? mismoMunicipio(d.municipio, o.municipio) || (!d.municipio && !o.municipio)
+              : true),
       )
     const faltantes = origen.filter((o) => !yaExiste(o))
 
@@ -325,6 +370,7 @@ app.post(
             anioFiscal: hacia,
             tipo: o.tipo,
             nombre: o.nombre,
+            municipio: o.municipio,
             periodicidad: o.periodicidad,
             asignadoA: o.asignadoA,
           })
@@ -355,6 +401,7 @@ app.patch(
     'json',
     z.object({
       nombre: z.string().trim().max(120).optional(),
+      municipio: z.string().trim().max(80).optional(),
       asignadoA: z.string().uuid().nullable().optional(),
     }),
   ),
@@ -374,6 +421,25 @@ app.patch(
       updates.nombre = body.nombre || null
     }
     if (body.asignadoA !== undefined) updates.asignadoA = body.asignadoA
+    if (body.municipio !== undefined) {
+      if (!esImpuestoMunicipal(row.obligacion.tipo)) {
+        return c.json({ error: { code: 'NO_MUNICIPAL', message: 'Solo los impuestos municipales (reteICA, ICA) llevan municipio' } }, 400)
+      }
+      const municipio = normalizarMunicipio(body.municipio)
+      if (!municipio) return c.json({ error: { code: 'MUNICIPIO_REQUERIDO', message: 'Indica el municipio' } }, 400)
+      // El municipio no se cambia si ya hay revisiones firmadas: la constancia dice de qué municipio es.
+      const firmadas = await db.select({ id: revisionesTributarias.id }).from(revisionesTributarias)
+        .where(and(eq(revisionesTributarias.obligacionId, obligacionId), eq(revisionesTributarias.estado, 'revisada')))
+      if (firmadas.length && row.obligacion.municipio && !mismoMunicipio(row.obligacion.municipio, municipio)) {
+        return c.json({ error: { code: 'CON_REVISIONES_FIRMADAS', message: 'No se puede cambiar el municipio: la obligación tiene revisiones firmadas' } }, 409)
+      }
+      const hermanas = await db.select({ id: obligacionesTributarias.id, municipio: obligacionesTributarias.municipio }).from(obligacionesTributarias)
+        .where(and(eq(obligacionesTributarias.empresaId, row.obligacion.empresaId), eq(obligacionesTributarias.anioFiscal, row.obligacion.anioFiscal), eq(obligacionesTributarias.tipo, row.obligacion.tipo)))
+      if (hermanas.some((h) => h.id !== obligacionId && mismoMunicipio(h.municipio, municipio))) {
+        return c.json({ error: { code: 'OBLIGACION_DUPLICADA', message: `Ya existe ${IMPUESTOS_CATALOGO[row.obligacion.tipo].nombre} de ${nombreMunicipio(municipio)} en la vigencia` } }, 409)
+      }
+      updates.municipio = municipio
+    }
 
     if (Object.keys(updates).length === 0) {
       return c.json({ error: { code: 'BAD_REQUEST', message: 'Sin campos para actualizar' } }, 400)
@@ -441,6 +507,8 @@ app.delete('/tributario/obligaciones/:id', async (c) => {
       // (FK hallazgo_id) y bloquearía su borrado.
       await tx.delete(adjuntosTributarios).where(inArray(adjuntosTributarios.revisionId, revisionIds))
       await tx.delete(hallazgosTributarios).where(inArray(hallazgosTributarios.revisionId, revisionIds))
+      // Rastro del agente (corridas, propuestas, bitácora) referencia a la revisión.
+      await borrarAgenteDeRevisiones(tx, revisionIds)
       await tx.delete(revisionesTributarias).where(eq(revisionesTributarias.obligacionId, obligacionId))
     }
     await tx.delete(obligacionesTributarias).where(eq(obligacionesTributarias.id, obligacionId))
@@ -486,6 +554,8 @@ app.get('/tributario/revisiones/:id', async (c) => {
       .orderBy(asc(hallazgosTributarios.createdAt)),
     nombresUsuarios(firmaId),
   ])
+  // Último análisis del agente (solo existe en revisiones de IVA en modo agéntico).
+  const agente = await resumenAgenteRevision(revisionId, row.obligacion.empresaId, nombres)
 
   const firmada = row.revision.estado === 'revisada'
   const sellados = idsAdjuntosSellados(row.revision.snapshot)
@@ -500,6 +570,7 @@ app.get('/tributario/revisiones/:id', async (c) => {
       },
       adjuntos: adjuntos.map((a) => ({ ...a, posteriorAFirma: firmada && !sellados.has(a.id) })),
       hallazgos,
+      agente,
     },
   })
 })
@@ -526,6 +597,24 @@ app.patch(
       // Encabezado del papel de trabajo; null restaura el borrador sugerido.
       alcance: z.string().nullable().optional(),
       procedimientos: z.string().nullable().optional(),
+      // Programa de trabajo de la revisión guiada; null lo borra. El frontend
+      // manda también `procedimientos` con el texto materializado.
+      programa: z
+        .object({
+          pasos: z.array(
+            z.object({
+              id: z.string().min(1).max(80),
+              texto: z.string().trim().min(2).max(500),
+              origen: z.enum(['agente', 'propio']),
+              activo: z.boolean(),
+              hecho: z.boolean().optional(),
+              nota: z.string().max(2000).nullable().optional(),
+            }),
+          ).max(60),
+          actualizadoAt: z.string().optional(),
+        })
+        .nullable()
+        .optional(),
       observaciones: z.string().nullable().optional(),
       conclusion: z.string().nullable().optional(),
     }),
@@ -556,6 +645,7 @@ app.patch(
     }
     if (body.alcance !== undefined) updates.alcance = body.alcance || null
     if (body.procedimientos !== undefined) updates.procedimientos = body.procedimientos || null
+    if (body.programa !== undefined) updates.programa = body.programa
     if (body.observaciones !== undefined) updates.observaciones = body.observaciones || null
     if (body.conclusion !== undefined) updates.conclusion = body.conclusion || null
 
@@ -618,10 +708,27 @@ app.post(
         409,
       )
     }
-    const [adjuntos, hallazgos] = await Promise.all([
+    const [adjuntos, hallazgos, agente] = await Promise.all([
       db.select().from(adjuntosTributarios).where(eq(adjuntosTributarios.revisionId, revisionId)),
       db.select().from(hallazgosTributarios).where(eq(hallazgosTributarios.revisionId, revisionId)),
+      // Lo que hizo el agente (reglas, insumos, propuestas y decisiones) se sella con la constancia.
+      nombresUsuarios(user.firmaId).then((nombres) => resumenAgenteRevision(revisionId, row.obligacion.empresaId, nombres)),
     ])
+
+    // Revisión agéntica con cédulas: cada procedimiento ejecutado necesita la conclusión
+    // vigente del auditor. Sin ella la firma certificaría un trabajo que nadie evaluó.
+    const sinConcluir = cedulasSinConcluir(agente?.cedulas, agente?.conclusiones)
+    if (sinConcluir.length > 0) {
+      return c.json(
+        {
+          error: {
+            code: 'CEDULAS_SIN_CONCLUIR',
+            message: `Falta tu conclusión en ${sinConcluir.length} procedimiento(s): ${sinConcluir.map((x) => x.titulo).join('; ')}`,
+          },
+        },
+        409,
+      )
+    }
 
     // "En trámite" también es pendiente: se está gestionando, no está cerrado.
     const pendientes = hallazgos.filter(hallazgoTributarioPendiente).length
@@ -682,6 +789,7 @@ app.post(
             obligacion: {
               tipo: row.obligacion.tipo,
               nombre: nombreObligacion(row.obligacion),
+              municipio: row.obligacion.municipio,
               anioFiscal: row.obligacion.anioFiscal,
               periodicidad: row.obligacion.periodicidad,
             },
@@ -690,6 +798,7 @@ app.post(
             fechaVencimiento: r.fechaVencimiento,
             alcance: r.alcance,
             procedimientos: r.procedimientos,
+            programa: r.programa,
             checklistEstado: r.checklistEstado,
             checklistCatalogo: IMPUESTOS_CATALOGO[row.obligacion.tipo].checklist,
             cifras: r.cifras,
@@ -719,6 +828,7 @@ app.post(
               estado: h.estado,
               seguimiento: h.seguimiento,
             })),
+            agente,
           },
         })
         .where(eq(revisionesTributarias.id, revisionId))
@@ -739,6 +849,7 @@ app.post(
         resultado: body.resultado,
         adjuntos: adjuntos.length,
         hallazgos: hallazgos.length,
+        agente: agente ? { corridaId: agente.corridaId, reglas: agente.reglasEjecutadas.length, propuestas: agente.propuestas.length } : null,
       },
     })
 

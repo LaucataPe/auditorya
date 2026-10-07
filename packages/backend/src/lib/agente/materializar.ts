@@ -20,7 +20,8 @@ import { siguienteIndicePapel } from '../../routes/ejecucion'
 import { registrarEvento } from '../eventos'
 import type { JwtPayload } from '../jwt'
 
-type Propuesta = typeof propuestasAgente.$inferSelect
+// Solo propuestas del encargo: aquí auditoria_id siempre existe (las tributarias se materializan en routes/tributario-agente.ts).
+type Propuesta = typeof propuestasAgente.$inferSelect & { auditoriaId: string }
 type Usuario = Pick<JwtPayload, 'sub' | 'firmaId' | 'rol'>
 
 const nombreArea = (a: string) => AREA_BASE_LABEL[a] ?? a.replace(/_/g, ' ')
@@ -189,7 +190,8 @@ export async function materializarPendientes(auditoriaId: string, user: Usuario)
   let pruebas = 0, deficiencias = 0
   const decididas = await db.select().from(propuestasAgente)
     .where(and(eq(propuestasAgente.auditoriaId, auditoriaId), inArray(propuestasAgente.estado, ['aprobada', 'ajustada']), inArray(propuestasAgente.tipo, ['riesgo', 'juicio'])))
-  for (const p of decididas) {
+  // Filas filtradas por auditoria_id: el padre es el encargo.
+  for (const p of decididas.map((r) => ({ ...r, auditoriaId }))) {
     const contenido = p.contenido as ContenidoPropuesta & { deficienciasEscritas?: boolean }
     if (p.tipo === 'riesgo' && p.entidadDestino === 'riesgo' && p.entidadDestinoId) {
       const [r] = await db.select({ id: riesgos.id, area: riesgos.area, respuestaPlaneada: riesgos.respuestaPlaneada }).from(riesgos).where(eq(riesgos.id, p.entidadDestinoId))
@@ -227,7 +229,7 @@ export async function materializarHallazgosPendientes(auditoriaId: string, user:
     ))
   let escritos = 0
   const papeles = new Set<string>()
-  for (const p of pendientes) {
+  for (const p of pendientes.map((r) => ({ ...r, auditoriaId }))) {
     const r = await materializarHallazgo(p, user)
     if (!r.escrito) continue
     escritos++

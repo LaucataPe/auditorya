@@ -21,6 +21,7 @@ import cierreRoutes from './routes/cierre'
 import notificacionesRoutes from './routes/notificaciones'
 import miTrabajoRoutes from './routes/mi-trabajo'
 import tributarioRoutes from './routes/tributario'
+import tributarioAgenteRoutes from './routes/tributario-agente'
 import archivosRoutes from './routes/archivos'
 import iaRoutes from './routes/ia'
 import agenteRoutes from './routes/agente'
@@ -95,6 +96,7 @@ app.route('/', notificacionesRoutes)
 app.route('/', miTrabajoRoutes)
 
 app.route('/', tributarioRoutes)
+app.route('/', tributarioAgenteRoutes)
 // Descarga de archivos con URL firmada (sin cookie de sesión)
 app.route('/', archivosRoutes)
 // Funciones de IA (Claude) — /auditorias/:id/ia/..., /papeles/:id/ia/...

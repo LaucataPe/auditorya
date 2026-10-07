@@ -7,3 +7,8 @@ dist
 .DS_Store
 packages/backend/data/
 *.tsbuildinfo
+
+# Evidencias reales de clientes para pruebas locales: nunca al repo
+soportes_pruebas/
+*.xlsx
+*.xls

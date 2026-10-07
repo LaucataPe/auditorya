@@ -375,6 +375,9 @@ app.post(
 
     const [p] = await db.select().from(propuestasAgente).where(eq(propuestasAgente.id, id))
     if (!p) return c.json({ error: { code: 'NOT_FOUND', message: 'Propuesta no encontrada' } }, 404)
+    // Las propuestas de una revisión tributaria se deciden en su propio endpoint (routes/tributario-agente.ts).
+    if (!p.auditoriaId) return c.json({ error: { code: 'NOT_FOUND', message: 'Propuesta no encontrada' } }, 404)
+    const pe = { ...p, auditoriaId: p.auditoriaId }
     const row = await cargarAuditoria(p.auditoriaId, user.firmaId)
     if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Propuesta no encontrada' } }, 404)
     if (await encargoCerrado(p.auditoriaId)) return c.json({ error: ERROR_ENCARGO_CERRADO }, 409)
@@ -409,7 +412,7 @@ app.post(
 
     // Hallazgo del balance: aprobar (o ajustar) lo escribe en `hallazgos` dentro del papel de trabajo de su ciclo.
     if (p.tipo === 'hallazgo' && p.paso === 'balance' && (decision === 'aprobar' || decision === 'ajustar')) {
-      const r = await materializarHallazgo(p, user, ajustes)
+      const r = await materializarHallazgo(pe, user, ajustes)
       if (r.escrito) {
         set.entidadDestino = 'hallazgo'; set.entidadDestinoId = r.hallazgoId
         texto += ` Hallazgo escrito en el papel ${r.indice} · ${r.papelTitulo}${r.papelCreado ? ' (creé el papel del ciclo)' : ''}.`
@@ -423,7 +426,7 @@ app.post(
 
     // Documento pedido por el agente: aprobar lo convierte en solicitud PBC ligada al papel del área del hallazgo.
     if (p.tipo === 'documento' && decision === 'aprobar') {
-      const r = await materializarDocumento(p, user)
+      const r = await materializarDocumento(pe, user)
       set.entidadDestino = 'solicitud_pbc'; set.entidadDestinoId = r.solicitudId
       texto += ` Solicitud PBC creada${r.papelIndice ? ` en el papel ${r.papelIndice}` : ' (sin papel: el documento no es de un ciclo)'}.`
     }

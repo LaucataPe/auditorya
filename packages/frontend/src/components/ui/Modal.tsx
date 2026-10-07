@@ -7,10 +7,10 @@ type Props = {
   onClose: () => void
   title: string
   children: ReactNode
-  size?: 'sm' | 'md' | 'lg'
+  size?: 'sm' | 'md' | 'lg' | 'xl'
 }
 
-const sizes = { sm: 'max-w-md', md: 'max-w-lg', lg: 'max-w-2xl' }
+const sizes = { sm: 'max-w-md', md: 'max-w-lg', lg: 'max-w-2xl', xl: 'max-w-6xl' }
 
 export function Modal({ open, onClose, title, children, size = 'md' }: Props) {
   useEffect(() => {
@@ -28,9 +28,10 @@ export function Modal({ open, onClose, title, children, size = 'md' }: Props) {
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
 
       {/* Panel */}
-      <div className={cn('relative w-full rounded-2xl bg-white shadow-xl', sizes[size])}>
+      {/* Alto máximo con scroll interno: el encabezado (y su botón de cerrar) queda siempre a la vista. */}
+      <div className={cn('relative flex max-h-[90vh] w-full flex-col rounded-2xl bg-white shadow-xl', sizes[size])}>
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-gray-100 px-6 py-4">
+        <div className="flex shrink-0 items-center justify-between border-b border-gray-100 px-6 py-4">
           <h2 className="text-base font-semibold text-gray-900">{title}</h2>
           <button
             onClick={onClose}
@@ -39,7 +40,7 @@ export function Modal({ open, onClose, title, children, size = 'md' }: Props) {
             <X size={16} />
           </button>
         </div>
-        <div className="px-6 py-5">{children}</div>
+        <div className="overflow-y-auto px-6 py-5">{children}</div>
       </div>
     </div>
   )

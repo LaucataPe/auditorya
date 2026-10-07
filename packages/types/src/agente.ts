@@ -42,8 +42,26 @@ export type ContenidoPropuesta = {
     materialidadDesempeno: number
     justificacion: string
   }
-  /** Tabla de destino de un juicio: 'entendimiento' | 'coso' | … */
+  /** Tabla de destino de un juicio: 'entendimiento' | 'coso' | 'checklist' | … */
   destino?: string
+  /**
+   * Propuestas de la revisión tributaria (agente de IVA): renglón y casilla del
+   * formulario que la originan y el ítem del checklist del impuesto que alimenta.
+   * Al aprobar un juicio con `checklistItem`, el ítem queda hecho con la nota.
+   */
+  tributario?: {
+    renglonId?: string | null
+    casilla?: string | null
+    checklistItem?: string | null
+    /** Nota que se escribe en el checklist al aprobar ("Verificado por el agente: …"). */
+    nota?: string | null
+    /** Subcuenta del auxiliar que originó una ambigüedad de clasificación; al decidir, el destino elegido va a la memoria de la empresa. */
+    cuentaAuxiliar?: string | null
+    /** En qué mapa de la memoria de la empresa se guarda la clasificación (por defecto 'mapeo2408'). */
+    memoriaClave?: 'mapeo2408' | 'mapeo2365' | 'mapeo2368' | 'mapeoIca'
+    /** Cédula (procedimiento) donde nació la propuesta. */
+    cedula?: string
+  }
   /** Calificación propuesta de un componente COSO (juicio con destino 'coso'); al aprobar se escribe en `controles_coso`. */
   coso?: {
     componente: 'ambiente_control' | 'evaluacion_riesgos' | 'actividades_control' | 'informacion_comunicacion' | 'supervision'
@@ -69,7 +87,10 @@ export type ContenidoPropuesta = {
 
 export type PropuestaAgente = {
   id: string
-  auditoriaId: string
+  /** Encargo al que pertenece; null cuando la propuesta es de una revisión tributaria. */
+  auditoriaId: string | null
+  /** Revisión tributaria a la que pertenece (agente de IVA); null en el encargo. */
+  revisionTributariaId?: string | null
   corridaId: string | null
   paso: string
   tipo: TipoPropuesta

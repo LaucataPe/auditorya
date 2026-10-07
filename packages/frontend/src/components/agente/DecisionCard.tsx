@@ -48,6 +48,9 @@ export function DecisionCard({ propuesta: p, posicion, onDecidir, decidiendo, so
   const [control, setControl] = useState<NivelRiesgo>(riesgo?.riesgoControl ?? 'medio')
   const [respuesta, setRespuesta] = useState(riesgo?.respuestaPlaneada ?? '')
   const { areas } = useAreas()
+  // Ambigüedad con varias opciones (p. ej. clasificar una subcuenta): se elige de una lista.
+  const opcionesLista = p.tipo === 'ambiguedad' && (p.contenido.opciones?.length ?? 0) > 2 ? p.contenido.opciones! : null
+  const [opcion, setOpcion] = useState(opcionesLista?.[0]?.clave ?? '')
 
   const accionPrincipal =
     coso ? `Confirmar: ${CALIFICACION_COSO_LABEL[coso.calificacion].toLowerCase()}`
@@ -95,7 +98,7 @@ export function DecisionCard({ propuesta: p, posicion, onDecidir, decidiendo, so
       <div className="px-5 py-4 space-y-3 text-sm text-gray-600">
         {ajustando && p.tipo === 'materialidad' ? (
           <MaterialidadForm
-            auditoriaId={p.auditoriaId}
+            auditoriaId={p.auditoriaId ?? ''}
             valoresIniciales={p.contenido.materialidad ? {
               baseCalculo: p.contenido.materialidad.baseCalculo, montoBase: p.contenido.materialidad.montoBase,
               porcentaje: p.contenido.materialidad.porcentaje, porcentajeDesempeno: p.contenido.materialidad.porcentajeDesempeno,
@@ -267,11 +270,20 @@ export function DecisionCard({ propuesta: p, posicion, onDecidir, decidiendo, so
             </>
           ) : (
             <>
-              <Button size="sm" loading={decidiendo} onClick={() => onDecidir('aprobar')}>{accionPrincipal}</Button>
+              {opcionesLista ? (
+                <>
+                  <select value={opcion} onChange={(e) => setOpcion(e.target.value)} className="rounded-lg border border-gray-200 px-2 py-1.5 text-sm text-gray-700 focus:border-indigo-300 focus:outline-none">
+                    {opcionesLista.map((o) => <option key={o.clave} value={o.clave}>{o.label}</option>)}
+                  </select>
+                  <Button size="sm" loading={decidiendo} onClick={() => onDecidir('aprobar', { ajustes: { opcion }, motivo: opcionesLista.find((o) => o.clave === opcion)?.label })}>Guardar clasificación</Button>
+                </>
+              ) : (
+                <Button size="sm" loading={decidiendo} onClick={() => onDecidir('aprobar')}>{accionPrincipal}</Button>
+              )}
               {coso && (['efectivo', 'con_deficiencias', 'deficiente'] as CalificacionCoso[]).filter((c) => c !== coso.calificacion).map((c) => (
                 <Button key={c} size="sm" variant="secondary" loading={decidiendo} onClick={() => onDecidir('ajustar', { motivo: `Calificación cambiada a ${CALIFICACION_COSO_LABEL[c].toLowerCase()}`, ajustes: { coso: { calificacion: c, observaciones: coso.observaciones } } })}>{CALIFICACION_COSO_LABEL[c]}</Button>
               ))}
-              {!coso && p.contenido.opciones && p.contenido.opciones.length > 1 && (
+              {!coso && !opcionesLista && p.contenido.opciones && p.contenido.opciones.length > 1 && (
                 <Button size="sm" variant="secondary" loading={decidiendo} onClick={() => onDecidir('ajustar', { motivo: p.contenido.opciones![1].label })}>{p.contenido.opciones[1].label}</Button>
               )}
               {p.tipo !== 'documento' && <Button size="sm" variant="secondary" onClick={() => setAjustando(true)}>Ajustar</Button>}

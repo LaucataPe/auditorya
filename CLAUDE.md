@@ -26,6 +26,15 @@ el frontend oculta las funciones de IA y la sugerencia de riesgos cae al catálo
 sugerir riesgos con contexto real (sector + entendimiento + balance), análisis analítico del balance (NIA 520),
 asistente NIA conversacional por encargo, y redacción de campos de papeles de trabajo.
 
+**Lectura de declaraciones DIAN** — `lib/lectura-dian.ts`. La fuente SOLO transcribe casilla → valor;
+el mapeo a renglones, la suma de casillas agrupadas y el cuadre de totales son código determinista
+(`aplicarLecturaFormulario` en `types/tributario.ts`), que es lo que detecta una lectura corrida.
+No mover esa responsabilidad a la fuente. Dos fuentes: el workflow propio de n8n
+(`N8N_DECLARACION_URL`, recibe `{pdf_base64, tipo, nombre_archivo}` y devuelve `{"casillas": {...}}`),
+preferido cuando está configurado, y el LLM multimodal como fallback si n8n falla. La respuesta y el
+evento de auditoría llevan `fuente` (`'n8n' | 'llm'`). `GET /ia/estado` expone `lecturaDeclaracion`
+aparte de `disponible`: los formularios 300/350 se leen sin OpenRouter.
+
 **Archivos** — `lib/storage.ts` con drivers `local` (disco, `STORAGE_DIR`) y `s3` (compatible S3:
 Cloudflare R2 / AWS S3, vía `@aws-sdk/client-s3` con endpoint configurable; producción usa R2).
 Migración disco → bucket: `scripts/migrar-storage-s3.ts`.
@@ -77,6 +86,8 @@ FRONTEND_URL=http://localhost:5173
 PORT=3001
 STORAGE_DRIVER=local            # 'local' o 's3'
 STORAGE_DIR=./data/archivos     # solo para driver local
+N8N_DECLARACION_URL=            # workflow de lectura de formularios DIAN (opcional)
+N8N_DECLARACION_TOKEN=          # opcional (Bearer)
 ```
 
 `packages/frontend/.env`

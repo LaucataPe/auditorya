@@ -4,10 +4,14 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Copy, Plus, Trash2 } from 'lucide-react'
 import {
   IMPUESTOS_CATALOGO,
+  MUNICIPIOS_RETEICA,
   PERIODICIDAD_LABELS,
   PERIODICIDADES,
   TIPOS_IMPUESTO,
+  esImpuestoMunicipal,
   etiquetaPeriodo,
+  mismoMunicipio,
+  nombreMunicipio,
   nombreObligacion,
   presentacionExtemporanea,
   type ObligacionConRevisiones,
@@ -68,6 +72,8 @@ export function EmpresaTributario() {
   const anioActual = new Date().getFullYear()
   const [anio, setAnio] = useState(anioActual)
   const [modalAbierto, setModalAbierto] = useState(false)
+  // Obligación municipal creada antes de existir el campo municipio: se le asigna aquí.
+  const [sinMunicipio, setSinMunicipio] = useState<ObligacionConRevisiones | null>(null)
 
   const { data, isLoading } = useQuery<MatrizTributaria>({
     queryKey: ['tributario', empresaId, anio],
@@ -186,6 +192,15 @@ export function EmpresaTributario() {
                   <tr key={o.id} className="border-b border-gray-50 last:border-0">
                     <td className="px-4 py-3 align-middle">
                       <p className="font-medium text-gray-900">{nombreObligacion(o)}</p>
+                      {esImpuestoMunicipal(o.tipo) && !o.municipio && (
+                        <button
+                          onClick={() => setSinMunicipio(o)}
+                          className="mt-0.5 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700 hover:bg-amber-100"
+                          title="La declaración de este impuesto es por municipio"
+                        >
+                          Sin municipio · asignar
+                        </button>
+                      )}
                       <div className="mt-0.5 flex items-center gap-2 text-xs text-gray-400">
                         <span>{PERIODICIDAD_LABELS[o.periodicidad]}</span>
                         <span>·</span>
@@ -267,6 +282,13 @@ export function EmpresaTributario() {
         </div>
       )}
 
+      <ModalMunicipio
+        obligacion={sinMunicipio}
+        existentes={obligaciones}
+        onClose={() => setSinMunicipio(null)}
+        onGuardado={() => { setSinMunicipio(null); invalidar() }}
+      />
+
       <ModalNuevaObligacion
         open={modalAbierto}
         onClose={() => setModalAbierto(false)}
@@ -299,7 +321,9 @@ function ModalNuevaObligacion({
 }) {
   const [tipo, setTipo] = useState<TipoImpuesto>('retefuente')
   const [nombre, setNombre] = useState('')
+  const [municipio, setMunicipio] = useState('')
   const [periodicidad, setPeriodicidad] = useState<Periodicidad>(IMPUESTOS_CATALOGO.retefuente.periodicidadDefault)
+  const municipal = esImpuestoMunicipal(tipo)
   const [asignadoA, setAsignadoA] = useState('')
 
   const crear = useMutation({
@@ -308,6 +332,7 @@ function ModalNuevaObligacion({
         anioFiscal: anio,
         tipo,
         nombre: nombre.trim() || undefined,
+        municipio: municipal ? municipio.trim() : undefined,
         periodicidad,
         asignadoA: asignadoA || null,
       }),
@@ -315,6 +340,7 @@ function ModalNuevaObligacion({
       onCreada()
       toast.success('Obligación creada con sus períodos de la vigencia')
       setNombre('')
+      setMunicipio('')
       onClose()
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : 'No se pudo crear la obligación'),
@@ -325,7 +351,10 @@ function ModalNuevaObligacion({
     setPeriodicidad(IMPUESTOS_CATALOGO[t].periodicidadDefault)
   }
 
-  const yaExiste = tipo !== 'otro' && existentes.some((o) => o.tipo === tipo)
+  // Impuestos municipales: una obligación por municipio (reteICA de Bogotá y de Cali en la misma vigencia).
+  const yaExiste = tipo !== 'otro' && (municipal
+    ? !!municipio.trim() && existentes.some((o) => o.tipo === tipo && mismoMunicipio(o.municipio, municipio))
+    : existentes.some((o) => o.tipo === tipo))
 
   return (
     <Modal open={open} onClose={onClose} title={`Agregar obligación — vigencia ${anio}`}>
@@ -337,14 +366,17 @@ function ModalNuevaObligacion({
           options={TIPOS_IMPUESTO.map((t) => ({ value: t, label: IMPUESTOS_CATALOGO[t].nombre }))}
         />
         <p className="text-xs text-gray-500 -mt-2">{IMPUESTOS_CATALOGO[tipo].descripcion}</p>
+        {municipal && <CampoMunicipio valor={municipio} onCambio={setMunicipio} />}
         {yaExiste && (
-          <p className="text-xs text-amber-600">Esa obligación ya existe en la vigencia {anio}.</p>
+          <p className="text-xs text-amber-600">
+            {municipal ? `Ya existe ${IMPUESTOS_CATALOGO[tipo].nombre} de ${nombreMunicipio(municipio)} en la vigencia ${anio}.` : `Esa obligación ya existe en la vigencia ${anio}.`}
+          </p>
         )}
         <Input
           label={tipo === 'otro' ? 'Nombre de la obligación' : 'Etiqueta (opcional)'}
           value={nombre}
           onChange={(e) => setNombre(e.target.value)}
-          placeholder={tipo === 'otro' ? 'p. ej. Estampilla pro-desarrollo' : 'p. ej. ICA Bogotá'}
+          placeholder={tipo === 'otro' ? 'p. ej. Estampilla pro-desarrollo' : municipal ? 'Opcional: el municipio ya va en el nombre' : 'p. ej. Retención en la fuente sede principal'}
         />
         <Select
           label="Periodicidad"
@@ -365,10 +397,69 @@ function ModalNuevaObligacion({
           <Button
             onClick={() => crear.mutate()}
             loading={crear.isPending}
-            disabled={yaExiste || (tipo === 'otro' && !nombre.trim())}
+            disabled={yaExiste || (tipo === 'otro' && !nombre.trim()) || (municipal && !municipio.trim())}
           >
             Crear obligación
           </Button>
+        </div>
+      </div>
+    </Modal>
+  )
+}
+
+const OTRO_MUNICIPIO = '__otro__'
+
+/**
+ * Municipio de un impuesto municipal: los de la tabla de referencia en un
+ * selector y "Otro municipio" para escribirlo. Guarda la clave de la tabla o el
+ * nombre escrito.
+ */
+function CampoMunicipio({ valor, onCambio }: { valor: string; onCambio: (v: string) => void }) {
+  const enTabla = MUNICIPIOS_RETEICA.some((m) => m.clave === valor)
+  const [otro, setOtro] = useState(!!valor && !enTabla)
+  return (
+    <div className="space-y-2">
+      <Select
+        label="Municipio"
+        value={otro ? OTRO_MUNICIPIO : valor}
+        onChange={(e) => {
+          if (e.target.value === OTRO_MUNICIPIO) { setOtro(true); onCambio('') } else { setOtro(false); onCambio(e.target.value) }
+        }}
+        options={[
+          { value: '', label: 'Elige el municipio' },
+          ...[...MUNICIPIOS_RETEICA].sort((a, b) => a.nombre.localeCompare(b.nombre)).map((m) => ({ value: m.clave, label: m.nombre })),
+          { value: OTRO_MUNICIPIO, label: 'Otro municipio…' },
+        ]}
+      />
+      {otro && <Input label="Nombre del municipio" value={valor} onChange={(e) => onCambio(e.target.value)} placeholder="p. ej. Girardot" autoFocus />}
+      <p className="text-xs text-gray-500">La declaración de este impuesto es por municipio: crea una obligación por cada municipio donde declara.</p>
+    </div>
+  )
+}
+
+/** Asigna el municipio a una obligación municipal que no lo tiene (creada antes de existir el campo). */
+function ModalMunicipio({ obligacion, existentes, onClose, onGuardado }: {
+  obligacion: ObligacionConRevisiones | null
+  existentes: ObligacionConRevisiones[]
+  onClose: () => void
+  onGuardado: () => void
+}) {
+  const [municipio, setMunicipio] = useState('')
+  const guardar = useMutation({
+    mutationFn: () => api.patch(`/tributario/obligaciones/${obligacion!.id}`, { municipio: municipio.trim() }),
+    onSuccess: () => { toast.success('Municipio asignado'); setMunicipio(''); onGuardado() },
+    onError: (e) => toast.error(e instanceof Error ? e.message : 'No se pudo asignar el municipio'),
+  })
+  if (!obligacion) return null
+  const repetido = !!municipio.trim() && existentes.some((o) => o.id !== obligacion.id && o.tipo === obligacion.tipo && mismoMunicipio(o.municipio, municipio))
+  return (
+    <Modal open onClose={onClose} title={`Municipio de ${nombreObligacion(obligacion)} ${obligacion.anioFiscal}`} size="sm">
+      <div className="space-y-4">
+        <CampoMunicipio valor={municipio} onCambio={setMunicipio} />
+        {repetido && <p className="text-xs text-amber-600">Ya hay otra obligación de {nombreMunicipio(municipio)} en la vigencia.</p>}
+        <div className="flex justify-end gap-2 pt-1">
+          <Button variant="secondary" onClick={onClose}>Cancelar</Button>
+          <Button loading={guardar.isPending} disabled={!municipio.trim() || repetido} onClick={() => guardar.mutate()}>Guardar</Button>
         </div>
       </div>
     </Modal>

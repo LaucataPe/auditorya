@@ -22,15 +22,16 @@ import {
   obligacionesTributarias, revisionesTributarias, adjuntosTributarios,
 } from '../db/schema'
 import {
-  esClaseBalance, AREAS_BASE_CLAVES, CIFRAS_CATALOGO, IMPUESTOS_CATALOGO, LECTURA_FORMULARIO,
+  esClaseBalance, AREAS_BASE_CLAVES, ACTIVIDADES_ICA, CIFRAS_CATALOGO, IMPUESTOS_CATALOGO, LECTURA_FORMULARIO,
   aplicarLecturaFormulario, etiquetaPeriodo, nombreObligacion,
   TIPO_HALLAZGO_LABEL, SEVERIDAD_HALLAZGO_LABEL,
 } from '@auditorya/types'
 import { authMiddleware } from '../middleware/auth'
 import {
   iaDisponible, completarJSON, completarJSONArchivo, completarTexto, MODELO,
-  type ArchivoLLM, type MensajeChat,
+  type MensajeChat,
 } from '../lib/llm'
+import { transcribirCasillas, lecturaCasillasDisponible, type FuenteLectura } from '../lib/lectura-dian'
 import { storage } from '../lib/storage'
 import { sugerirRiesgos } from '../lib/ia'
 import { registrarEvento } from '../lib/eventos'
@@ -169,7 +170,15 @@ Escribes en español profesional, preciso y conciso. Tus respuestas son un apoyo
 
 // GET /ia/estado
 app.get('/ia/estado', (c) => {
-  return c.json({ data: { disponible: iaDisponible(), modelo: iaDisponible() ? MODELO : null } })
+  return c.json({
+    data: {
+      disponible: iaDisponible(),
+      modelo: iaDisponible() ? MODELO : null,
+      // La lectura de formularios DIAN con casillas (300/350) puede correr por
+      // el workflow de n8n sin OpenRouter, así que tiene su propia bandera.
+      lecturaDeclaracion: lecturaCasillasDisponible(),
+    },
+  })
 })
 
 const RiesgoIASchema = z.array(
@@ -589,46 +598,12 @@ Devuelve un objeto JSON con exactamente estas claves:
 // ─── Lectura del borrador de la declaración (cifras del período) ─────────────
 
 const MIMES_BORRADOR = ['application/pdf', 'image/png', 'image/jpeg', 'image/webp']
-const MAX_BORRADOR_BYTES = 10 * 1024 * 1024 // el archivo viaja en base64 al LLM
+const MAX_BORRADOR_BYTES = 10 * 1024 * 1024 // el archivo viaja en base64 al workflow o al LLM
 
 const LecturaBorradorSchema = z.object({
   renglones: z.record(z.number().nullable()),
   advertencias: z.array(z.string()).max(20).optional(),
 })
-
-const CasillasSchema = z.object({ casillas: z.record(z.number().nullable()) })
-
-/**
- * Transcribe las casillas del formulario. Los PDF se intentan primero con el
- * parser de texto gratuito; si no extrae ningún valor (formularios MUISCA con
- * campos XFA o PDFs escaneados) o falla, se reintenta con OCR (mistral-ocr).
- */
-async function transcribirCasillas(archivo: ArchivoLLM, prompt: string): Promise<Record<string, number | null>> {
-  const intentar = async (engine?: 'pdf-text' | 'mistral-ocr') => {
-    const crudo = await completarJSONArchivo<unknown>({
-      system: SYSTEM_AUDITOR,
-      prompt,
-      archivo,
-      inicioJson: '{',
-      maxTokens: 3000,
-      engine,
-    })
-    return CasillasSchema.parse(crudo).casillas
-  }
-
-  const esPdf = archivo.mime === 'application/pdf'
-  if (!esPdf) return intentar()
-
-  try {
-    const casillas = await intentar('pdf-text')
-    if (Object.values(casillas).some((v) => typeof v === 'number' && v !== 0)) return casillas
-    console.warn('[ia] pdf-text no extrajo valores del borrador; reintentando con OCR')
-    return await intentar('mistral-ocr')
-  } catch (err) {
-    console.warn('[ia] lectura con pdf-text falló; reintentando con OCR:', (err as Error).message)
-    return intentar('mistral-ocr')
-  }
-}
 
 // POST /tributario/revisiones/:id/ia/leer-borrador — multipart: `archivo`
 // (PDF/imagen del borrador) + `guardarSoporte` ('1' para adjuntarlo como
@@ -637,7 +612,10 @@ app.post('/tributario/revisiones/:id/ia/leer-borrador', async (c) => {
   const user = c.get('user')
   const revisionId = c.req.param('id')
 
-  if (!iaDisponible()) return c.json({ error: ERROR_IA }, 503)
+  // Los formularios con casillas (300/350) los puede leer el workflow de n8n
+  // sin OpenRouter; el resto de impuestos sí depende del LLM (se valida abajo,
+  // cuando ya se sabe el tipo).
+  if (!lecturaCasillasDisponible()) return c.json({ error: ERROR_IA }, 503)
   if (excedeCuotaIA(user.sub)) return c.json({ error: ERROR_CUOTA_IA }, 429)
 
   const [row] = await db
@@ -672,15 +650,33 @@ app.post('/tributario/revisiones/:id/ia/leer-borrador', async (c) => {
   const archivoLLM = { nombre: archivo.name, mime: archivo.type, base64: contenido.toString('base64') }
   const cfgCasillas = LECTURA_FORMULARIO[row.obligacion.tipo]
 
+  // Los impuestos sin formulario de casillas se mapean con el LLM: ahí sí hace falta.
+  if (!cfgCasillas && !iaDisponible()) return c.json({ error: ERROR_IA }, 503)
+
   let renglones: Record<string, number | null> = {}
   let advertencias: string[] = []
+  let fuente: FuenteLectura = 'llm'
 
   try {
     if (cfgCasillas) {
-      // Formulario DIAN con casillas numeradas: la IA solo TRANSCRIBE casilla →
-      // valor (tarea simple y fiable); el mapeo a renglones, las sumas de
-      // casillas agrupadas y la verificación de totales son código determinista.
-      const prompt = `El archivo adjunto es el BORRADOR de la declaración de ${nombreObligacion(row.obligacion)} (formulario oficial de la DIAN), período ${periodo}, de la empresa ${row.empresa.nombre}.
+      // Formulario con casillas numeradas (300, 350, y el único nacional de ICA por renglón): la fuente solo TRANSCRIBE
+      // casilla → valor (tarea simple y fiable); el mapeo a renglones, las sumas
+      // de casillas agrupadas y la verificación de totales son código determinista.
+      const prompt = row.obligacion.tipo === 'ica'
+        ? `El archivo adjunto es el BORRADOR de la declaración de ${nombreObligacion(row.obligacion)} en el Formulario Único Nacional de declaración y pago del impuesto de industria y comercio, período ${periodo}, de la empresa ${row.empresa.nombre}.
+
+TRANSCRIBE los renglones numerados 8 a 38 con su valor:
+- La clave es el NÚMERO del renglón como texto (p. ej. "16"); el valor, el número en pesos colombianos como ENTERO (sin puntos, comas ni símbolos).
+- Transcribe tal cual, incluidos los renglones en cero. NO calcules, NO corrijas, NO omitas renglones.
+- Omite los renglones 1 a 7 (identificación) y el 18 (capacidad instalada en kW).
+
+Además, transcribe la sección C "Discriminación de actividades gravadas", incluida la hoja de "otras actividades" si la hay, en el orden en que aparecen (la actividad principal es la 1):
+- "act1_ingresos": ingresos gravados de la actividad 1; "act1_impuesto": impuesto de la actividad 1 (columna IMPUESTO, tal cual, sin redondear).
+- Igual para act2, act3… hasta act${ACTIVIDADES_ICA}. Solo las actividades que tienen valores. NO transcribas el código ni la tarifa.
+- Si una casilla no se puede leer con certeza, omítela del objeto.
+
+Devuelve un objeto JSON: {"casillas": {"8": 7958955000, "9": 320101000, ..., "act1_ingresos": 5751351000, "act1_impuesto": 23810593, ...}}`
+        : `El archivo adjunto es el BORRADOR de la declaración de ${nombreObligacion(row.obligacion)} (formulario oficial de la DIAN), período ${periodo}, de la empresa ${row.empresa.nombre}.
 
 TRANSCRIBE todas las casillas numeradas del formulario con su valor:
 - La clave es el NÚMERO de la casilla como texto (p. ej. "28"); el valor, el número en pesos colombianos como ENTERO (sin puntos, comas ni símbolos).
@@ -690,12 +686,18 @@ TRANSCRIBE todas las casillas numeradas del formulario con su valor:
 
 Devuelve un objeto JSON: {"casillas": {"27": 0, "28": 122149000, ...}}`
 
-      const casillas = await transcribirCasillas(archivoLLM, prompt)
-      const aplicado = aplicarLecturaFormulario(row.obligacion.tipo, casillas)
+      const leido = await transcribirCasillas({
+        archivo: archivoLLM,
+        tipo: row.obligacion.tipo,
+        system: SYSTEM_AUDITOR,
+        prompt,
+      })
+      fuente = leido.fuente
+      const aplicado = aplicarLecturaFormulario(row.obligacion.tipo, leido.casillas)
       renglones = aplicado?.renglones ?? {}
       advertencias = aplicado?.advertencias ?? []
     } else {
-      // Impuestos sin formulario estándar (reteica, municipales, otros): la IA
+      // Impuestos sin formulario estándar (reteica, otros): la IA
       // mapea directo a los renglones digitables del catálogo.
       const digitables = CIFRAS_CATALOGO[row.obligacion.tipo]
         .flatMap((s) => s.renglones.map((r) => ({ ...r, seccion: s.titulo })))
@@ -787,10 +789,14 @@ Devuelve un objeto JSON: {"renglones": {"<id>": <numero|null>, ...}, "advertenci
       renglonesLeidos: Object.values(renglones).filter((v) => v !== null).length,
       archivo: archivo.name,
       soporteGuardado: !!adjuntoId,
+      // Con qué se leyó y si el cuadre del formulario protestó: sin esto no se
+      // puede auditar después una cifra que entró mal.
+      fuente,
+      advertencias: advertencias.length,
     },
   })
 
-  return c.json({ data: { renglones, advertencias, adjuntoId } })
+  return c.json({ data: { renglones, advertencias, adjuntoId, fuente } })
 })
 
 export default app

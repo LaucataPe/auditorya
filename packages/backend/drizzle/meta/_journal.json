@@ -337,6 +337,34 @@
       "when": 1786800000000,
       "tag": "0047_tributario_evidencia_hallazgo",
       "breakpoints": true
+    },
+    {
+      "idx": 51,
+      "version": "7",
+      "when": 1786800100000,
+      "tag": "0048_tributario_programa",
+      "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "7",
+      "when": 1786800200000,
+      "tag": "0049_agente_tributario",
+      "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "7",
+      "when": 1786800300000,
+      "tag": "0050_cedulas_tributarias",
+      "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "7",
+      "when": 1786800400000,
+      "tag": "0051_obligacion_municipio",
+      "breakpoints": true
     }
   ]
 }

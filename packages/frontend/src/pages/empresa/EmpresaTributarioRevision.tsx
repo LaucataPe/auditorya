@@ -1,7 +1,6 @@
-import { useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { useRef, useState, type ReactNode } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import type { ColumnDef } from '@tanstack/react-table'
 import {
   AlertTriangle,
   ArrowLeft,
@@ -9,6 +8,7 @@ import {
   CheckCircle2,
   ClipboardList,
   Download,
+  ExternalLink,
   FileText,
   Lock,
   Paperclip,
@@ -18,12 +18,9 @@ import {
   Sparkles,
   Trash2,
   Upload,
-  X,
 } from 'lucide-react'
 import {
   CIFRAS_CATALOGO,
-  ESTADO_HALLAZGO_TRIBUTARIO_LABELS,
-  ESTADOS_HALLAZGO_TRIBUTARIO,
   IMPUESTOS_CATALOGO,
   TIPO_ADJUNTO_LABELS,
   TIPOS_ADJUNTO_EVIDENCIA,
@@ -36,25 +33,27 @@ import {
   presentacionExtemporanea,
   procedimientosSugeridos,
   resolverCifras,
-  type AdjuntoTributario,
   type HallazgoTributario,
   type RenglonCifra,
   type ResultadoRevisionTributaria,
   type RevisionTributariaDetalle,
   type SeccionCifras,
   type TipoAdjuntoTributario,
+  hallazgosDelAgente,
+  esTipoAgentico,
 } from '@auditorya/types'
 import { api, BASE_URL } from '../../lib/api'
 import { cn } from '../../lib/cn'
 import { fechaCorta } from '../../lib/fechas'
 import { construirHtmlInforme, descargarDocx, imprimirInforme } from '../../lib/informe-export'
-import { exportOptsRevisionTributaria, nombreArchivoRevision } from '../../lib/informe-tributario'
+import { exportOptsCedulasRevision, exportOptsRevisionTributaria, nombreArchivoCedulas, nombreArchivoRevision } from '../../lib/informe-tributario'
 import { formatoCOP } from '../../lib/moneda'
 import { toast } from '../../store/toast.store'
 import { confirmar } from '../../store/confirm.store'
 import { useAuthStore } from '../../store/auth.store'
 import { Button } from '../../components/ui/Button'
-import { DataTable } from '../../components/ui/DataTable'
+import { RevisionGuiadaIva } from '../../components/empresa/RevisionGuiadaIva'
+import { CampoPapel, HallazgosTabla } from '../../components/empresa/HallazgosTributarios'
 import { Input } from '../../components/ui/Input'
 import { InputMiles } from '../../components/ui/InputMiles'
 import { Modal } from '../../components/ui/Modal'
@@ -93,7 +92,23 @@ export function EmpresaTributarioRevision() {
   const [searchParams, setSearchParams] = useSearchParams()
   const seccionParam = searchParams.get('seccion') as Seccion | null
   const seccion: Seccion = seccionParam && SECCIONES.includes(seccionParam) ? seccionParam : 'alcance'
-  const irASeccion = (s: Seccion) => setSearchParams({ seccion: s }, { replace: true })
+  // Los cambios de pestaña o de paso conservan los demás parámetros (vista, paso, seccion).
+  const ponerParam = (clave: string, valor: string | null) =>
+    setSearchParams(
+      (prev) => {
+        const p = new URLSearchParams(prev)
+        if (valor === null) p.delete(clave)
+        else p.set(clave, valor)
+        return p
+      },
+      { replace: true },
+    )
+  const irASeccion = (s: Seccion) => ponerParam('seccion', s)
+  // Revisión guiada (impuestos con agente): ?vista=pestanas muestra la vista clásica; ?paso= es el paso del asistente.
+  const vistaParam = searchParams.get('vista')
+  const pasoParam = Number(searchParams.get('paso'))
+  const paso = pasoParam >= 1 && pasoParam <= 5 ? pasoParam : 1
+  const irAPaso = (n: number) => ponerParam('paso', String(n))
   const [modalFirma, setModalFirma] = useState(false)
   // null = cerrado. `hallazgoId` distingue evidencia de un hallazgo de un soporte de la revisión.
   const [modalAdjunto, setModalAdjunto] = useState<{ hallazgoId: string | null } | null>(null)
@@ -109,18 +124,20 @@ export function EmpresaTributarioRevision() {
   })
 
   // Misma query key que EmpresaLayout: se sirve de la caché (para el membrete del documento).
-  const { data: empresa } = useQuery<{ nombre: string }>({
+  const { data: empresa } = useQuery<{ nombre: string; nit?: string }>({
     queryKey: ['empresa', empresaId],
-    queryFn: () => api.get<{ nombre: string }>(`/empresas/${empresaId}`),
+    queryFn: () => api.get<{ nombre: string; nit?: string }>(`/empresas/${empresaId}`),
     enabled: !!empresaId,
   })
 
-  const { data: ia } = useQuery<{ disponible: boolean }>({
+  const { data: ia } = useQuery<{ disponible: boolean; lecturaDeclaracion?: boolean }>({
     queryKey: ['ia-estado'],
     queryFn: () => api.get('/ia/estado'),
     staleTime: 5 * 60 * 1000,
   })
   const [modalBorrador, setModalBorrador] = useState(false)
+  // Revisión guiada: las cifras del período se consultan en una ventana sin salir del paso.
+  const [modalCifras, setModalCifras] = useState(false)
   const [vistaMatriz, setVistaMatriz] = useState<VistaMatriz>('declarado')
 
   const invalidar = () => {
@@ -180,9 +197,18 @@ export function EmpresaTributarioRevision() {
     onError: (e) => toast.error(e instanceof Error ? e.message : 'No se pudo reabrir'),
   })
 
+  // La pestaña se abre en el mismo clic y se llena cuando llega la URL firmada: abrirla
+  // después del await la hace parecer un popup y el navegador la bloquea en silencio.
   const descargar = async (adjuntoId: string) => {
-    const { url } = await api.get<{ url: string }>(`/tributario/adjuntos/${adjuntoId}/descarga`)
-    window.open(`${BASE_URL}${url}`, '_blank')
+    const ventana = window.open('', '_blank')
+    try {
+      const { url } = await api.get<{ url: string }>(`/tributario/adjuntos/${adjuntoId}/descarga`)
+      if (ventana) ventana.location.href = `${BASE_URL}${url}`
+      else window.location.href = `${BASE_URL}${url}`
+    } catch (e) {
+      ventana?.close()
+      toast.error(e instanceof Error ? e.message : 'No se pudo descargar el soporte')
+    }
   }
 
   if (isLoading || !revision) {
@@ -191,6 +217,8 @@ export function EmpresaTributarioRevision() {
 
   const catalogo = IMPUESTOS_CATALOGO[revision.obligacion.tipo]
   const sellada = revision.estado === 'revisada'
+  // Las revisiones de IVA abren en el paso a paso; las pestañas quedan como vista alternativa.
+  const guiada = esTipoAgentico(revision.obligacion.tipo) && vistaParam !== 'pestanas'
   // Firmada y presentada es el cierre completo del período.
   const badge =
     sellada && revision.fechaPresentacion
@@ -202,6 +230,8 @@ export function EmpresaTributarioRevision() {
   const tieneMatriz = CIFRAS_CATALOGO[revision.obligacion.tipo].some((s) => s.matriz)
   // La evidencia de un hallazgo se lista dentro de su fila, no en Soportes.
   const soportesRevision = revision.adjuntos.filter((a) => a.hallazgoId === null)
+  // El borrador o la declaración adjuntos: se abren junto a las cifras para consultarlos.
+  const declaraciones = soportesRevision.filter((a) => a.tipo === 'declaracion')
 
   // Hallazgo prellenado desde una diferencia de cifras (lista o matriz).
   const crearHallazgoDiferencia = (
@@ -210,10 +240,14 @@ export function EmpresaTributarioRevision() {
   ) => {
     if (valores.declarado === null || valores.libros === null) return
     const dif = valores.declarado - valores.libros
-    crearHallazgo.mutate({
-      descripcion: `${r.label}: el valor declarado (${formatoCOP(valores.declarado)}) difiere del valor según libros (${formatoCOP(valores.libros)}) en ${formatoCOP(dif)}.`,
-      monto: Math.abs(dif),
-    })
+    crearHallazgo.mutate(
+      {
+        descripcion: `${r.label}: el valor declarado (${formatoCOP(valores.declarado)}) difiere del valor según libros (${formatoCOP(valores.libros)}) en ${formatoCOP(dif)}.`,
+        monto: Math.abs(dif),
+      },
+      // En la revisión guiada no hay pestaña de hallazgos: se avisa dónde quedó.
+      { onSuccess: () => { if (guiada) toast.success('Hallazgo creado: lo encuentras en el paso Hallazgos') } },
+    )
   }
 
   const guardarRenglon = (id: string, lado: 'declarado' | 'libros', valor: number | null) => {
@@ -238,6 +272,15 @@ export function EmpresaTributarioRevision() {
     } else {
       void descargarDocx(nombreArchivoRevision({ revision, empresaNombre, preliminar: !sellada }), opts)
     }
+  }
+
+  // Cédulas: papel de trabajo interno con todo lo comparado y las conclusiones por procedimiento.
+  const exportarCedulas = (formato: 'pdf' | 'word') => {
+    const empresaNombre = empresa?.nombre ?? ''
+    const opts = exportOptsCedulasRevision({ revision, empresaNombre, firma })
+    if (!opts) { toast.info('Aún no hay cédulas: corre el análisis primero.'); return }
+    if (formato === 'pdf') imprimirInforme(construirHtmlInforme(opts))
+    else void descargarDocx(nombreArchivoCedulas({ revision, empresaNombre }), opts)
   }
 
   const toggleItem = (itemId: string, cambio: { hecho?: boolean; nota?: string }) => {
@@ -330,6 +373,149 @@ export function EmpresaTributarioRevision() {
     },
   ]
 
+  // Cifras del período: las mismas en la pestaña y en la ventana de la revisión guiada.
+  const controlesCifras = (
+    <div className="flex flex-wrap items-center gap-2">
+      {tieneMatriz && (
+        <div className="flex rounded-lg border border-indigo-200 bg-white p-0.5 text-xs">
+          {VISTAS_MATRIZ.map((v) => (
+            <button
+              key={v.id}
+              onClick={() => setVistaMatriz(v.id)}
+              className={cn(
+                'rounded-md px-2.5 py-1 font-medium transition-colors',
+                vistaMatriz === v.id ? 'bg-indigo-600 text-white' : 'text-indigo-700 hover:bg-indigo-50',
+              )}
+            >
+              {v.label}
+              {v.id === 'diferencia' && diferencias > 0 && (
+                <span
+                  className={cn(
+                    'ml-1 rounded-full px-1.5 text-[10px]',
+                    vistaMatriz === v.id ? 'bg-white/20' : 'bg-amber-100 text-amber-700',
+                  )}
+                >
+                  {diferencias}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+      {(ia?.lecturaDeclaracion ?? ia?.disponible) && !sellada && (
+        <Button size="sm" variant="secondary" className="gap-1.5" onClick={() => setModalBorrador(true)}>
+          <Sparkles size={12} /> Leer borrador (IA)
+        </Button>
+      )}
+    </div>
+  )
+  const contenidoCifras = (
+    <div className="p-5">
+    <p className="mb-4 text-xs text-gray-400">
+      {tieneMatriz
+        ? 'Digita lo del borrador en "Declarado" y lo de la contabilidad en "Según libros"; los totales se calculan solos. El punto ámbar marca las celdas que no cuadran, y en "Diferencias" cada una se vuelve hallazgo con un clic.'
+        : 'Digita lo del borrador o formulario y lo de libros; los totales se calculan solos y las diferencias se marcan por renglón. Desde una diferencia puedes crear el hallazgo prellenado.'}{' '}
+      <span className="text-gray-500">
+        Las diferencias no salen en el informe: solo trasciende lo que documentes como hallazgo.
+      </span>
+    </p>
+    {CIFRAS_CATALOGO[revision.obligacion.tipo].map((seccion) => (
+      <div key={seccion.titulo} className="mb-5 last:mb-0">
+        <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-400">
+          {seccion.titulo}
+        </h3>
+        {seccion.matriz ? (
+          <MatrizCifrasTabla
+            seccion={seccion}
+            valores={cifrasResueltas}
+            vista={vistaMatriz}
+            editable={!sellada}
+            onGuardar={guardarRenglon}
+            onDiferencia={crearHallazgoDiferencia}
+          />
+        ) : (
+        <>
+        <div className="mb-1 hidden grid-cols-[minmax(0,1fr)_6.5rem_6.5rem_7rem_1.75rem] items-center gap-2 px-2 text-[10px] uppercase tracking-wide text-gray-400 sm:grid">
+          <span />
+          <span className="text-right">Declarado</span>
+          <span className="text-right">Según libros</span>
+          <span className="text-right">Diferencia</span>
+          <span />
+        </div>
+        <div className="space-y-1">
+          {seccion.renglones.map((r) => {
+            const valores = cifrasResueltas[r.id] ?? { declarado: null, libros: null }
+            const dif =
+              valores.declarado !== null && valores.libros !== null
+                ? valores.declarado - valores.libros
+                : null
+            const editable = r.tipo === 'digitable' && !sellada
+            return (
+              <div
+                key={r.id}
+                className={cn(
+                  'grid grid-cols-2 items-center gap-2 rounded-lg px-2 py-1.5 sm:grid-cols-[minmax(0,1fr)_6.5rem_6.5rem_7rem_1.75rem]',
+                  r.tipo !== 'digitable' && 'bg-indigo-50/60 font-medium',
+                )}
+              >
+                <div className="col-span-2 min-w-0 sm:col-span-1">
+                  <p className="text-sm text-gray-700">{r.label}</p>
+                  {r.ayuda && <p className="text-[11px] leading-snug text-gray-400">{r.ayuda}</p>}
+                </div>
+                {editable ? (
+                  <InputMiles
+                    valor={valores.declarado}
+                    onValor={(v) => guardarRenglon(r.id, 'declarado', v)}
+                    placeholder="—"
+                    className="w-full rounded border border-gray-200 px-2 py-1 text-right text-sm text-gray-700 placeholder:text-gray-300 focus:border-indigo-300 focus:outline-none"
+                  />
+                ) : (
+                  <p className="text-right text-sm text-gray-700">
+                    {valores.declarado !== null ? formatoCOP(valores.declarado) : '—'}
+                  </p>
+                )}
+                {editable ? (
+                  <InputMiles
+                    valor={valores.libros}
+                    onValor={(v) => guardarRenglon(r.id, 'libros', v)}
+                    placeholder="—"
+                    className="w-full rounded border border-gray-200 px-2 py-1 text-right text-sm text-gray-700 placeholder:text-gray-300 focus:border-indigo-300 focus:outline-none"
+                  />
+                ) : (
+                  <p className="text-right text-sm text-gray-700">
+                    {valores.libros !== null ? formatoCOP(valores.libros) : '—'}
+                  </p>
+                )}
+                <p
+                  className={cn(
+                    'text-right text-sm font-medium',
+                    dif === null ? 'text-gray-300' : dif === 0 ? 'text-emerald-600' : 'text-amber-600',
+                  )}
+                >
+                  {dif === null ? '—' : dif === 0 ? '✓' : formatoCOP(dif)}
+                </p>
+                <div className="flex justify-end">
+                  {dif !== null && dif !== 0 && !sellada && (
+                    <button
+                      onClick={() => crearHallazgoDiferencia(r, valores)}
+                      title="Crear hallazgo con esta diferencia"
+                      className="rounded p-1 text-amber-500 transition-colors hover:bg-amber-50 hover:text-amber-700"
+                    >
+                      <AlertTriangle size={13} />
+                    </button>
+                  )}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+        </>
+        )}
+      </div>
+    ))}
+    </div>
+  )
+
   return (
     <div className="min-h-full space-y-6 bg-slate-50 p-8">
       {/* Encabezado */}
@@ -361,7 +547,7 @@ export function EmpresaTributarioRevision() {
               </label>
             </div>
           </div>
-          {!sellada && (
+          {!sellada && !guiada && (
             <div className="flex shrink-0 items-center gap-2">
               <span className="text-xs text-gray-400">Informe preliminar:</span>
               <Button size="sm" variant="secondary" className="gap-1.5" onClick={() => exportarDocumento('pdf')}>
@@ -474,9 +660,44 @@ export function EmpresaTributarioRevision() {
         </div>
       )}
 
+      {guiada ? (
+        <RevisionGuiadaIva
+          revision={revision}
+          empresa={empresa ?? null}
+          sellada={sellada}
+          iaDisponible={!!ia?.disponible}
+          lecturaDisponible={!!(ia?.lecturaDeclaracion ?? ia?.disponible)}
+          paso={paso}
+          onPaso={irAPaso}
+          guardar={(campos) => guardar.mutate(campos)}
+          guardando={guardar.isPending}
+          invalidar={invalidar}
+          onLeerBorrador={() => setModalBorrador(true)}
+          onAdjuntar={(hallazgoId) => setModalAdjunto({ hallazgoId })}
+          onDescargar={descargar}
+          onEliminarAdjunto={(adjuntoId) => eliminarAdjunto.mutate(adjuntoId)}
+          onFirmar={() => setModalFirma(true)}
+          onVerCifras={() => setModalCifras(true)}
+          diferenciasCifras={diferencias}
+          exportarDocumento={exportarDocumento}
+          exportarCedulas={exportarCedulas}
+          irAPestanas={() => ponerParam('vista', 'pestanas')}
+          nuevoHallazgoId={nuevoHallazgoId}
+          onEnfocadoNuevo={() => setNuevoHallazgoId(null)}
+          borradorHallazgo={borradorHallazgo}
+          setBorradorHallazgo={setBorradorHallazgo}
+          onCrearHallazgo={(descripcion) => crearHallazgo.mutate({ descripcion, enfocar: false })}
+        />
+      ) : (
+      <>
       {/* Secciones en pestañas con indicador de estado: el auditor avanza por el
           flujo (cifras → checklist → hallazgos → cierre) sin saturarse. */}
       <div className="flex flex-wrap items-center gap-1.5">
+        {esTipoAgentico(revision.obligacion.tipo) && (
+          <button onClick={() => ponerParam('vista', null)} className="mr-2 flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-sm font-medium text-indigo-700 hover:bg-indigo-100">
+            <Sparkles size={14} /> Revisión guiada
+          </button>
+        )}
         {tabs.map((t) => (
           <button
             key={t.id}
@@ -546,144 +767,9 @@ export function EmpresaTributarioRevision() {
               <h2 className="flex items-center gap-2 text-sm font-semibold text-indigo-900">
                 <Calculator size={14} className="text-indigo-500" /> Cifras del período
               </h2>
-              <div className="flex flex-wrap items-center gap-2">
-                {tieneMatriz && (
-                  <div className="flex rounded-lg border border-indigo-200 bg-white p-0.5 text-xs">
-                    {VISTAS_MATRIZ.map((v) => (
-                      <button
-                        key={v.id}
-                        onClick={() => setVistaMatriz(v.id)}
-                        className={cn(
-                          'rounded-md px-2.5 py-1 font-medium transition-colors',
-                          vistaMatriz === v.id ? 'bg-indigo-600 text-white' : 'text-indigo-700 hover:bg-indigo-50',
-                        )}
-                      >
-                        {v.label}
-                        {v.id === 'diferencia' && diferencias > 0 && (
-                          <span
-                            className={cn(
-                              'ml-1 rounded-full px-1.5 text-[10px]',
-                              vistaMatriz === v.id ? 'bg-white/20' : 'bg-amber-100 text-amber-700',
-                            )}
-                          >
-                            {diferencias}
-                          </span>
-                        )}
-                      </button>
-                    ))}
-                  </div>
-                )}
-                {ia?.disponible && !sellada && (
-                  <Button size="sm" variant="secondary" className="gap-1.5" onClick={() => setModalBorrador(true)}>
-                    <Sparkles size={12} /> Leer borrador (IA)
-                  </Button>
-                )}
-              </div>
+              {controlesCifras}
             </div>
-            <div className="p-5">
-            <p className="mb-4 text-xs text-gray-400">
-              {tieneMatriz
-                ? 'Digita lo del borrador en "Declarado" y lo de la contabilidad en "Según libros"; los totales se calculan solos. El punto ámbar marca las celdas que no cuadran, y en "Diferencias" cada una se vuelve hallazgo con un clic.'
-                : 'Digita lo del borrador o formulario y lo de libros; los totales se calculan solos y las diferencias se marcan por renglón. Desde una diferencia puedes crear el hallazgo prellenado.'}{' '}
-              <span className="text-gray-500">
-                Las diferencias no salen en el informe: solo trasciende lo que documentes como hallazgo.
-              </span>
-            </p>
-            {CIFRAS_CATALOGO[revision.obligacion.tipo].map((seccion) => (
-              <div key={seccion.titulo} className="mb-5 last:mb-0">
-                <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-400">
-                  {seccion.titulo}
-                </h3>
-                {seccion.matriz ? (
-                  <MatrizCifrasTabla
-                    seccion={seccion}
-                    valores={cifrasResueltas}
-                    vista={vistaMatriz}
-                    editable={!sellada}
-                    onGuardar={guardarRenglon}
-                    onDiferencia={crearHallazgoDiferencia}
-                  />
-                ) : (
-                <>
-                <div className="mb-1 hidden grid-cols-[minmax(0,1fr)_6.5rem_6.5rem_7rem_1.75rem] items-center gap-2 px-2 text-[10px] uppercase tracking-wide text-gray-400 sm:grid">
-                  <span />
-                  <span className="text-right">Declarado</span>
-                  <span className="text-right">Según libros</span>
-                  <span className="text-right">Diferencia</span>
-                  <span />
-                </div>
-                <div className="space-y-1">
-                  {seccion.renglones.map((r) => {
-                    const valores = cifrasResueltas[r.id] ?? { declarado: null, libros: null }
-                    const dif =
-                      valores.declarado !== null && valores.libros !== null
-                        ? valores.declarado - valores.libros
-                        : null
-                    const editable = r.tipo === 'digitable' && !sellada
-                    return (
-                      <div
-                        key={r.id}
-                        className={cn(
-                          'grid grid-cols-2 items-center gap-2 rounded-lg px-2 py-1.5 sm:grid-cols-[minmax(0,1fr)_6.5rem_6.5rem_7rem_1.75rem]',
-                          r.tipo !== 'digitable' && 'bg-indigo-50/60 font-medium',
-                        )}
-                      >
-                        <div className="col-span-2 min-w-0 sm:col-span-1">
-                          <p className="text-sm text-gray-700">{r.label}</p>
-                          {r.ayuda && <p className="text-[11px] leading-snug text-gray-400">{r.ayuda}</p>}
-                        </div>
-                        {editable ? (
-                          <InputMiles
-                            valor={valores.declarado}
-                            onValor={(v) => guardarRenglon(r.id, 'declarado', v)}
-                            placeholder="—"
-                            className="w-full rounded border border-gray-200 px-2 py-1 text-right text-sm text-gray-700 placeholder:text-gray-300 focus:border-indigo-300 focus:outline-none"
-                          />
-                        ) : (
-                          <p className="text-right text-sm text-gray-700">
-                            {valores.declarado !== null ? formatoCOP(valores.declarado) : '—'}
-                          </p>
-                        )}
-                        {editable ? (
-                          <InputMiles
-                            valor={valores.libros}
-                            onValor={(v) => guardarRenglon(r.id, 'libros', v)}
-                            placeholder="—"
-                            className="w-full rounded border border-gray-200 px-2 py-1 text-right text-sm text-gray-700 placeholder:text-gray-300 focus:border-indigo-300 focus:outline-none"
-                          />
-                        ) : (
-                          <p className="text-right text-sm text-gray-700">
-                            {valores.libros !== null ? formatoCOP(valores.libros) : '—'}
-                          </p>
-                        )}
-                        <p
-                          className={cn(
-                            'text-right text-sm font-medium',
-                            dif === null ? 'text-gray-300' : dif === 0 ? 'text-emerald-600' : 'text-amber-600',
-                          )}
-                        >
-                          {dif === null ? '—' : dif === 0 ? '✓' : formatoCOP(dif)}
-                        </p>
-                        <div className="flex justify-end">
-                          {dif !== null && dif !== 0 && !sellada && (
-                            <button
-                              onClick={() => crearHallazgoDiferencia(r, valores)}
-                              title="Crear hallazgo con esta diferencia"
-                              className="rounded p-1 text-amber-500 transition-colors hover:bg-amber-50 hover:text-amber-700"
-                            >
-                              <AlertTriangle size={13} />
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    )
-                  })}
-                </div>
-                </>
-                )}
-              </div>
-            ))}
-            </div>
+            {contenidoCifras}
           </section>
         </>
       )}
@@ -781,7 +867,8 @@ export function EmpresaTributarioRevision() {
                 onDescargar={descargar}
                 onEliminarAdjunto={(adjuntoId) => eliminarAdjunto.mutate(adjuntoId)}
                 onCambio={invalidar}
-              />
+                origenAgente={hallazgosDelAgente(revision.agente)}
+                />
             </div>
           </section>
         </>
@@ -850,6 +937,11 @@ export function EmpresaTributarioRevision() {
                 : 'Declaración presentada, recibo de pago, conciliación. Quedan en la constancia al firmar.'}{' '}
               La evidencia de un hallazgo se adjunta desde su fila, en la pestaña de hallazgos.
             </p>
+            {soportesRevision.length > 0 && (
+              <p className="mb-2 flex items-center gap-1.5 text-xs font-medium text-gray-600">
+                <Download size={12} className="text-indigo-500" /> Haz clic en el nombre o en Descargar para abrir el archivo. El enlace vale 15 minutos.
+              </p>
+            )}
             {soportesRevision.length === 0 ? (
               <div className="flex flex-col items-center gap-1.5 rounded-lg border border-dashed border-gray-200 py-6 text-center">
                 <Paperclip size={16} className="text-gray-300" />
@@ -858,38 +950,46 @@ export function EmpresaTributarioRevision() {
             ) : (
               <ul className="space-y-2">
                 {soportesRevision.map((a) => (
-                  <li key={a.id} className="flex items-center gap-2 rounded-lg border border-gray-100 px-3 py-2">
-                    <FileText size={15} className="shrink-0 text-gray-400" />
-                    <div className="min-w-0 flex-1">
-                      <p className="flex items-center gap-1.5 truncate text-sm text-gray-700">
-                        <span className="truncate">{a.nombre}</span>
-                        {a.posteriorAFirma && (
-                          <span className="shrink-0 rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700">
-                            Después de la firma
-                          </span>
-                        )}
-                      </p>
-                      <p className="truncate text-xs text-gray-400">
-                        {TIPO_ADJUNTO_LABELS[a.tipo]} · {formatoTamano(a.archivoTamano)} · {fechaCorta(a.createdAt)}
-                      </p>
+                  <li key={a.id} className="rounded-lg border border-gray-200 px-3 py-2.5 transition-colors hover:border-indigo-200">
+                    <div className="flex items-start gap-2.5">
+                      <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600">
+                        <FileText size={15} />
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <button
+                          onClick={() => descargar(a.id)}
+                          title={`Descargar ${a.archivoNombre}`}
+                          className="block max-w-full truncate text-left text-sm font-medium text-gray-800 underline-offset-2 hover:text-indigo-700 hover:underline"
+                        >
+                          {a.nombre}
+                        </button>
+                        <p className="truncate text-[11px] text-gray-500" title={a.archivoNombre}>{a.archivoNombre}</p>
+                        <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-[11px] text-gray-400">
+                          <span>{TIPO_ADJUNTO_LABELS[a.tipo]}</span>·<span>{formatoTamano(a.archivoTamano)}</span>·<span>{fechaCorta(a.createdAt)}</span>
+                          {a.posteriorAFirma && (
+                            <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700">Después de la firma</span>
+                          )}
+                        </p>
+                      </div>
                     </div>
-                    <button
-                      onClick={() => descargar(a.id)}
-                      title="Descargar (URL firmada, 15 min)"
-                      className="rounded p-1 text-gray-400 transition-colors hover:bg-indigo-50 hover:text-indigo-600"
-                    >
-                      <Download size={14} />
-                    </button>
-                    {/* Firmada: solo se quita lo agregado después; lo sellado es inmutable. */}
-                    {(!sellada || a.posteriorAFirma) && (
-                      <button
-                        onClick={() => eliminarAdjunto.mutate(a.id)}
-                        title="Eliminar"
-                        className="rounded p-1 text-gray-300 transition-colors hover:bg-rose-50 hover:text-rose-600"
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    )}
+                    <div className="mt-2 flex items-center justify-end gap-1.5 border-t border-gray-100 pt-2">
+                      {/* Firmada: solo se quita lo agregado después; lo sellado es inmutable. */}
+                      {(!sellada || a.posteriorAFirma) && (
+                        <button
+                          onClick={async () => {
+                            const ok = await confirmar({ titulo: `¿Quitar "${a.nombre}"?`, descripcion: 'El archivo se elimina de los soportes de la revisión.' })
+                            if (ok) eliminarAdjunto.mutate(a.id)
+                          }}
+                          title="Quitar"
+                          className="mr-auto rounded p-1 text-gray-300 transition-colors hover:bg-rose-50 hover:text-rose-600"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      )}
+                      <Button size="sm" variant="secondary" className="gap-1.5" onClick={() => descargar(a.id)}>
+                        <Download size={13} /> Descargar
+                      </Button>
+                    </div>
                   </li>
                 ))}
               </ul>
@@ -898,6 +998,8 @@ export function EmpresaTributarioRevision() {
           </section>
           </div>
         </div>
+      )}
+      </>
       )}
 
       <ModalFirmar
@@ -920,6 +1022,37 @@ export function EmpresaTributarioRevision() {
         onSubido={invalidar}
         soloPostFirma={sellada}
       />
+      <Modal
+        open={modalCifras}
+        onClose={() => setModalCifras(false)}
+        title={`Cifras del período — ${nombreObligacion(revision.obligacion)} ${etiquetaPeriodo(revision.obligacion.periodicidad, revision.periodo)} ${revision.obligacion.anioFiscal}`}
+        size="xl"
+      >
+        <div className="-mx-6 -my-5">
+          <div className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-3 border-b border-indigo-100 bg-indigo-50/90 px-5 py-2.5 backdrop-blur">
+            <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs text-indigo-900">
+              {declaraciones.length === 0 ? (
+                <span className="text-indigo-700/70">Sin borrador adjunto como soporte.</span>
+              ) : (
+                declaraciones.map((a) => (
+                  <button
+                    key={a.id}
+                    onClick={() => descargar(a.id)}
+                    title={`Abrir ${a.archivoNombre}`}
+                    className="flex max-w-xs items-center gap-1.5 rounded-lg border border-indigo-200 bg-white px-2.5 py-1 font-medium text-indigo-700 hover:border-indigo-300 hover:bg-indigo-50"
+                  >
+                    <FileText size={13} className="shrink-0" />
+                    <span className="truncate">{a.nombre}</span>
+                    <ExternalLink size={12} className="shrink-0 opacity-70" />
+                  </button>
+                ))
+              )}
+            </div>
+            {controlesCifras}
+          </div>
+          {contenidoCifras}
+        </div>
+      </Modal>
       <ModalBorrador
         open={modalBorrador}
         onClose={() => setModalBorrador(false)}
@@ -955,6 +1088,10 @@ function MatrizCifrasTabla({
   const porId = new Map(seccion.renglones.map((r) => [r.id, r]))
   // Sin símbolo de moneda: en una matriz densa el "$" en cada celda estorba.
   const numero = (v: number) => Math.round(v).toLocaleString('es-CO')
+  // Compacta (actividades del ICA): hasta la última fila con valor, más una vacía para seguir digitando.
+  const conValor = (f: (typeof matriz.filas)[number]) => f.celdas.some((id) => id && (valores[id]?.declarado != null || valores[id]?.libros != null))
+  const ultima = matriz.filas.reduce((u, f, i) => (conValor(f) ? i : u), -1)
+  const filasVisibles = matriz.compacta ? matriz.filas.slice(0, Math.max(ultima + (editable ? 2 : 1), 1)) : matriz.filas
 
   const celda = (id: string | null, clave: string, esTotal = false) => {
     if (!id) {
@@ -1044,7 +1181,7 @@ function MatrizCifrasTabla({
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-100">
-          {matriz.filas.map((f) => (
+          {filasVisibles.map((f) => (
             <tr key={f.label} className="hover:bg-slate-50/60">
               <td className={cn('px-3 py-1.5 text-gray-700', f.ayuda && 'cursor-help')} title={f.ayuda}>
                 {f.label}
@@ -1066,537 +1203,6 @@ function MatrizCifrasTabla({
   )
 }
 
-/**
- * Campo del encabezado del papel de trabajo. Mientras el revisor no lo edita
- * (`valor === null`) se muestra el borrador sugerido sin persistirlo: así el
- * texto estándar sigue el catálogo hasta que alguien lo hace suyo, y al firmar
- * el backend lo materializa en la fila.
- */
-function CampoPapel({
-  etiqueta,
-  ayuda,
-  valor,
-  sugerido,
-  remontar,
-  filas,
-  deshabilitado,
-  onGuardar,
-}: {
-  etiqueta: string
-  ayuda: string
-  valor: string | null
-  sugerido: string
-  remontar: string
-  filas: number
-  deshabilitado: boolean
-  onGuardar: (valor: string | null) => void
-}) {
-  const propio = valor !== null && valor.trim() !== ''
-  return (
-    <div>
-      <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
-        <label className="text-sm font-semibold text-gray-900">{etiqueta}</label>
-        {propio && !deshabilitado && (
-          <button
-            onClick={() => onGuardar(null)}
-            className="text-xs text-gray-400 transition-colors hover:text-indigo-600"
-          >
-            Restaurar el texto sugerido
-          </button>
-        )}
-      </div>
-      <p className="mb-1.5 text-xs text-gray-400">{ayuda}</p>
-      <textarea
-        key={remontar}
-        rows={filas}
-        defaultValue={valor ?? sugerido}
-        disabled={deshabilitado}
-        onBlur={(e) => {
-          const nuevo = e.target.value.trim()
-          // Volver al texto sugerido equivale a no haberlo editado.
-          if (nuevo === (valor ?? sugerido).trim()) return
-          onGuardar(nuevo === sugerido.trim() || nuevo === '' ? null : e.target.value)
-        }}
-        className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm leading-relaxed text-gray-700 focus:border-amber-300 focus:outline-none disabled:bg-gray-50"
-      />
-      {!propio && (
-        <p className="mt-1 text-[11px] text-gray-400">
-          Texto sugerido para {etiqueta.toLowerCase()}: edítalo y se guarda como propio de esta revisión.
-        </p>
-      )}
-    </div>
-  )
-}
-
-// ─── Hallazgos: tabla editable en línea ──────────────────────────────────────
-
-/**
- * Celda de texto que crece con el contenido y guarda al salir del foco. No es
- * controlada (para no re-renderizar la tabla en cada tecla), así que se remonta
- * por `key` cuando el valor cambia desde afuera — al redactar con IA, por
- * ejemplo. `onGuardar` puede devolver false para revertir lo escrito.
- */
-function TextareaCelda({
-  valor,
-  placeholder,
-  deshabilitado,
-  enfocar,
-  onEnfocado,
-  onBlurVacio,
-  filas = 2,
-  className,
-  onGuardar,
-}: {
-  valor: string | null
-  placeholder: string
-  deshabilitado: boolean
-  enfocar?: boolean
-  /** Se avisa tras enfocar para que quien pidió el foco lo desarme. */
-  onEnfocado?: () => void
-  /** Salir del campo dejándolo vacío (la fila borrador se cancela). */
-  onBlurVacio?: () => void
-  filas?: number
-  className?: string
-  onGuardar: (valor: string) => boolean | void
-}) {
-  const ref = useRef<HTMLTextAreaElement>(null)
-  const yaEnfocado = useRef(false)
-
-  const ajustar = () => {
-    const el = ref.current
-    if (!el) return
-    el.style.height = 'auto'
-    el.style.height = `${el.scrollHeight}px`
-  }
-
-  useLayoutEffect(() => {
-    ajustar()
-    // Solo la primera vez: al guardar cambia `valor` y no debe robar el foco.
-    if (enfocar && !yaEnfocado.current) {
-      yaEnfocado.current = true
-      ref.current?.focus()
-      ref.current?.select()
-      onEnfocado?.()
-    }
-  }, [enfocar, valor])
-
-  return (
-    <textarea
-      key={valor ?? ''}
-      ref={ref}
-      rows={filas}
-      defaultValue={valor ?? ''}
-      disabled={deshabilitado}
-      placeholder={placeholder}
-      onInput={ajustar}
-      onBlur={(e) => {
-        const nuevo = e.target.value.trim()
-        if (nuevo === '' && onBlurVacio) {
-          onBlurVacio()
-          return
-        }
-        if (nuevo === (valor ?? '').trim()) return
-        if (onGuardar(nuevo) === false) {
-          e.target.value = valor ?? ''
-          ajustar()
-        }
-      }}
-      className={cn(
-        'w-full resize-none rounded border border-transparent bg-transparent px-2 py-1 text-xs leading-relaxed text-gray-700 transition-colors',
-        'hover:border-gray-200 focus:border-indigo-300 focus:bg-white focus:outline-none',
-        'placeholder:text-amber-600/70 disabled:text-gray-500 disabled:hover:border-transparent',
-        className,
-      )}
-    />
-  )
-}
-
-/** Id de la fila borrador: existe solo en pantalla, nunca en la base. */
-const ID_BORRADOR = 'borrador'
-
-/**
- * Hallazgos como tabla editable en línea (sin modal): cada celda guarda al
- * salir del foco. Lo que falta por documentar se marca en ámbar —placeholder y
- * aviso junto al estado— para ver de un vistazo qué hallazgos están a medias.
- * "Nuevo hallazgo" abre una fila borrador vacía (solo con el placeholder) que
- * se crea al salir del campo con texto. Con la revisión firmada el contenido
- * queda de solo lectura y solo se pueden mover el estado y el seguimiento (la
- * grieta deliberada del sello).
- */
-function HallazgosTabla({
-  hallazgos,
-  sellada,
-  iaDisponible,
-  nuevoId,
-  onEnfocadoNuevo,
-  borrador,
-  onCerrarBorrador,
-  onCrear,
-  adjuntos,
-  onAdjuntar,
-  onDescargar,
-  onEliminarAdjunto,
-  onCambio,
-}: {
-  hallazgos: HallazgoTributario[]
-  sellada: boolean
-  iaDisponible: boolean
-  nuevoId: string | null
-  onEnfocadoNuevo: () => void
-  /** Hay una fila borrador abierta al final de la tabla. */
-  borrador: boolean
-  onCerrarBorrador: () => void
-  onCrear: (descripcion: string) => void
-  /** Todos los adjuntos de la revisión; los que traen hallazgoId son evidencia. */
-  adjuntos: AdjuntoTributario[]
-  onAdjuntar: (hallazgoId: string) => void
-  onDescargar: (adjuntoId: string) => void
-  onEliminarAdjunto: (adjuntoId: string) => void
-  onCambio: () => void
-}) {
-  const actualizar = useMutation({
-    mutationFn: ({ id, ...campos }: { id: string } & Record<string, unknown>) =>
-      api.patch(`/tributario/hallazgos/${id}`, campos),
-    onSuccess: onCambio,
-    onError: (e) => toast.error(e instanceof Error ? e.message : 'No se pudo actualizar el hallazgo'),
-  })
-
-  const eliminar = useMutation({
-    mutationFn: (id: string) => api.delete(`/tributario/hallazgos/${id}`),
-    onSuccess: onCambio,
-    onError: (e) => toast.error(e instanceof Error ? e.message : 'No se pudo eliminar el hallazgo'),
-  })
-
-  // Pule la redacción y la escribe en la misma fila (antes vivía en el modal).
-  const redactar = useMutation({
-    mutationFn: async (h: HallazgoTributario) => {
-      const sugerido = await api.post<{ descripcion: string; recomendacion: string }>(
-        `/tributario/revisiones/${h.revisionId}/ia/hallazgo`,
-        { descripcion: h.descripcion, recomendacion: h.recomendacion ?? undefined },
-      )
-      return api.patch(`/tributario/hallazgos/${h.id}`, sugerido)
-    },
-    onSuccess: () => {
-      onCambio()
-      toast.info('Borrador generado — verifica la cita normativa antes de firmar')
-    },
-    onError: (e) => toast.error(e instanceof Error ? e.message : 'No se pudo generar el borrador'),
-  })
-
-  // La fila borrador se crea en la base al salir del campo con texto: el
-  // backend exige descripción, así no quedan hallazgos en blanco dentro de una
-  // constancia firmada.
-  const filas: HallazgoTributario[] = borrador
-    ? [
-        ...hallazgos,
-        {
-          id: ID_BORRADOR,
-          revisionId: '',
-          descripcion: '',
-          recomendacion: null,
-          monto: null,
-          severidad: 'media',
-          estado: 'abierto',
-          seguimiento: null,
-          resueltoAt: null,
-          creadoPor: null,
-          createdAt: '',
-        },
-      ]
-    : hallazgos
-
-  // Evidencia por hallazgo; el resto de adjuntos son soportes de la revisión.
-  const evidenciaPorHallazgo = new Map<string, AdjuntoTributario[]>()
-  for (const a of adjuntos) {
-    if (!a.hallazgoId) continue
-    const lista = evidenciaPorHallazgo.get(a.hallazgoId)
-    if (lista) lista.push(a)
-    else evidenciaPorHallazgo.set(a.hallazgoId, [a])
-  }
-
-  // Sin useMemo a propósito: las celdas cierran sobre el estado de las
-  // mutaciones (isPending por fila), que cambia en cada render.
-  const columnas: ColumnDef<HallazgoTributario, any>[] = [
-    {
-      id: 'orden',
-      header: '#',
-      enableSorting: false,
-      meta: { align: 'center', className: 'w-8 align-top text-gray-400' },
-      cell: ({ row }) => <span className="text-[11px] leading-7">{row.index + 1}</span>,
-    },
-    {
-      accessorKey: 'descripcion',
-      header: 'Hallazgo',
-      // Sin ordenar en toda la tabla: el orden de las filas es el del papel de
-      // trabajo (y el de la numeración que sale en el informe).
-      enableSorting: false,
-      meta: { className: 'align-top' },
-      cell: ({ row }) => {
-        const h = row.original
-        const esBorrador = h.id === ID_BORRADOR
-        return (
-          <TextareaCelda
-            valor={h.descripcion}
-            placeholder="Situación encontrada…"
-            deshabilitado={sellada}
-            // El borrador nace enfocado; salir dejándolo vacío lo cancela.
-            enfocar={esBorrador || h.id === nuevoId}
-            onEnfocado={esBorrador ? undefined : onEnfocadoNuevo}
-            onBlurVacio={esBorrador ? onCerrarBorrador : undefined}
-            className="min-w-[18rem] text-[13px] text-gray-800"
-            onGuardar={(v) => {
-              if (v.length < 2) {
-                toast.error('El hallazgo no puede quedar vacío')
-                return false
-              }
-              if (esBorrador) onCrear(v)
-              else actualizar.mutate({ id: h.id, descripcion: v })
-            }}
-          />
-        )
-      },
-    },
-    {
-      accessorKey: 'recomendacion',
-      header: 'Recomendación',
-      enableSorting: false,
-      meta: { className: 'align-top' },
-      cell: ({ row }) =>
-        row.original.id === ID_BORRADOR ? (
-          <span className="px-2 text-[11px] text-gray-400">Se habilita al crear el hallazgo</span>
-        ) : (
-          <TextareaCelda
-            valor={row.original.recomendacion}
-            placeholder="¿Qué debe hacer el cliente para corregirlo?"
-            deshabilitado={sellada}
-            className="min-w-[16rem]"
-            onGuardar={(v) => actualizar.mutate({ id: row.original.id, recomendacion: v || null })}
-          />
-        ),
-    },
-    {
-      accessorKey: 'monto',
-      header: 'Monto',
-      enableSorting: false,
-      meta: { align: 'right', className: 'w-32 align-top' },
-      cell: ({ row }) => {
-        const h = row.original
-        if (h.id === ID_BORRADOR) return <span className="px-2 text-gray-300">—</span>
-        const actual = h.monto === null ? null : Number(h.monto)
-        return (
-          <InputMiles
-            valor={actual}
-            disabled={sellada}
-            placeholder="—"
-            onValor={(v) => {
-              if (v !== actual) actualizar.mutate({ id: h.id, monto: v })
-            }}
-            className="w-full rounded border border-transparent bg-transparent px-2 py-1 text-right text-xs text-gray-700 transition-colors placeholder:text-gray-300 hover:border-gray-200 focus:border-indigo-300 focus:bg-white focus:outline-none disabled:text-gray-500"
-          />
-        )
-      },
-    },
-    {
-      accessorKey: 'severidad',
-      header: 'Severidad',
-      enableSorting: false,
-      meta: { align: 'center', className: 'w-28 align-top' },
-      cell: ({ row }) => {
-        const h = row.original
-        if (h.id === ID_BORRADOR) return <span className="text-gray-300">—</span>
-        return (
-          <select
-            value={h.severidad}
-            disabled={sellada}
-            onChange={(e) => actualizar.mutate({ id: h.id, severidad: e.target.value })}
-            className={cn(
-              'w-full rounded border px-1.5 py-1 text-[11px] font-medium focus:outline-none disabled:opacity-70',
-              h.severidad === 'alta'
-                ? 'border-rose-200 bg-rose-50 text-rose-700'
-                : h.severidad === 'media'
-                  ? 'border-amber-200 bg-amber-50 text-amber-700'
-                  : 'border-gray-200 bg-gray-50 text-gray-600',
-            )}
-          >
-            <option value="alta">Alta</option>
-            <option value="media">Media</option>
-            <option value="baja">Baja</option>
-          </select>
-        )
-      },
-    },
-    {
-      accessorKey: 'estado',
-      header: 'Estado',
-      enableSorting: false,
-      meta: { align: 'center', className: 'w-32 align-top' },
-      cell: ({ row }) => {
-        const h = row.original
-        if (h.id === ID_BORRADOR) return <span className="text-gray-300">—</span>
-        // Lo que falta documentar del hallazgo: el aviso que responde "¿qué me
-        // queda por revisar?" sin abrir cada fila.
-        const faltaRecomendacion = !(h.recomendacion ?? '').trim()
-        return (
-          <div>
-            {/* El estado se mueve incluso con la revisión firmada. */}
-            <select
-              value={h.estado}
-              onChange={(e) => actualizar.mutate({ id: h.id, estado: e.target.value })}
-              className={cn(
-                'w-full rounded border px-1.5 py-1 text-[11px] font-medium focus:outline-none',
-                h.estado === 'resuelto'
-                  ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-                  : h.estado === 'en_tramite'
-                    ? 'border-amber-200 bg-amber-50 text-amber-700'
-                    : 'border-rose-200 bg-rose-50 text-rose-700',
-              )}
-            >
-              {ESTADOS_HALLAZGO_TRIBUTARIO.map((estado) => (
-                <option key={estado} value={estado}>
-                  {ESTADO_HALLAZGO_TRIBUTARIO_LABELS[estado]}
-                </option>
-              ))}
-            </select>
-            {faltaRecomendacion && (
-              <p className="mt-1 text-[10px] leading-tight text-amber-600">Falta recomendación</p>
-            )}
-          </div>
-        )
-      },
-    },
-    {
-      id: 'acciones',
-      header: '',
-      enableSorting: false,
-      meta: { align: 'center', className: 'w-24 align-top' },
-      cell: ({ row }) => {
-        const h = row.original
-        if (h.id === ID_BORRADOR) {
-          return (
-            <button
-              onClick={onCerrarBorrador}
-              title="Cancelar"
-              className="rounded p-1 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600"
-            >
-              <X size={13} />
-            </button>
-          )
-        }
-        if (sellada) return null
-        return (
-          <div className="flex items-center justify-center gap-0.5">
-            <button
-              onClick={() => onAdjuntar(h.id)}
-              title="Adjuntar evidencia (archivo o foto)"
-              className="rounded p-1 text-gray-400 transition-colors hover:bg-teal-50 hover:text-teal-600"
-            >
-              <Paperclip size={13} />
-            </button>
-            {iaDisponible && (
-              <button
-                onClick={() => redactar.mutate(h)}
-                disabled={redactar.isPending}
-                title="Redactar con IA: pule la condición y sugiere norma y recomendación"
-                className="rounded p-1 text-gray-400 transition-colors hover:bg-indigo-50 hover:text-indigo-600 disabled:opacity-40"
-              >
-                <Sparkles size={13} className={cn(redactar.isPending && redactar.variables?.id === h.id && 'animate-pulse')} />
-              </button>
-            )}
-            <button
-              onClick={async () => {
-                const ok = await confirmar({
-                  titulo: '¿Eliminar este hallazgo?',
-                  descripcion: 'No se puede deshacer.',
-                })
-                if (ok) eliminar.mutate(h.id)
-              }}
-              title="Eliminar hallazgo"
-              className="rounded p-1 text-gray-300 transition-colors hover:bg-rose-50 hover:text-rose-600"
-            >
-              <Trash2 size={13} />
-            </button>
-          </div>
-        )
-      },
-    },
-  ]
-
-  return (
-    <>
-      <p className="mb-3 text-xs text-gray-400">
-        Edita cada celda directamente y se guarda al salir del campo. Lo que quede en ámbar es lo que falta
-        documentar; los hallazgos abiertos obligan a firmar "con observaciones".
-      </p>
-      <DataTable
-        columns={columnas}
-        data={filas}
-        minWidth={1100}
-        pageSize={25}
-        rowClassName={(h) => (h.id === ID_BORRADOR ? 'bg-indigo-50/40' : undefined)}
-        searchPlaceholder={hallazgos.length > 3 ? 'Buscar hallazgo…' : undefined}
-        emptyMessage={
-          sellada
-            ? 'No se registraron hallazgos en este período.'
-            : 'Sin hallazgos. Usa "Nuevo hallazgo", o créalo desde una diferencia en la pestaña de cifras.'
-        }
-        subRow={(h) => {
-          const evidencia = evidenciaPorHallazgo.get(h.id) ?? []
-          if (evidencia.length === 0 && !sellada) return null
-          return (
-            <div className="space-y-2">
-              {evidencia.length > 0 && (
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">Evidencia</span>
-                  {evidencia.map((a) => (
-                    <span
-                      key={a.id}
-                      className="flex items-center gap-1 rounded-full border border-teal-200 bg-teal-50 py-0.5 pl-2 pr-1 text-[11px] text-teal-800"
-                    >
-                      <button
-                        onClick={() => onDescargar(a.id)}
-                        title="Descargar (URL firmada, 15 min)"
-                        className="max-w-[16rem] truncate hover:underline"
-                      >
-                        {a.nombre}
-                      </button>
-                      <span className="text-teal-600/70">{formatoTamano(a.archivoTamano)}</span>
-                      {!sellada && (
-                        <button
-                          onClick={() => onEliminarAdjunto(a.id)}
-                          title="Quitar evidencia"
-                          className="rounded-full p-0.5 text-teal-600/70 transition-colors hover:bg-teal-100 hover:text-rose-600"
-                        >
-                          <X size={11} />
-                        </button>
-                      )}
-                    </span>
-                  ))}
-                </div>
-              )}
-              {/* El seguimiento solo tiene sentido después de la firma: es lo
-                  único que puede cambiar con el contenido ya sellado. */}
-              {sellada && (
-                <div className="flex items-start gap-2">
-                  <span className="mt-1.5 shrink-0 text-[10px] font-semibold uppercase tracking-wide text-gray-400">
-                    Qué pasó después
-                  </span>
-                  <TextareaCelda
-                    valor={h.seguimiento}
-                    placeholder="Seguimiento posterior a la firma: gestión con el cliente, corrección presentada, fecha…"
-                    deshabilitado={false}
-                    filas={1}
-                    onGuardar={(v) => actualizar.mutate({ id: h.id, seguimiento: v || null })}
-                  />
-                </div>
-              )}
-            </div>
-          )
-        }}
-      />
-    </>
-  )
-}
-
 // ─── Lectura del borrador de la declaración con IA ───────────────────────────
 // Sube el PDF/imagen del borrador (MUISCA), la IA extrae los valores por
 // renglón y se aplican a la columna "Declarado"; el revisor digita libros y
@@ -1606,6 +1212,8 @@ type LecturaBorrador = {
   renglones: Record<string, number | null>
   advertencias: string[]
   adjuntoId: string | null
+  /** Qué leyó el formulario: el workflow propio o el LLM (fallback). */
+  fuente?: 'n8n' | 'llm'
 }
 
 function ModalBorrador({
@@ -1621,7 +1229,11 @@ function ModalBorrador({
 }) {
   const [archivo, setArchivo] = useState<File | null>(null)
   const [guardarSoporte, setGuardarSoporte] = useState(true)
-  const [resultado, setResultado] = useState<{ aplicados: number; advertencias: string[] } | null>(null)
+  const [resultado, setResultado] = useState<{
+    aplicados: number
+    advertencias: string[]
+    fuente?: 'n8n' | 'llm'
+  } | null>(null)
   const inputArchivo = useRef<HTMLInputElement>(null)
 
   const leer = useMutation({
@@ -1647,7 +1259,7 @@ function ModalBorrador({
       if (aplicados > 0) {
         await api.patch(`/tributario/revisiones/${revision.id}`, { cifras })
       }
-      return { aplicados, advertencias: lectura.advertencias }
+      return { aplicados, advertencias: lectura.advertencias, fuente: lectura.fuente }
     },
     onSuccess: (r) => {
       onCambio()
@@ -1669,7 +1281,8 @@ function ModalBorrador({
         <div className="space-y-4">
           <div className="flex items-center gap-2 rounded-lg bg-emerald-50 px-3 py-2.5 text-sm text-emerald-800">
             <CheckCircle2 size={15} className="shrink-0 text-emerald-600" />
-            Se diligenciaron {resultado.aplicados} renglón(es) en la columna "Declarado".
+            Se diligenciaron {resultado.aplicados} renglón(es) en la columna "Declarado"
+            {resultado.fuente === 'llm' ? ' (leído por el LLM: el workflow no respondió)' : ''}.
           </div>
           {resultado.advertencias.length > 0 && (
             <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5">

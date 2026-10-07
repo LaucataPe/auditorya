@@ -805,6 +805,9 @@ export const obligacionesTributarias = pgTable(
     }).notNull(),
     // Etiqueta libre: obligatoria para 'otro' (la exige la ruta), opcional en el resto.
     nombre: text('nombre'),
+    // Impuestos municipales (reteICA, ICA): una obligación por municipio; varias
+    // del mismo impuesto en la vigencia. Clave de la tabla de municipios o nombre escrito.
+    municipio: text('municipio'),
     periodicidad: text('periodicidad', {
       enum: ['mensual', 'bimestral', 'cuatrimestral', 'anual'],
     }).notNull(),
@@ -843,10 +846,21 @@ export const revisionesTributarias = pgTable(
     // literal y no dependa del catálogo vigente después.
     alcance: text('alcance'),
     procedimientos: text('procedimientos'),
+    // Programa de trabajo dinámico de la revisión guiada (pasos del agente
+    // activados/desactivados + pasos propios del auditor). Al guardarse se
+    // materializa también como texto en `procedimientos`.
+    programa: jsonb('programa').$type<{ pasos: { id: string; texto: string; origen: 'agente' | 'propio'; activo: boolean; hecho?: boolean; nota?: string | null }[]; actualizadoAt?: string }>(),
     // Checklist estándar del impuesto (catálogo en @auditorya/types); mismo
     // patrón que pasosEstado de papeles: clave = id del ítem del catálogo.
     checklistEstado: jsonb('checklist_estado')
       .$type<Record<string, { hecho: boolean; nota: string | null }>>()
+      .default({})
+      .notNull(),
+    // Conclusión del auditor por cédula de la revisión agéntica (clave = id de
+    // la cédula). Las cédulas están en corridas_agente.resultado; la huella dice
+    // sobre qué contenido se concluyó.
+    conclusionesCedulas: jsonb('conclusiones_cedulas')
+      .$type<Record<string, { texto: string; resultado: 'satisfactorio' | 'con_excepciones' | 'no_concluyente'; huella: string; corridaId: string; porId: string; porNombre: string | null; at: string }>>()
       .default({})
       .notNull(),
     // Mini-formulario espejo del formulario oficial (CIFRAS_CATALOGO en types):
@@ -886,7 +900,7 @@ export const adjuntosTributarios = pgTable('adjuntos_tributarios', {
   hallazgoId: uuid('hallazgo_id').references(() => hallazgosTributarios.id),
   nombre: text('nombre').notNull(),
   // Columna text sin CHECK: agregar un tipo no requiere migración.
-  tipo: text('tipo', { enum: ['declaracion', 'pago', 'conciliacion', 'certificado', 'evidencia', 'otro'] })
+  tipo: text('tipo', { enum: ['declaracion', 'pago', 'conciliacion', 'certificado', 'evidencia', 'auxiliar', 'reporte_dian', 'otro'] })
     .default('otro')
     .notNull(),
   archivoKey: text('archivo_key').notNull(),
@@ -933,10 +947,10 @@ export const corridasAgente = pgTable(
   'corridas_agente',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    auditoriaId: uuid('auditoria_id')
-      .notNull()
-      .references(() => auditorias.id),
-    procedimiento: text('procedimiento').notNull(), // 'balance' en el MVP
+    // Padre: un encargo O una revisión tributaria (CHECK en SQL, migración 0049).
+    auditoriaId: uuid('auditoria_id').references(() => auditorias.id),
+    revisionTributariaId: uuid('revision_tributaria_id').references(() => revisionesTributarias.id),
+    procedimiento: text('procedimiento').notNull(), // 'balance', 'riesgos', 'control_interno', 'iva'…
     estado: text('estado', { enum: ['en_cola', 'corriendo', 'completada', 'error'] })
       .default('en_cola')
       .notNull(),
@@ -960,6 +974,7 @@ export const corridasAgente = pgTable(
   },
   (t) => ({
     auditoriaIdx: index('corridas_agente_auditoria_idx').on(t.auditoriaId, t.createdAt),
+    revisionIdx: index('corridas_agente_revision_idx').on(t.revisionTributariaId, t.createdAt),
   }),
 )
 
@@ -971,9 +986,9 @@ export const propuestasAgente = pgTable(
   'propuestas_agente',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    auditoriaId: uuid('auditoria_id')
-      .notNull()
-      .references(() => auditorias.id),
+    // Padre: un encargo O una revisión tributaria (CHECK en SQL, migración 0049).
+    auditoriaId: uuid('auditoria_id').references(() => auditorias.id),
+    revisionTributariaId: uuid('revision_tributaria_id').references(() => revisionesTributarias.id),
     corridaId: uuid('corrida_id').references(() => corridasAgente.id),
     paso: text('paso').notNull(), // id del paso del rail: 'balance', 'materialidad', 'pbc', …
     tipo: text('tipo', { enum: ['hallazgo', 'materialidad', 'documento', 'juicio', 'ambiguedad', 'riesgo'] }).notNull(),
@@ -1005,6 +1020,8 @@ export const propuestasAgente = pgTable(
   (t) => ({
     auditoriaEstadoIdx: index('propuestas_agente_auditoria_estado_idx').on(t.auditoriaId, t.estado),
     auditoriaCodigoUnq: uniqueIndex('propuestas_agente_auditoria_codigo_unq').on(t.auditoriaId, t.codigo),
+    revisionEstadoIdx: index('propuestas_agente_revision_estado_idx').on(t.revisionTributariaId, t.estado),
+    revisionCodigoUnq: uniqueIndex('propuestas_agente_revision_codigo_unq').on(t.revisionTributariaId, t.codigo),
   }),
 )
 
@@ -1014,9 +1031,9 @@ export const bitacoraAgente = pgTable(
   'bitacora_agente',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    auditoriaId: uuid('auditoria_id')
-      .notNull()
-      .references(() => auditorias.id),
+    // Padre: un encargo O una revisión tributaria (CHECK en SQL, migración 0049).
+    auditoriaId: uuid('auditoria_id').references(() => auditorias.id),
+    revisionTributariaId: uuid('revision_tributaria_id').references(() => revisionesTributarias.id),
     propuestaId: uuid('propuesta_id').references(() => propuestasAgente.id),
     corridaId: uuid('corrida_id').references(() => corridasAgente.id),
     numero: integer('numero').notNull(),

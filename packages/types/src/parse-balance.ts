@@ -119,7 +119,10 @@ export function nombrePuc(codigo: string): string | null {
 
 /** Convierte texto numérico en formato local (1.234.567,89 / (123)) a número. */
 export function parseNumeroLocal(raw: string): number {
-  let s = (raw ?? '').toString().trim().replace(/[^\d.,\-()]/g, '')
+  const crudo = (raw ?? '').toString().trim()
+  // Notación científica tal como la exporta Excel ("2.5000000000000001E-2").
+  if (/^-?\d+(\.\d+)?e[+-]?\d+$/i.test(crudo)) return Number(crudo)
+  let s = crudo.replace(/[^\d.,\-()]/g, '')
   if (!s) return NaN
   let neg = false
   if (/^\(.*\)$/.test(s)) { neg = true; s = s.slice(1, -1) }
