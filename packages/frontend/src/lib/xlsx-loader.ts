@@ -45,6 +45,18 @@ export async function descargarPlantillaBalance(): Promise<void> {
   XLSX.writeFile(wb, 'plantilla-balance-de-prueba.xlsx')
 }
 
+/** Todas las hojas de un .xlsx/.xls, cada una como matriz de strings (para elegir la que sirve). */
+export async function leerExcelHojas(file: File): Promise<{ nombre: string; filas: string[][] }[]> {
+  const XLSX = await cargarSheetJs()
+  const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' })
+  return wb.SheetNames.map((nombre) => ({
+    nombre,
+    filas: XLSX.utils.sheet_to_json(wb.Sheets[nombre], { header: 1, raw: true, defval: '' })
+      .map((r) => (Array.isArray(r) ? r.map((c) => (c == null ? '' : String(c))) : []))
+      .filter((r) => r.some((c) => c.trim().length > 0)),
+  }))
+}
+
 /** Lee la primera hoja de un .xlsx/.xls a una matriz de strings (igual shape que parseCsv). */
 export async function leerExcelAFilas(file: File): Promise<string[][]> {
   const XLSX = await cargarSheetJs()

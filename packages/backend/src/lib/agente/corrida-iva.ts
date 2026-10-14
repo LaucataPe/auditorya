@@ -16,7 +16,7 @@ import {
 import {
   MEMORIA_IVA_CLAVE, MEMORIA_IVA_VACIA, correrRevisionIca, correrRevisionIva, correrRevisionReteica, correrRevisionRetefuente, esTipoAgentico, mapeoMemoriaDe, municipioDeTexto, normalizarMunicipio, etiquetaPeriodo, huellaDeclarado, huellaPropuesta, periodoAnterior, rangoPeriodo, reglasOmitidasDe,
   type CorridaAgente, type EntradaCorridaIvaCliente, type EstadoAgenteIva, type LineaBitacora, type MapeoLibrosIca, type MapeoLibrosIva, type MapeoLibrosReteica, type MapeoLibrosRetefuente, type MemoriaIvaEmpresa, type PropuestaAgente,
-  type PropuestaBorrador, type ResultadoPersistidoIva, type ResumenAgenteRevision, type TipoAgentico,
+  type FormatoLibro, type PropuestaBorrador, type ResultadoPersistidoIva, type ResumenAgenteRevision, type TipoAgentico,
 } from '@auditorya/types'
 import { mergeJsonbPatch } from '../jsonb'
 import { registrarEvento } from '../eventos'
@@ -37,13 +37,13 @@ export async function cargarMemoriaIva(empresaId: string): Promise<MemoriaIvaEmp
     .where(and(eq(memoriaEmpresaAgente.empresaId, empresaId), eq(memoriaEmpresaAgente.clave, MEMORIA_IVA_CLAVE)))
   if (!row) return { ...MEMORIA_IVA_VACIA, mapeo2408: {}, tiposDocCierre: [] }
   const v = row.valor as Partial<MemoriaIvaEmpresa>
-  return { mapeo2408: v.mapeo2408 ?? {}, mapeo2365: v.mapeo2365 ?? {}, mapeo2368: v.mapeo2368 ?? {}, mapeoIca: v.mapeoIca ?? {}, tiposDocCierre: v.tiposDocCierre ?? [], actualizadoAt: row.updatedAt.toISOString() }
+  return { mapeo2408: v.mapeo2408 ?? {}, mapeo2365: v.mapeo2365 ?? {}, mapeo2368: v.mapeo2368 ?? {}, mapeoIca: v.mapeoIca ?? {}, tiposDocCierre: v.tiposDocCierre ?? [], formatosLibro: v.formatosLibro ?? [], actualizadoAt: row.updatedAt.toISOString() }
 }
 
 /** Funde un parche en la memoria (mapeo por cuenta, tipos de cierre en unión) y la guarda. */
 export async function guardarMemoriaIva(
   empresaId: string,
-  parche: { mapeo2408?: MemoriaIvaEmpresa['mapeo2408']; mapeo2365?: Record<string, string>; mapeo2368?: Record<string, string>; mapeoIca?: Record<string, string>; tiposDocCierre?: string[]; olvidarCuenta?: string },
+  parche: { mapeo2408?: MemoriaIvaEmpresa['mapeo2408']; mapeo2365?: Record<string, string>; mapeo2368?: Record<string, string>; mapeoIca?: Record<string, string>; tiposDocCierre?: string[]; olvidarCuenta?: string; formatoLibro?: FormatoLibro },
   userId: string,
 ): Promise<MemoriaIvaEmpresa> {
   const actual = await cargarMemoriaIva(empresaId)
@@ -53,7 +53,11 @@ export async function guardarMemoriaIva(
   const mapeoIca = { ...(actual.mapeoIca ?? {}), ...(parche.mapeoIca ?? {}) }
   if (parche.olvidarCuenta) { delete mapeo2408[parche.olvidarCuenta]; delete mapeo2365[parche.olvidarCuenta]; delete mapeo2368[parche.olvidarCuenta]; delete mapeoIca[parche.olvidarCuenta] }
   const tiposDocCierre = [...new Set([...actual.tiposDocCierre, ...(parche.tiposDocCierre ?? []).map((t) => t.toUpperCase())])]
-  const valor = { mapeo2408, mapeo2365, mapeo2368, mapeoIca, tiposDocCierre }
+  // Un formato por firma de encabezado: el nuevo reemplaza al anterior con la misma firma.
+  const formatosLibro = parche.formatoLibro
+    ? [...(actual.formatosLibro ?? []).filter((f) => f.firma !== parche.formatoLibro!.firma), parche.formatoLibro].slice(-50)
+    : actual.formatosLibro ?? []
+  const valor = { mapeo2408, mapeo2365, mapeo2368, mapeoIca, tiposDocCierre, formatosLibro }
   await db.insert(memoriaEmpresaAgente)
     .values({ empresaId, clave: MEMORIA_IVA_CLAVE, valor, actualizadoPor: userId, updatedAt: new Date() })
     .onConflictDoUpdate({ target: [memoriaEmpresaAgente.empresaId, memoriaEmpresaAgente.clave], set: { valor, actualizadoPor: userId, updatedAt: new Date() } })

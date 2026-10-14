@@ -36,7 +36,8 @@ import { Button } from '../ui/Button'
 import { DecisionCard } from '../agente/DecisionCard'
 import { Input } from '../ui/Input'
 import { Modal } from '../ui/Modal'
-import { useAgenteIva, type AnalisisAuxiliar } from '../../hooks/useAgenteIva'
+import { useAgenteIva, type AnalisisAuxiliar, type ArchivoSinReconocer } from '../../hooks/useAgenteIva'
+import { ModalColumnasLibro, type EstadoColumnas } from './ModalColumnasLibro'
 import { CampoPapel, HallazgosTabla } from './HallazgosTributarios'
 import { CedulasRevision } from './CedulasRevision'
 
@@ -307,6 +308,12 @@ function PasoDocumentos({ p, agente, programa, agenteDef, soportes }: { p: Props
   const puedeAnalizar = agente.declaradoDiligenciado
   // Auxiliar elegido pero aún sin confirmar: el modal muestra qué trae y pide el nombre.
   const [analisis, setAnalisis] = useState<AnalisisAuxiliar | null>(null)
+  // Archivo que no se reconoció solo (o cuyas columnas se quieren corregir): el auditor indica las columnas.
+  const [columnas, setColumnas] = useState<EstadoColumnas | null>(null)
+  const recibir = (a: AnalisisAuxiliar | ArchivoSinReconocer | null) => {
+    if (!a) return
+    if ('sinReconocer' in a) { setAnalisis(null); setColumnas({ archivo: a.archivo, hojas: a.hojas, hoja: a.hoja, motivo: a.motivo }) } else setAnalisis(a)
+  }
 
   return (
     <section className="overflow-hidden rounded-xl border border-teal-100 bg-white">
@@ -371,7 +378,7 @@ function PasoDocumentos({ p, agente, programa, agenteDef, soportes }: { p: Props
                       <CargarArchivo
                         label={agente.auxiliares.length ? 'Cargar otro auxiliar' : 'Cargar auxiliar'}
                         loading={agente.cargando === 'auxiliar' && !analisis}
-                        onFile={async (f) => { const a = await agente.analizarAuxiliar(f); if (a) setAnalisis(a) }}
+                        onFile={async (f) => recibir(await agente.analizarAuxiliar(f))}
                       />
                     )}
                     {i === 'dian' && <CargarArchivo label={agente.dian ? 'Cargar otro reporte' : 'Cargar reporte DIAN'} loading={agente.cargando === 'dian'} onFile={agente.cargarDian} />}
@@ -408,6 +415,19 @@ function PasoDocumentos({ p, agente, programa, agenteDef, soportes }: { p: Props
           cargando={agente.cargando === 'auxiliar'}
           onClose={() => setAnalisis(null)}
           onConfirmar={async (nombre) => { if (analisis) { await agente.confirmarAuxiliar(analisis, nombre); setAnalisis(null) } }}
+          onCambiarHoja={async (hoja) => { if (analisis) recibir(await agente.analizarAuxiliar(analisis.archivo, hoja, undefined, analisis.hojasArchivo)) }}
+          onCorregirColumnas={() => { if (analisis) { setColumnas({ archivo: analisis.archivo, hojas: analisis.hojasArchivo, hoja: analisis.hojaLeida, motivo: null, inicial: analisis.columnas }); setAnalisis(null) } }}
+        />
+        <ModalColumnasLibro
+          estado={columnas}
+          cargando={agente.cargando === 'auxiliar'}
+          onClose={() => setColumnas(null)}
+          onLeer={async (hoja, indicadas) => {
+            if (!columnas) return
+            const a = await agente.analizarAuxiliar(columnas.archivo, hoja, indicadas, columnas.hojas)
+            if (a && 'sinReconocer' in a) setColumnas({ ...columnas, hoja, motivo: a.motivo, inicial: indicadas })
+            else if (a) { setColumnas(null); setAnalisis(a) }
+          }}
         />
 
         <div className="flex items-center justify-between pt-1">
@@ -436,7 +456,7 @@ const COLUMNA_LABEL: Record<string, string> = {
   nombre: 'nombre de cuenta', saldoInicial: 'saldo inicial', saldoFinal: 'saldo final',
 }
 
-function ModalAuxiliar({ analisis, cargando, onClose, onConfirmar }: { analisis: AnalisisAuxiliar | null; cargando: boolean; onClose: () => void; onConfirmar: (nombre: string) => void | Promise<void> }) {
+function ModalAuxiliar({ analisis, cargando, onClose, onConfirmar, onCambiarHoja, onCorregirColumnas }: { analisis: AnalisisAuxiliar | null; cargando: boolean; onClose: () => void; onConfirmar: (nombre: string) => void | Promise<void>; onCambiarHoja: (hoja: string) => void | Promise<void>; onCorregirColumnas: () => void }) {
   const [nombre, setNombre] = useState('')
   // Remonta el nombre con cada archivo nuevo.
   useEffect(() => setNombre(analisis?.sugerencia ?? ''), [analisis])
@@ -446,12 +466,36 @@ function ModalAuxiliar({ analisis, cargando, onClose, onConfirmar }: { analisis:
       <div className="space-y-4">
         <div className="rounded-lg border border-gray-100 bg-gray-50/70 px-3 py-2 text-xs text-gray-600">
           <p className="truncate font-medium text-gray-800" title={analisis.archivo.name}>{analisis.archivo.name}</p>
+          {analisis.hojas.length > 1 && (
+            <label className="mt-1.5 flex items-center gap-2">
+              <span className="shrink-0 text-gray-500">Hoja leída</span>
+              <select
+                value={analisis.hoja ?? ''}
+                disabled={cargando}
+                onChange={(e) => void onCambiarHoja(e.target.value)}
+                className="min-w-0 flex-1 rounded border border-gray-200 bg-white px-1.5 py-0.5 text-xs text-gray-700 focus:border-indigo-300 focus:outline-none"
+              >
+                {analisis.hojas.map((h) => (
+                  <option key={h.nombre} value={h.nombre}>
+                    {h.nombre} · {h.familia === 'balance' ? 'balance' : 'auxiliar'}{h.periodo ? ` ${h.periodo.desde.slice(0, 7)} a ${h.periodo.hasta.slice(0, 7)}` : ''}{h.sirve ? '' : ' (no es de este período)'}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          {analisis.hojas.length > 1 && (
+            <p className="mt-0.5 text-[11px] text-gray-400">El archivo tiene {analisis.hojas.length} hojas legibles; se eligió la que sirve para el período. Si el libro trae más de un auxiliar útil (p. ej. IVA e ingresos), cárgalo otra vez eligiendo la otra hoja.</p>
+          )}
           <p className="mt-0.5">
             {analisis.familia === 'balance'
               ? `Balance de prueba del período: ${analisis.enPeriodo} cuenta(s) con movimiento`
               : `Libro auxiliar: ${analisis.enPeriodo} asiento(s) dentro del período${analisis.cierres ? ` · ${analisis.cierres} asiento(s) de cierre excluidos` : ''}`}
           </p>
-          <p className="mt-0.5 text-[11px] text-gray-400">Columnas reconocidas: {analisis.reconocidas.map((r) => COLUMNA_LABEL[r] ?? r).join(', ')}.</p>
+          <p className="mt-0.5 text-[11px] text-gray-400">
+            {analisis.manual ? 'Columnas indicadas por ti' : 'Columnas reconocidas'}: {analisis.reconocidas.map((r) => COLUMNA_LABEL[r] ?? r).join(', ')}.{' '}
+            <button onClick={onCorregirColumnas} disabled={cargando} className="text-indigo-600 underline-offset-2 hover:underline">Corregir columnas</button>
+          </p>
+          {analisis.manual && <p className="mt-0.5 text-[11px] text-indigo-700">Al cargarlo, este formato queda guardado para la empresa y la próxima vez se lee solo.</p>}
           <ul className="mt-1.5 space-y-0.5">
             {analisis.cuentas.slice(0, 8).map((c) => (
               <li key={c.cuenta} className="flex justify-between gap-2"><span className="truncate">{c.cuenta} {c.nombre ?? ''}</span><span className="shrink-0 text-gray-400">{c.movimientos}</span></li>

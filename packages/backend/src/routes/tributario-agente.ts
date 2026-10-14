@@ -21,7 +21,7 @@ import { registrarEvento } from '../lib/eventos'
 import { mergeJsonbPatch } from '../lib/jsonb'
 import { aPropuestaTributaria, cargarMemoriaIva, correrProcedimientoIva, estadoAgenteIva, guardarMemoriaIva, olvidarMemoriaIva } from '../lib/agente/corrida-iva'
 import {
-  RESULTADOS_CONCLUSION_CEDULA, esTipoAgentico, estadoConclusionCedula, nombreObligacion,
+  RESULTADOS_CONCLUSION_CEDULA, esTipoAgentico, faltaParaFormato, estadoConclusionCedula, nombreObligacion,
   type ConclusionCedula, type ConclusionesCedulas, type ContenidoPropuesta, type EntradaCorridaIvaCliente, type MemoriaIvaEmpresa,
 } from '@auditorya/types'
 import type { JwtPayload } from '../lib/jwt'
@@ -161,6 +161,32 @@ app.delete('/tributario/revisiones/:id/agente/memoria', async (c) => {
   registrarEvento(user, { accion: 'tributario.agente.memoria.olvidar', entidad: 'empresa', entidadId: row.obligacion.empresaId, empresaId: row.obligacion.empresaId })
   return c.json({ data: await cargarMemoriaIva(row.obligacion.empresaId) })
 })
+
+// PUT /tributario/revisiones/:id/agente/memoria/formato — columnas de un formato de libro que el
+// lector no reconoció solo: quedan en la memoria de la empresa y ese formato se lee solo desde ahí.
+app.put(
+  '/tributario/revisiones/:id/agente/memoria/formato',
+  zValidator('json', z.object({
+    firma: z.string().min(3).max(2000),
+    familia: z.enum(['movimientos', 'balance']),
+    columnas: z.record(z.number().int().min(0).max(500).nullable()),
+    etiqueta: z.string().max(200).optional(),
+  })),
+  async (c) => {
+    const user = c.get('user')
+    const body = c.req.valid('json')
+    const row = await cargarRevision(c.req.param('id'), user.firmaId)
+    if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Revisión no encontrada' } }, 404)
+    const falta = faltaParaFormato(body.familia, body.columnas)
+    if (falta.length) return c.json({ error: { code: 'FORMATO_INCOMPLETO', message: `Falta indicar ${falta.join(', ')}` } }, 400)
+    const memoria = await guardarMemoriaIva(row.obligacion.empresaId, { formatoLibro: { ...body, creadoAt: new Date().toISOString() } }, user.sub)
+    registrarEvento(user, {
+      accion: 'tributario.agente.memoria.formato', entidad: 'empresa', entidadId: row.obligacion.empresaId, empresaId: row.obligacion.empresaId,
+      detalle: { familia: body.familia, etiqueta: body.etiqueta ?? null, columnas: Object.keys(body.columnas).filter((k) => body.columnas[k] !== null) },
+    })
+    return c.json({ data: memoria })
+  },
+)
 
 // POST /tributario/revisiones/:id/agente/corridas
 app.post('/tributario/revisiones/:id/agente/corridas', zValidator('json', corridaSchema), async (c) => {

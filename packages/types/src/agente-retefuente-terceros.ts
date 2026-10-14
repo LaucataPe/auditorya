@@ -17,7 +17,7 @@
  */
 import type { SaldoTerceroPeriodo } from './parse-balance-periodo'
 import type { MovimientoAuxiliar } from './parse-auxiliar'
-import { NIT_DIAN, beneficiarioDeTercero, clasificarSubcuentaRetefuente, normalizarNit, tarifaDelNombreRf, type Beneficiario350 } from './agente-retefuente-libros'
+import { NIT_DIAN, beneficiarioDeTercero, clasificarSubcuentaRetefuente, esTerceroGenerico, normalizarNit, tarifaDelNombreRf, type Beneficiario350 } from './agente-retefuente-libros'
 import { TARIFAS_RETEFUENTE, UVT_POR_ANIO } from './tarifas-retefuente'
 
 export const UMBRALES_TERCEROS = {
@@ -159,7 +159,10 @@ export function probarRetencionPorTercero(
 
   type Acum = { tercero: string | null; nombre: string | null; base: Map<ConceptoBase, number>; cuentas: Set<string>; retencion: number; baseRetenida: number; tarifas: Set<number>; sinTarifa: boolean }
   const porTercero = new Map<string, Acum>()
+  // Lo movido con un tercero de relleno ("Genérico", "Varios"): no es un proveedor, se informa aparte.
+  const genericos = { saldos: 0, debitos: 0, creditos: 0 }
   const acum = (s: SaldoTerceroPeriodo): Acum | null => {
+    if (esTerceroGenerico(s.tercero, s.terceroNombre)) { genericos.saldos++; genericos.debitos += s.debitos; genericos.creditos += s.creditos; return null }
     const k = clave(s)
     // La propia empresa y la DIAN (pago de la declaración) no son terceros a los que se les retiene.
     if (!k || (propio && k === propio) || k === NIT_DIAN) return null
@@ -277,6 +280,7 @@ export function probarRetencionPorTercero(
     `Base presunta: ${cuentasBase.size} cuenta(s) por ${fmt(baseTotal)}; ${excluidas.size} cuenta(s) de gasto o costo excluidas (laborales, impuestos, depreciaciones, financieros).`,
   ]
   if (sinClasificar) bitacora.push(`${sinClasificar} saldo(s) de 2365 sin clasificar no entraron a la prueba.`)
+  if (genericos.saldos) bitacora.push(`${genericos.saldos} saldo(s) con un tercero genérico ("Genérico", "Varios"…; débitos ${fmt(genericos.debitos)}, créditos ${fmt(genericos.creditos)}) no son de un proveedor identificable y no entraron a la prueba.`)
   if (uvt?.deReferencia) bitacora.push(`Sin UVT de ${opts.anio}: la cuantía mínima se midió con la UVT de ${uvt.anio} como referencia.`)
 
   return {

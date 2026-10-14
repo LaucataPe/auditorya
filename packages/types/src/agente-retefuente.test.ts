@@ -35,6 +35,17 @@ describe('clasificación de subcuentas y terceros', () => {
     expect(clasificarSubcuentaRetefuente('236540', 'XYZ')).toBe('compras') // por PUC
     expect(clasificarSubcuentaRetefuente('23659901', 'VARIOS')).toBeNull()
   })
+  it('nombres reales de Pluss100 (Lamuvi): el grupo PUC manda sobre un nombre genérico, y el pago no es retención', () => {
+    expect(clasificarSubcuentaRetefuente('23653001', 'BIENES MUEBLES JURIDICAS')).toBe('arrendamientos')
+    expect(clasificarSubcuentaRetefuente('23653002', 'BIENES INMUEBLES JURIDICAS')).toBe('arrendamientos')
+    expect(clasificarSubcuentaRetefuente('23654001', 'COMPRAS GENERALES JURIDICAS')).toBe('compras')
+    expect(clasificarSubcuentaRetefuente('23652510', 'SERVICIOS LICENCIAMIENTO SOFTWARE JURIDICAS')).toBe('servicios')
+    expect(clasificarSubcuentaRetefuente('23659901', 'PAGO RETENCION EN LA FUENTE')).toBe('saldo')
+    expect(clasificarSubcuentaRetefuente('23650501', 'SALARIOS Y PAGOS LABORALES')).toBe('trabajo')
+    // Un nombre específico sigue mandando aunque el grupo PUC diga otra cosa.
+    expect(clasificarSubcuentaRetefuente('23652504', 'TRANSPORTE 1%')).toBe('servicios')
+    expect(clasificarSubcuentaRetefuente('23654008', 'RTE FTE 2,5% COMPRA DE ENERGIA')).toBe('compras')
+  })
   it('separa jurídicas y naturales por NIT o por el nombre', () => {
     expect(beneficiarioDeTercero('900582595', null)).toBe('pj')
     expect(beneficiarioDeTercero('79456123', null)).toBe('pn')

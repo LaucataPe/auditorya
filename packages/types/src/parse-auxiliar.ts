@@ -131,20 +131,21 @@ export function separarCodigoNombre(raw: string): { codigo: string; nombre: stri
  * la tilde). Exige fecha y un importe (débito y crédito, o un solo valor).
  */
 export function puntuarEncabezado(fila: string[]): { columnas: ColumnasAuxiliar; puntaje: number; reconocidas: string[] } | null {
-  const h = fila.map((c) => sinAcentos((c ?? '').toString()).trim())
+  const h = fila.map((c) => sinAcentos((c ?? '').toString()).replace(/\s+/g, ' ').trim())
   const usadas = new Set<number>()
-  const buscar = (re: RegExp) => {
-    const i = h.findIndex((c, idx) => !usadas.has(idx) && re.test(c))
+  const buscar = (re: RegExp, excluir?: RegExp) => {
+    const i = h.findIndex((c, idx) => !usadas.has(idx) && c !== '' && re.test(c) && !(excluir && excluir.test(c)))
     if (i >= 0) usadas.add(i)
     return i >= 0 ? i : null
   }
   const fecha = buscar(/^fecha(?!.*(vcto|venc|cruce|proveedor|recaudo|docto))/)
-  const debito = buscar(/^d[e]?bito|^debe$/)
-  const credito = buscar(/^cr[e]?dito|^haber$/)
+  // "Débito", "Movimiento débito", "Valor débito" (Siigo, Helisa, Alegra…), pero no el saldo.
+  const debito = buscar(/^d[e]?bito|\bd[e]?bitos?\b|^debe$/, /saldo/)
+  const credito = buscar(/^cr[e]?dito|\bcr[e]?ditos?\b|^haber$/, /saldo/)
   const valor = debito === null && credito === null ? buscar(/^valor$|^neto$|^importe$|^monto$|^movimiento$/) : null
   if (fecha === null || (valor === null && (debito === null || credito === null))) return null
-  const cuenta = buscar(/^cuenta$|^cuentas?\b(?!\/)|^codigo|^cod\.?\s|^cta|^auxiliar$|^cuenta contable/)
-  const cuentaNombre = buscar(/^desc\.? ?auxiliar|^nombre (de la )?cuenta|^descripcion (de la )?cuenta|^nombre$/)
+  const cuenta = buscar(/^cuenta$|^cuentas?\b(?!\/)|^codigo|^cod\.?\s|^cta|^auxiliar$|^cuenta contable|codigo (de la )?cuenta/, /nombre|tercero/)
+  const cuentaNombre = buscar(/^desc\.? ?auxiliar|nombre (de la )?cuenta|^descripcion (de la )?cuenta|^nombre$|^cuenta$/)
   const tercero = buscar(/^nit tercero|^nit\b|^tercero|^beneficiario|^identificacion/)
   const terceroNombre = buscar(/^raz[o]?n social(?!.*movto)|^nombre (del )?tercero/)
   const tipoDoc = buscar(/^tp\.?\s*doc|^tipo/)
@@ -192,12 +193,20 @@ export function leerTitulos(filas: string[][], hasta: number) {
   return { empresa, periodoDesde, periodoHasta, cuentaTitulo }
 }
 
-export function parseAuxiliarMovimientos(filas: string[][]): AuxiliarParseado | null {
+/**
+ * Lee el auxiliar. Sin `forzado`, detecta el encabezado y las columnas; con él (columnas que indicó el
+ * auditor para un formato que no se reconoció), usa exactamente esas.
+ */
+export function parseAuxiliarMovimientos(filas: string[][], forzado?: { fila: number; columnas: ColumnasAuxiliar }): AuxiliarParseado | null {
   // El encabezado es la fila con mejor puntaje entre las primeras 40 (no la primera que "sirva").
   let mejor: { fila: number; columnas: ColumnasAuxiliar; puntaje: number; reconocidas: string[] } | null = null
-  for (let i = 0; i < Math.min(filas.length, 40); i++) {
-    const r = puntuarEncabezado(filas[i] ?? [])
-    if (r && (!mejor || r.puntaje > mejor.puntaje)) mejor = { fila: i, ...r }
+  if (forzado) {
+    mejor = { fila: forzado.fila, columnas: forzado.columnas, puntaje: 0, reconocidas: (Object.entries(forzado.columnas) as [string, number | null][]).filter(([, v]) => v !== null).map(([k]) => k) }
+  } else {
+    for (let i = 0; i < Math.min(filas.length, 40); i++) {
+      const r = puntuarEncabezado(filas[i] ?? [])
+      if (r && (!mejor || r.puntaje > mejor.puntaje)) mejor = { fila: i, ...r }
+    }
   }
   if (!mejor) return null
   const { columnas, fila: filaEncabezado, reconocidas } = mejor

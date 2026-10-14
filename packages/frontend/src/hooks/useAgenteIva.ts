@@ -36,6 +36,12 @@ import {
   resumirReporteDianPeriodo,
   cedulasSinConcluir,
   type AdjuntoTributario,
+  type HojaLegible,
+  type HojaLibro,
+  elegirHojaLibro,
+  columnasDetectadas,
+  firmaEncabezado,
+  leerConColumnas,
   type CedulaProcedimiento,
   type ConclusionesCedulas,
   type ResultadoConclusionCedula,
@@ -61,7 +67,7 @@ import {
 } from '@auditorya/types'
 import { api, BASE_URL } from '../lib/api'
 import { parseCsv } from '../lib/csv'
-import { leerExcelAFilas } from '../lib/xlsx-loader'
+import { leerExcelHojas } from '../lib/xlsx-loader'
 import { toast } from '../store/toast.store'
 import type { AjustesDecision } from './useAgente'
 
@@ -74,6 +80,8 @@ export type AuxiliarCargado = {
   archivo: string
   /** Libro auxiliar por movimientos, o balance de prueba del período (débitos y créditos por cuenta, sin asientos). */
   familia: 'movimientos' | 'balance'
+  /** Hoja del Excel que se leyó (null en CSV o libros de una sola hoja legible). */
+  hoja: string | null
   movimientos: MovimientoAuxiliar[]
   /** Solo familia 'balance': cuentas hoja con sus débitos y créditos del período. */
   saldos: ResumenCuentaAuxiliar[]
@@ -93,6 +101,15 @@ export type AuxiliarCargado = {
 export type AnalisisAuxiliar = {
   archivo: File
   familia: 'movimientos' | 'balance'
+  /** Hoja leída y las demás hojas legibles del archivo (para cambiarla en la ventana de carga). */
+  hoja: string | null
+  hojas: HojaLegible[]
+  /** Nombre real de la hoja leída (aunque sea la única) y todas las hojas, para corregir columnas. */
+  hojaLeida: string
+  hojasArchivo: HojaLibro[]
+  /** Columnas con que se leyó; `manual` si las indicó el auditor en esta carga (se guardan al confirmar). */
+  columnas: ColumnasIndicadas
+  manual: boolean
   movimientos: MovimientoAuxiliar[]
   saldos: ResumenCuentaAuxiliar[]
   saldosTercero: SaldoTerceroPeriodo[]
@@ -109,10 +126,20 @@ export type AnalisisAuxiliar = {
   reemplaza: AuxiliarCargado[]
 }
 
+/** Archivo que no se pudo leer solo: la ventana de columnas le pide al auditor qué es cada una. */
+export type ArchivoSinReconocer = { sinReconocer: true; archivo: File; hojas: HojaLibro[]; hoja: string; motivo: string | null }
+
 export type EstadoDian = { adjuntoId: string | null; archivo: string; reporte: ReporteDianParseado }
 
-async function leerArchivo(file: File): Promise<string[][]> {
-  return /\.(xlsx|xlsm|xls)$/i.test(file.name) ? leerExcelAFilas(file) : parseCsv(await file.text())
+/** Hojas del archivo: todas las de un Excel; un CSV es una sola hoja sin nombre. */
+async function leerHojas(file: File): Promise<HojaLibro[]> {
+  return /\.(xlsx|xlsm|xls)$/i.test(file.name) ? leerExcelHojas(file) : [{ nombre: '', filas: parseCsv(await file.text()) }]
+}
+
+/** La hoja leída va al final del nombre del soporte ("… — hoja Bal_prueba"): así queda documentada y se relee la misma. */
+const SUFIJO_HOJA = / — hoja (.+)$/
+export function hojaDelNombre(nombre: string): string | null {
+  return SUFIJO_HOJA.exec(nombre)?.[1] ?? null
 }
 
 /** "Auxiliar IVA (2408) e ingresos (41)" a partir de los prefijos de las cuentas que trae, según el impuesto. */
@@ -130,16 +157,24 @@ export function sugerirNombreAuxiliar(cuentas: string[], etiqueta: string, famil
  * Lee un libro (auxiliar o balance del período) ya convertido a matriz y lo
  * resume para el período de la revisión. null si no es ninguna de las dos cosas.
  */
+/** Columnas indicadas por el auditor para leer un archivo que no se reconoció solo. */
+export type ColumnasIndicadas = { familia: 'movimientos' | 'balance'; fila: number; columnas: Record<string, number | null> }
+
 export function leerYResumirLibro(
   filas: string[][],
   rango: { desde: string; hasta: string },
   memoria: MemoriaIvaEmpresa,
-): { familia: 'movimientos' | 'balance'; movimientos: MovimientoAuxiliar[]; saldos: ResumenCuentaAuxiliar[]; saldosTercero: SaldoTerceroPeriodo[]; nombresCuentas: Record<string, string | null>; resumen: ResumenAuxiliarPeriodo; advertencias: string[]; reconocidas: string[] } | null {
-  const libro = leerLibroContable(filas, parseAuxiliarMovimientos)
+  indicadas?: ColumnasIndicadas,
+): { familia: 'movimientos' | 'balance'; movimientos: MovimientoAuxiliar[]; saldos: ResumenCuentaAuxiliar[]; saldosTercero: SaldoTerceroPeriodo[]; nombresCuentas: Record<string, string | null>; resumen: ResumenAuxiliarPeriodo; advertencias: string[]; reconocidas: string[]; detectadas: ColumnasIndicadas } | null {
+  // Columnas indicadas a mano en esta carga; si no, los formatos guardados de la empresa y luego la detección automática.
+  const libro = indicadas
+    ? leerConColumnas(filas, indicadas.familia, indicadas.fila, indicadas.columnas)
+    : leerLibroContable(filas, parseAuxiliarMovimientos, memoria.formatosLibro ?? [])
   if (!libro) return null
+  const detectadas = columnasDetectadas(libro)
   if (libro.familia === 'movimientos') {
     const resumen = resumirAuxiliarPeriodo(libro.auxiliar, rango, { tiposDocCierre: memoria.tiposDocCierre })
-    return { familia: 'movimientos', movimientos: libro.auxiliar.movimientos, saldos: [], saldosTercero: [], nombresCuentas: {}, resumen, advertencias: libro.auxiliar.advertencias, reconocidas: libro.auxiliar.reconocidas }
+    return { familia: 'movimientos', movimientos: libro.auxiliar.movimientos, saldos: [], saldosTercero: [], nombresCuentas: {}, resumen, advertencias: libro.auxiliar.advertencias, reconocidas: libro.auxiliar.reconocidas, detectadas }
   }
   const b = libro.balance
   const advertencias = [...b.advertencias]
@@ -151,7 +186,7 @@ export function leerYResumirLibro(
   }
   const saldos = b.cuentas.filter((c) => c.debitos !== 0 || c.creditos !== 0)
   const resumen: ResumenAuxiliarPeriodo = { desde: rango.desde, hasta: rango.hasta, cuentas: saldos, fueraDePeriodo: 0, tiposDocCierre: [], bitacora: [`Balance de prueba: ${saldos.length} cuenta(s) hoja con movimiento; sin asientos no se detecta cierre de IVA.`] }
-  return { familia: 'balance', movimientos: [], saldos, saldosTercero: b.terceros, nombresCuentas: Object.fromEntries(b.todas.map((c) => [c.cuenta, c.nombre])), resumen, advertencias, reconocidas: b.reconocidas }
+  return { familia: 'balance', movimientos: [], saldos, saldosTercero: b.terceros, nombresCuentas: Object.fromEntries(b.todas.map((c) => [c.cuenta, c.nombre])), resumen, advertencias, reconocidas: b.reconocidas, detectadas }
 }
 
 /** Según libros por impuesto: IVA (2408/41/1355), retención en la fuente (2365/2367), reteICA (2368) o ICA (clase 4, 135518, 2412), con la memoria de la empresa. */
@@ -280,19 +315,23 @@ export function useAgenteIva(revision: RevisionTributariaDetalle, sellada: boole
   }
 
   /** Analiza un auxiliar sin cargarlo: el modal muestra qué trae y sugiere el nombre. */
-  const analizarAuxiliar = async (file: File): Promise<AnalisisAuxiliar | null> => {
+  const analizarAuxiliar = async (file: File, hojaElegida?: string, indicadas?: ColumnasIndicadas, hojasLeidas?: HojaLibro[]): Promise<AnalisisAuxiliar | ArchivoSinReconocer | null> => {
     if (!rango) return null
     setCargando('auxiliar')
     try {
-      const filas = await leerArchivo(file)
-      const libro = leerYResumirLibro(filas, rango, memoria)
-      if (!libro) {
-        toast.error('No reconocí el archivo: busco un libro auxiliar (fecha, cuenta, débito y crédito por asiento) o un balance de prueba del período (cuenta, débitos y créditos).')
-        return null
-      }
+      const hojas = hojasLeidas ?? await leerHojas(file)
+      const eleccion = elegirHojaLibro(hojas, rango, memoria.formatosLibro ?? [])
+      const hoja = (hojaElegida !== undefined ? hojas.find((h) => h.nombre === hojaElegida) : null) ?? eleccion?.hoja ?? hojas.find((h) => h.filas.length > 0) ?? null
+      if (!hoja) { toast.error('El archivo está vacío.'); return null }
+      const libro = leerYResumirLibro(hoja.filas, rango, memoria, indicadas)
+      // Solo vale la pena nombrar la hoja si el archivo trae más de una con contenido.
+      const varias = hojas.filter((h) => h.filas.length > 0).length > 1
+      // Sin reconocer (otro software, encabezados propios): el auditor indica las columnas en vez de recibir un error.
+      if (!libro) return { sinReconocer: true, archivo: file, hojas, hoja: hoja.nombre, motivo: indicadas ? 'Con esas columnas no salió ninguna cuenta: revisa la fila de encabezado y las columnas.' : null }
       const { resumen } = libro
       if (resumen.cuentas.length === 0) {
-        toast.error(libro.familia === 'balance' ? 'El balance no trae cuentas con movimiento.' : `El archivo no trae movimientos entre ${rango.desde} y ${rango.hasta}. ¿Es el auxiliar del período correcto?`)
+        if (indicadas || libro.familia === 'balance') return { sinReconocer: true, archivo: file, hojas, hoja: hoja.nombre, motivo: libro.familia === 'balance' ? 'Leí el archivo como balance pero ninguna cuenta tiene débitos o créditos: revisa qué columnas son los movimientos.' : `No hay movimientos entre ${rango.desde} y ${rango.hasta} con esas columnas: revisa la columna de fecha o que el archivo sea del período.` }
+        toast.error(`El archivo no trae movimientos entre ${rango.desde} y ${rango.hasta}. ¿Es el auxiliar del período correcto?`)
         return null
       }
       const cuentas = resumen.cuentas.map((c) => ({ cuenta: c.cuenta, nombre: c.nombre, movimientos: c.movimientos }))
@@ -300,6 +339,12 @@ export function useAgenteIva(revision: RevisionTributariaDetalle, sellada: boole
       return {
         archivo: file,
         familia: libro.familia,
+        hoja: varias ? hoja.nombre : null,
+        hojas: eleccion?.legibles ?? [],
+        hojaLeida: hoja.nombre,
+        hojasArchivo: hojas,
+        columnas: libro.detectadas,
+        manual: !!indicadas,
         movimientos: libro.movimientos,
         saldos: libro.saldos,
         saldosTercero: libro.saldosTercero,
@@ -309,7 +354,7 @@ export function useAgenteIva(revision: RevisionTributariaDetalle, sellada: boole
         cuentas,
         cierres: resumen.cuentas.reduce((s, c) => s + c.cierres.length, 0),
         advertencias: libro.advertencias,
-        sugerencia: sugerirNombreAuxiliar(codigos, etiqueta, libro.familia, tipo),
+        sugerencia: `${sugerirNombreAuxiliar(codigos, etiqueta, libro.familia, tipo)}${varias ? ` — hoja ${hoja.nombre}` : ''}`,
         reemplaza: auxiliares.filter((a) => a.cuentas.some((c) => codigos.includes(c))),
       }
     } catch (e) {
@@ -322,9 +367,20 @@ export function useAgenteIva(revision: RevisionTributariaDetalle, sellada: boole
 
   /** Carga el auxiliar analizado con el nombre elegido: estado, libros y soporte. */
   const confirmarAuxiliar = async (analisis: AnalisisAuxiliar, nombre: string) => {
-    const nombreFinal = nombre.trim() || analisis.sugerencia
+    // La hoja queda siempre al final del nombre: es lo que permite releer la misma al reabrir la revisión.
+    const base = (nombre.trim() || analisis.sugerencia).replace(SUFIJO_HOJA, '')
+    const nombreFinal = analisis.hoja ? `${base} — hoja ${analisis.hoja}` : base
     setCargando('auxiliar')
     try {
+      // Columnas indicadas a mano: se guardan en la memoria de la empresa para que ese formato se lea solo
+      // (también al reabrir la revisión, cuando se relee el soporte).
+      if (analisis.manual && !sellada) {
+        const filaEnc = analisis.hojasArchivo.find((h) => h.nombre === analisis.hojaLeida)?.filas[analisis.columnas.fila] ?? []
+        const nueva = await api.put<MemoriaIvaEmpresa>(`/tributario/revisiones/${revision.id}/agente/memoria/formato`, {
+          firma: firmaEncabezado(filaEnc), familia: analisis.columnas.familia, columnas: analisis.columnas.columnas, etiqueta: analisis.archivo.name,
+        })
+        queryClient.setQueryData<EstadoAgenteIva>(claveEstado, (prev) => (prev ? { ...prev, memoria: nueva } : prev))
+      }
       // Quita los que reemplaza (también su soporte) para no sumar dos veces la misma cuenta.
       for (const viejo of analisis.reemplaza) {
         if (viejo.adjuntoId) await api.delete(`/tributario/adjuntos/${viejo.adjuntoId}`).catch(() => {})
@@ -336,6 +392,7 @@ export function useAgenteIva(revision: RevisionTributariaDetalle, sellada: boole
         nombre: nombreFinal,
         archivo: analisis.archivo.name,
         familia: analisis.familia,
+        hoja: analisis.hoja,
         movimientos: analisis.movimientos,
         saldos: analisis.saldos,
         saldosTercero: analisis.saldosTercero,
@@ -391,7 +448,9 @@ export function useAgenteIva(revision: RevisionTributariaDetalle, sellada: boole
   const cargarDian = async (file: File) => {
     setCargando('dian')
     try {
-      const filas = await leerArchivo(file)
+      // El reporte de la DIAN es la hoja que se deja leer como reporte (la primera que sirva).
+      const hojas = await leerHojas(file)
+      const filas = hojas.find((h) => parseReporteDian(h.filas))?.filas ?? hojas[0]?.filas ?? []
       if (procesarDian(filas, file.name, null, true)) {
         toast.success(`Reporte DIAN leído: ${file.name}.`)
         if (dian?.adjuntoId && !sellada) await api.delete(`/tributario/adjuntos/${dian.adjuntoId}`).catch(() => {})
@@ -409,15 +468,16 @@ export function useAgenteIva(revision: RevisionTributariaDetalle, sellada: boole
   // (todos los auxiliares y el último reporte DIAN) para que el análisis no
   // dependa de la sesión anterior del navegador.
   useEffect(() => {
-    if (!rango) return
-    const releer = async (adjunto: AdjuntoTributario): Promise<string[][] | null> => {
+    // Espera la memoria de la empresa: trae los formatos de libro que se leen con columnas indicadas a mano.
+    if (!rango || cargandoEstado) return
+    const releer = async (adjunto: AdjuntoTributario): Promise<HojaLibro[] | null> => {
       try {
         const { url } = await api.get<{ url: string }>(`/tributario/adjuntos/${adjunto.id}/descarga`)
         // La ruta de descarga pasa por el middleware de sesión de las rutas montadas antes: sin la cookie responde 401.
         const res = await fetch(`${BASE_URL}${url}`, { credentials: 'include' })
         if (!res.ok) return null
         const blob = await res.blob()
-        return await leerArchivo(new File([blob], adjunto.archivoNombre, { type: adjunto.archivoMime }))
+        return await leerHojas(new File([blob], adjunto.archivoNombre, { type: adjunto.archivoMime }))
       } catch {
         return null // si no se pudo releer, el auditor lo vuelve a cargar a mano
       }
@@ -426,16 +486,19 @@ export function useAgenteIva(revision: RevisionTributariaDetalle, sellada: boole
     for (const adj of soportes.filter((a) => a.tipo === 'auxiliar')) {
       if (releidos.current.has(adj.id)) continue
       releidos.current.add(adj.id)
-      void releer(adj).then((filas) => {
-        if (!filas) return
-        const libro = leerYResumirLibro(filas, rango, memoria)
+      void releer(adj).then((hojas) => {
+        if (!hojas) return
+        // La misma hoja con la que se cargó (va en el nombre del soporte); si no lo dice, la que sirve para el período.
+        const hojaNombrada = hojaDelNombre(adj.nombre)
+        const hoja = (hojaNombrada !== null ? hojas.find((h) => h.nombre === hojaNombrada) : null) ?? elegirHojaLibro(hojas, rango, memoria.formatosLibro ?? [])?.hoja ?? null
+        const libro = hoja ? leerYResumirLibro(hoja.filas, rango, memoria) : null
         if (!libro) return
         const { resumen } = libro
         setAuxiliares((lista) =>
           lista.some((a) => a.id === adj.id)
             ? lista
             : [...lista, {
-                id: adj.id, adjuntoId: adj.id, nombre: adj.nombre, archivo: adj.archivoNombre, familia: libro.familia, movimientos: libro.movimientos, saldos: libro.saldos, saldosTercero: libro.saldosTercero, nombresCuentas: libro.nombresCuentas,
+                id: adj.id, adjuntoId: adj.id, nombre: adj.nombre, archivo: adj.archivoNombre, familia: libro.familia, hoja: hojaNombrada, movimientos: libro.movimientos, saldos: libro.saldos, saldosTercero: libro.saldosTercero, nombresCuentas: libro.nombresCuentas,
                 enPeriodo: libro.familia === 'balance' ? resumen.cuentas.length : resumen.cuentas.reduce((s, c) => s + c.movimientos, 0), cuentas: resumen.cuentas.map((c) => c.cuenta),
                 cierres: resumen.cuentas.reduce((s, c) => s + c.cierres.length, 0), advertencias: libro.advertencias,
               }],
@@ -445,12 +508,12 @@ export function useAgenteIva(revision: RevisionTributariaDetalle, sellada: boole
     const rep = soportes.filter((a) => a.tipo === 'reporte_dian').sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0]
     if (rep && !releidos.current.has(rep.id) && !dian) {
       releidos.current.add(rep.id)
-      void releer(rep).then((filas) => filas && procesarDian(filas, rep.archivoNombre, rep.id, false))
+      void releer(rep).then((hojas) => { const h = hojas?.find((x) => parseReporteDian(x.filas)) ?? hojas?.[0]; if (h) procesarDian(h.filas, rep.archivoNombre, rep.id, false) })
     }
     // Los libros ya guardados en la revisión cuentan como escritos por el agente.
     for (const [id, v] of Object.entries(revision.cifras)) if (typeof v.libros === 'number') librosEscritos.current.add(id)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [revision.adjuntos])
+  }, [revision.adjuntos, cargandoEstado])
 
   // ─── Corrida persistida ────────────────────────────────────────────────────
   /** Entrada que se manda al backend: lo leído en el navegador, ya resumido. */
@@ -472,7 +535,7 @@ export function useAgenteIva(revision: RevisionTributariaDetalle, sellada: boole
         anterior: null,
       },
       lecturas: [
-        ...auxiliares.map((a) => `Leí "${a.nombre}" (${a.archivo}): ${a.enPeriodo} asiento(s) del período en ${a.cuentas.length} cuenta(s).`),
+        ...auxiliares.map((a) => `Leí "${a.nombre.replace(SUFIJO_HOJA, '')}" (${a.archivo}${a.hoja ? `, hoja ${a.hoja}` : ''}): ${a.familia === 'balance' ? `balance con ${a.cuentas.length} cuenta(s) con movimiento` : `${a.enPeriodo} asiento(s) del período en ${a.cuentas.length} cuenta(s)`}.`),
         ...(combinado?.bitacora ?? []),
       ],
     }

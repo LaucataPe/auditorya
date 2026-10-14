@@ -73,7 +73,26 @@ export function noDeclaranteDelNombre(nombre: string | null): boolean | null {
  * respaldo. null = no se sabe (ambigüedad).
  */
 export function clasificarSubcuentaRetefuente(codigo: string, nombre: string | null): DestinoRetefuente | null {
+  const porNombre = clasificarPorNombreRf(codigo, nombre)
+  const porPuc = codigo.startsWith('2365') ? PUC_2365[codigo.slice(0, 6)] ?? null : null
+  // El nombre de la subcuenta suele decir solo el detalle ("BIENES MUEBLES JURIDICAS" bajo 236530
+  // ARRENDAMIENTOS): cuando el nombre da un concepto genérico y el grupo PUC uno específico, manda el PUC.
+  const generico = porNombre === 'compras' || porNombre === 'servicios' || porNombre === 'otros'
+  const especifico = porPuc === 'arrendamientos' || porPuc === 'honorarios' || porPuc === 'comisiones' || porPuc === 'rendimientos' || porPuc === 'dividendos'
+  if (porNombre && porPuc && porNombre !== porPuc && generico && especifico) return porPuc
+  return porNombre ?? porPuc
+}
+
+const PUC_2365: Record<string, DestinoRetefuente> = {
+  '236505': 'trabajo', '236510': 'dividendos', '236515': 'honorarios', '236520': 'comisiones', '236525': 'servicios', '236530': 'arrendamientos',
+  '236535': 'rendimientos', '236540': 'compras', '236545': 'loterias', '236550': 'exterior-sin-convenio', '236560': 'enajenacion', '236565': 'otros',
+  '236570': 'otros', '236575': 'ar:exonerados',
+}
+
+function clasificarPorNombreRf(codigo: string, nombre: string | null): DestinoRetefuente | null {
   const n = norm(nombre)
+  // Pago o traslado de la declaración (débito a la DIAN): no es retención del período.
+  if (/(^|\s)pagos? (de )?(la )?(retenc|rte|rete|dian|impuesto|declarac)|^pago$|traslad/.test(n)) return 'saldo'
   if (codigo.startsWith('2367')) {
     if (/por pagar|saldo/.test(n)) return 'saldo'
     if (/no (residente|domiciliad)|exterior/.test(n)) return 'reteiva-no-residentes'
@@ -106,14 +125,7 @@ export function clasificarSubcuentaRetefuente(codigo: string, nombre: string | n
   if (/servici|transporte|vigilancia|aseo|software|licenciamiento|ips|eps|mantenimiento|fletes?/.test(n)) return 'servicios'
   if (/compra|bienes|mercanc|energia|vehiculo|agricol|agropec|combustible|insumo|materia prima/.test(n)) return 'compras'
   if (/otros|otras|demas/.test(n)) return 'otros'
-  // Pista PUC (subcuenta 6 dígitos de 2365) cuando el nombre no dice nada.
-  const sub = codigo.slice(0, 6)
-  const porPuc: Record<string, DestinoRetefuente> = {
-    '236505': 'trabajo', '236510': 'dividendos', '236515': 'honorarios', '236520': 'comisiones', '236525': 'servicios', '236530': 'arrendamientos',
-    '236535': 'rendimientos', '236540': 'compras', '236545': 'loterias', '236550': 'exterior-sin-convenio', '236560': 'enajenacion', '236565': 'otros',
-    '236570': 'otros', '236575': 'ar:exonerados',
-  }
-  return codigo.startsWith('2365') ? porPuc[sub] ?? null : null
+  return null
 }
 
 /**
@@ -139,7 +151,21 @@ export function normalizarNit(nit: string | null): string {
   return n
 }
 
+/**
+ * Tercero de relleno: el programa contable exige un tercero en la cuenta y la
+ * empresa usa uno genérico (Siesa "Genérico" en activos fijos y depreciación,
+ * "Varios", "Cuantías menores"). Sin NIT real no es un proveedor: no entra a
+ * las pruebas por tercero ni se clasifica como jurídica o natural.
+ */
+export function esTerceroGenerico(nit: string | null, nombre: string | null): boolean {
+  const n = normalizarNit(nit)
+  if (n && !/^0+$/.test(n) && !/^(2{6,}|9{6,}|1{6,})$/.test(n)) return false
+  const s = norm(nombre)
+  return !s || /^(tercero )?(generico|varios|varios terceros|sin tercero|cuantias menores|consumidor final|ninguno|no aplica|n\/a|na|otros)$/.test(s)
+}
+
 export function beneficiarioDeTercero(nit: string | null, nombre: string | null): Beneficiario350 | null {
+  if (esTerceroGenerico(nit, nombre)) return null
   const n = normalizarNit(nit)
   if (n.length === 9 && /^[89]/.test(n)) return 'pj'
   // 10 dígitos que empiezan por 8 o 9 sin dígito de verificación válido: ni cédula (las de 10 empiezan por 1) ni NIT; decide el nombre.

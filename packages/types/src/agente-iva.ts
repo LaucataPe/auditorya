@@ -48,6 +48,8 @@ export type MemoriaIvaEmpresa = {
   mapeoIca?: Record<string, string>
   /** Tipos de comprobante del asiento de cierre del IVA (p. ej. ['CI']). */
   tiposDocCierre: string[]
+  /** Formatos de libro (balance o auxiliar) cuyas columnas indicó el auditor: se leen solos la próxima vez. */
+  formatosLibro?: import('./parse-balance-periodo').FormatoLibro[]
   actualizadoAt?: string | null
 }
 export const MEMORIA_IVA_CLAVE = 'iva_memoria'
