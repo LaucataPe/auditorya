@@ -9,6 +9,9 @@ import { parseAuxiliarMovimientos, resumirAuxiliarPeriodo } from './parse-auxili
 import { elegirHojaLibro, faltaParaFormato, firmaEncabezado, leerConColumnas, leerLibroContable, parseBalancePeriodo, sugerirFilaEncabezado, type FormatoLibro } from './parse-balance-periodo'
 import { beneficiarioDeTercero, esTerceroGenerico } from './agente-retefuente-libros'
 import { probarRetencionPorTercero } from './agente-retefuente-terceros'
+import { combinarFuentesLibro } from './combinar-libros'
+import { mapearLibrosRetefuente as mapearRf } from './agente-retefuente-libros'
+import { RENGLONES_RETEFUENTE } from './agente-retefuente'
 import { mapearAuxiliarACifrasIva } from './agente-iva-libros'
 import { AUXILIAR_IVA_2408 } from './fixtures/auxiliar-iva-2408'
 import { AUXILIAR_WORLDOFFICE_1355 } from './fixtures/auxiliar-worldoffice-1355'
@@ -270,5 +273,69 @@ describe('formatos indicados por el auditor', () => {
     expect(faltaParaFormato('movimientos', { fecha: 0, cuenta: 1 })).toEqual(['los débitos y créditos (o una columna de valor)'])
     const libro = leerConColumnas(filas, 'movimientos', 0, { fecha: 0, cuenta: 1, valor: 2 })!
     expect(libro.familia === 'movimientos' && libro.auxiliar.movimientos.map((m) => [m.cuenta, m.debito, m.credito])).toEqual([['24080501', 19000, 0], ['24081001', 0, 5000]])
+  })
+})
+
+// ─── Pluss100 · balance con terceros + "auxiliar" de 2365 (caso real de Lamuvi, cifras reales, terceros cambiados) ──
+const ENC_PLUSS = ['CODIGO', 'CUENTA', 'N° DOCUMENTO', 'TERCERO', 'SALDO INICIAL', 'DEBITO', 'CREDITO', 'SALDO FINAL']
+const TIT = (rango: string) => [['EMPRESA EJEMPLO S.A.S'], ['BALANCE DE PRUEBA'], [`PERIODO:  01/09/2026 - 30/09/2026      RANGO CUENTAS: ${rango}`]]
+// En el balance con terceros la subcuenta de 8 dígitos solo existe como filas de tercero: NIT en "N° DOCUMENTO", nombre en "TERCERO".
+const BAL_TERCEROS = [...TIT('1 - ACTIVO | 6170 - COSTOS'), ENC_PLUSS,
+  ['2', 'PASIVO', '', '', '0', '0', '15250343', '15250343'], ['23', 'CUENTAS POR PAGAR', '', '', '0', '0', '15250343', '15250343'],
+  ['2365', 'RETENCION EN LA FUENTE', '', '', '0', '0', '15250343', '15250343'],
+  ['236515', 'HONORARIOS', '', '', '0', '0', '4330000', '4330000'],
+  ['23651501', 'HONORARIOS 11%', '900000301', 'ASESORES UNO SAS', '0', '0', '330000', '330000'],
+  ['23651501', 'HONORARIOS 11%', '800197268', 'UAE DIRECCION DE IMPUESTOS Y ADUANAS NACIONALES', '-500', '0', '0', '-500'],
+  ['23651502', 'HONORARIOS 10%', '10275754', 'GOMEZ RUIZ LUIS', '0', '0', '4000000', '4000000'],
+  ['236525', 'SERVICIOS', '', '', '0', '0', '9374989', '9374989'],
+  ['23652501', 'SERVICIOS GENERALES JURIDICAS', '900000302', 'PRODUCTORA DOS SAS', '0', '0', '9364419', '9364419'],
+  ['23652510', 'SERVICIOS LICENCIAMIENTO SOFTWARE JURIDICAS', '900000303', 'SOFTWARE TRES SAS', '0', '0', '10570', '10570'],
+  ['236530', 'ARRENDAMIENTOS', '', '', '0', '0', '1441362', '1441362'],
+  ['23653001', 'BIENES MUEBLES JURIDICAS', '900000304', 'EQUIPOS CUATRO SAS', '0', '0', '1360000', '1360000'],
+  ['23653002', 'BIENES INMUEBLES JURIDICAS', '900000305', 'INMUEBLES CINCO SAS', '0', '0', '49362', '49362'],
+  ['23653003', 'BIENES MUEBLES NATURALES', '52000111', 'PEREZ GOMEZ ANA', '0', '0', '32000', '32000'],
+  ['236540', 'COMPRAS', '', '', '0', '0', '103992', '103992'],
+  ['23654001', 'COMPRAS GENERALES JURIDICAS', '900000306', 'PROVEEDOR SEIS SAS', '0', '0', '103992', '103992'],
+]
+const AUX_2365 = [...TIT('2365 - RETENCION EN LA FUENTE'), ENC_PLUSS,
+  ['2365', 'RETENCION EN LA FUENTE', '', '', '0', '0', '15250343', '15250343'],
+  ['236515', 'HONORARIOS', '', '', '0', '0', '4330000', '4330000'], ['23651501', 'HONORARIOS 11%', '', '', '0', '0', '330000', '330000'], ['23651502', 'HONORARIOS 10%', '', '', '0', '0', '4000000', '4000000'],
+  ['236525', 'SERVICIOS', '', '', '0', '0', '9374989', '9374989'], ['23652501', 'SERVICIOS GENERALES JURIDICAS', '', '', '0', '0', '9364419', '9364419'], ['23652510', 'SERVICIOS LICENCIAMIENTO SOFTWARE JURIDICAS', '', '', '0', '0', '10570', '10570'],
+  ['236530', 'ARRENDAMIENTOS', '', '', '0', '0', '1441362', '1441362'], ['23653001', 'BIENES MUEBLES JURIDICAS', '', '', '0', '0', '1360000', '1360000'], ['23653002', 'BIENES INMUEBLES JURIDICAS', '', '', '0', '0', '49362', '49362'], ['23653003', 'BIENES MUEBLES NATURALES', '', '', '0', '0', '32000', '32000'],
+  ['236540', 'COMPRAS', '', '', '0', '0', '103992', '103992'], ['23654001', 'COMPRAS GENERALES JURIDICAS', '', '', '0', '0', '103992', '103992'],
+]
+
+describe('Pluss100 · balance con terceros y archivos que se cruzan (caso Lamuvi)', () => {
+  const rango = { desde: '2026-09-01', hasta: '2026-09-30' }
+  const fuente = (nombre: string, filas: string[][]) => { const b = parseBalancePeriodo(filas)!; return { nombre, movimientos: [], saldos: b.cuentas.filter((c) => c.debitos || c.creditos), saldosTercero: b.terceros } }
+  it('el NIT está en "N° DOCUMENTO" y la subcuenta se arma con sus terceros', () => {
+    const b = parseBalancePeriodo(BAL_TERCEROS)!
+    expect(b.columnas).toMatchObject({ tercero: 2, terceroNombre: 3 })
+    expect(b.cuentas.map((c) => c.cuenta)).toContain('23652501')
+    expect(b.cuentas.find((c) => c.cuenta === '23651501')).toMatchObject({ nombre: 'HONORARIOS 11%', creditos: 330000 })
+    expect(b.terceros.find((t) => t.tercero === '900000302')).toMatchObject({ cuenta: '23652501', terceroNombre: 'PRODUCTORA DOS SAS', cuentaNombre: 'SERVICIOS GENERALES JURIDICAS' })
+  })
+  it('balance con terceros + "auxiliar" de 2365 en cualquier orden: no se suma dos veces y se separa por beneficiario', () => {
+    for (const fuentes of [[fuente('02', BAL_TERCEROS), fuente('03', AUX_2365)], [fuente('03', AUX_2365), fuente('02', BAL_TERCEROS)]]) {
+      const comb = combinarFuentesLibro(fuentes, rango)
+      const m = mapearRf(comb, comb.movimientosUsados, {}, { renglonesValidos: RENGLONES_RETEFUENTE, saldosTercero: comb.saldosTercero, anio: 2026 })
+      expect(Object.values(m.conceptos).reduce((s, v) => s + v.retencion, 0)).toBe(15250343)
+      expect(m.cifras).toMatchObject({ 'rf-pj-honorarios': { libros: 330000 }, 'rf-pn-honorarios': { libros: 4000000 }, 'rf-pj-servicios': { libros: 9374989 }, 'rf-pj-arrendamientos': { libros: 1409362 }, 'rf-pn-arrendamientos': { libros: 32000 }, 'rf-pj-compras': { libros: 103992 } })
+      expect(comb.origen['23652501']).toBe('02')
+    }
+  })
+  it('una cuenta general frente a sus subcuentas ya tomadas: solo entra lo que tiene de más', () => {
+    const fino = { nombre: 'fino', movimientos: [], saldos: [{ cuenta: '23651501', nombre: 'HON 11%', debitos: 0, creditos: 330000, movimientos: 0, cierres: [] }], saldosTercero: [] }
+    const grueso = { nombre: 'grueso', movimientos: [], saldos: [{ cuenta: '236515', nombre: 'HONORARIOS', debitos: 0, creditos: 4330000, movimientos: 0, cierres: [] }], saldosTercero: [] }
+    const comb = combinarFuentesLibro([grueso, fino], rango)
+    expect(comb.cuentas.map((c) => [c.cuenta, c.creditos])).toEqual([['236515', 4000000], ['23651501', 330000]])
+  })
+  it('sin terceros, el nombre de la subcuenta dice el beneficiario', () => {
+    const comb = combinarFuentesLibro([fuente('03', AUX_2365)], rango)
+    const m = mapearRf(comb, [], {}, { renglonesValidos: RENGLONES_RETEFUENTE, anio: 2026 })
+    expect(m.cifras).toMatchObject({ 'rf-pj-servicios': { libros: 9374989 }, 'rf-pj-arrendamientos': { libros: 1409362 }, 'rf-pn-arrendamientos': { libros: 32000 } })
+    // Honorarios 11 % / 10 % no dicen el beneficiario: se compara por el total del concepto.
+    expect(m.cifras['rf-pj-honorarios']).toBeUndefined()
+    expect(m.conceptos.honorarios).toMatchObject({ retencion: 4330000, beneficiarioConocido: false })
   })
 })

@@ -132,6 +132,14 @@ function clasificarPorNombreRf(codigo: string, nombre: string | null): DestinoRe
  * Persona jurídica o natural por el NIT (los NIT de sociedades empiezan por 8 o
  * 9 y tienen 9 dígitos) o, sin NIT, por la forma del nombre. null = no se sabe.
  */
+/** Beneficiario que dice el nombre de una subcuenta ("… JURIDICAS", "… PERSONAS NATURALES", "… P.N."). */
+export function beneficiarioDelNombre(nombre: string | null): Beneficiario350 | null {
+  const n = norm(nombre)
+  if (/juridic|\bp\.?\s?j\.?$|\bpj\b|sociedades/.test(n)) return 'pj'
+  if (/natural|\bp\.?\s?n\.?$|\bpn\b|personas? fisica/.test(n)) return 'pn'
+  return null
+}
+
 /** NIT de la DIAN (U.A.E. Dirección de Impuestos y Aduanas Nacionales), sin dígito de verificación. */
 export const NIT_DIAN = '800197268'
 
@@ -279,6 +287,20 @@ export function mapearLibrosRetefuente(
   const esPagoDian = (tercero: string | null, debito: number) => debito > 0 && normalizarNit(tercero) === NIT_DIAN
   let pagosDianTotal = 0
   let cuentasSinDetalle = 0
+  // Conceptos cuyas subcuentas (todas las que movieron sin detalle) dicen en el nombre el beneficiario.
+  const conceptosConNombre = new Set<string>()
+  {
+    const porConcepto = new Map<string, boolean>()
+    for (const c of resumen.cuentas) {
+      if (!esRetefuente(c.cuenta) || (c.debitos === 0 && c.creditos === 0)) continue
+      if ((movPorCuenta.get(c.cuenta) ?? []).length || (terceroPorCuenta.get(c.cuenta) ?? []).length) continue
+      const d = (memoria.mapeo?.[c.cuenta] as DestinoRetefuente | undefined) ?? clasificarSubcuentaRetefuente(c.cuenta, c.nombre)
+      if (!d || d === 'saldo' || d === 'ignorar') continue
+      const ok = !!(beneficiarioFijo(d) ?? beneficiarioDelNombre(c.nombre))
+      porConcepto.set(d, (porConcepto.get(d) ?? true) && ok)
+    }
+    for (const [d, ok] of porConcepto) if (ok) conceptosConNombre.add(d)
+  }
   for (const c of resumen.cuentas) {
     if (!esRetefuente(c.cuenta)) { ignoradas++; continue }
     const movsCuenta = movPorCuenta.get(c.cuenta) ?? []
@@ -318,7 +340,17 @@ export function mapearLibrosRetefuente(
     if (movsCuenta.length === 0) {
       // Balance por terceros: la retención de cada tercero se separa por su NIT o su nombre.
       const saldos = saldosCuenta.map((t) => (esPagoDian(t.tercero, t.debitos) ? { ...t, debitos: 0 } : t)).filter((t) => t.debitos !== 0 || t.creditos !== 0)
-      if (saldosCuenta.length === 0) continue // balance sin terceros: se compara por concepto
+      if (saldosCuenta.length === 0) {
+        // Balance sin terceros: si el nombre de la subcuenta dice el beneficiario ("SERVICIOS GENERALES JURIDICAS",
+        // "BIENES MUEBLES NATURALES") y todas las del concepto lo dicen, se separa por el nombre; si no, se compara por concepto.
+        const b = beneficiarioFijo(destino) ?? beneficiarioDelNombre(c.nombre)
+        if (b && conceptosConNombre.has(destino)) {
+          const r = conceptoARenglon(destino, b)
+          if (r && neto !== 0) acumular(r, neto)
+          con.beneficiarioConocido = true
+        }
+        continue
+      }
       const porB: Record<Beneficiario350, number> = { pj: 0, pn: 0 }
       let asignado = 0
       for (const t of saldos) {

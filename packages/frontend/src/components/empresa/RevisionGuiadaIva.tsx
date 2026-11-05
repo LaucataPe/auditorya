@@ -515,7 +515,12 @@ function ModalAuxiliar({ analisis, cargando, onClose, onConfirmar, onCambiarHoja
         <p className="-mt-2 text-xs text-gray-400">Así queda como soporte de la revisión y así lo nombra el agente en su bitácora.</p>
         {analisis.reemplaza.length > 0 && (
           <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-            Trae cuentas que ya están en {analisis.reemplaza.map((a) => `"${a.nombre}"`).join(' y ')}: al cargarlo lo reemplaza para no sumar dos veces.
+            Parece una versión nueva de {analisis.reemplaza.map((a) => `"${a.nombre}"`).join(' y ')}: al cargarlo lo reemplaza.
+          </p>
+        )}
+        {analisis.comparte.length > 0 && (
+          <p className="rounded-lg border border-indigo-100 bg-indigo-50/60 px-3 py-2 text-xs text-indigo-800">
+            Tiene cuentas en común con {analisis.comparte.map((a) => `"${a.nombre}"`).join(' y ')}. No se suman dos veces: cada cuenta se toma de un solo archivo (el auxiliar antes que el balance, el que trae terceros antes que el que no), y la bitácora del análisis dice de cuál.
           </p>
         )}
         <div className="flex justify-end gap-2 pt-1">

@@ -144,6 +144,26 @@ export function parseBalancePeriodo(filas: string[][], forzado?: { fila: number;
     if (idx !== c.nombre && idx !== c.debito && idx !== c.credito && idx !== c.saldoInicial && conTercero.length > 0 && conTercero.every((f) => /[A-Za-z\u00C0-\u017F]/.test(celda(f, idx)))) c.terceroNombre = idx
   }
 
+  // El tercero por contenido: si la columna tomada como tercero trae nombres y otra columna trae los NIT
+  // en esas mismas filas (Pluss100: "N° DOCUMENTO" = NIT, "TERCERO" = nombre), el NIT es la otra.
+  if (!forzado && c.tercero !== null) {
+    const filasTer = filas.slice(filaEncabezado + 1, filaEncabezado + 400).filter((f) => separarCodigoNombre(celda(f, c.tercero!)) === null && /[A-Za-z\u00C0-\u017F]/.test(celda(f, c.tercero!)))
+    const conTercero = filas.slice(filaEncabezado + 1, filaEncabezado + 400).filter((f) => celda(f, c.tercero!) !== '')
+    if (conTercero.length >= 3 && filasTer.length >= conTercero.length * 0.8) {
+      const usadas = new Set([c.cuenta, c.nombre, c.tercero, c.debito, c.credito, c.saldoInicial, c.saldoFinal, c.terceroNombre].filter((x): x is number => x !== null))
+      const ancho = Math.max(...filas.slice(filaEncabezado, filaEncabezado + 50).map((f) => f.length))
+      for (let j = 0; j < ancho; j++) {
+        if (usadas.has(j)) continue
+        const ids = conTercero.filter((f) => /^[\d.\-\s]{5,15}$/.test(celda(f, j)))
+        if (ids.length >= conTercero.length * 0.8) {
+          if (c.terceroNombre === null) c.terceroNombre = c.tercero
+          c.tercero = j
+          break
+        }
+      }
+    }
+  }
+
   const encabezado = leerTitulos(filas, filaEncabezado)
   // Siesa no pone el período en el título sino en los encabezados de saldo: "Saldo inicial a 2026/07"
   // y "Saldo final a 2026/08" son el primer y el último mes del período.
@@ -161,6 +181,8 @@ export function parseBalancePeriodo(filas: string[][], forzado?: { fila: number;
   const todas: CuentaBalancePeriodo[] = []
   const terceros: SaldoTerceroPeriodo[] = []
   const nombreCuenta = new Map<string, string | null>()
+  // Suma de todas las filas de tercero por código: para las cuentas que solo aparecen en el detalle por tercero.
+  const sumaTercero = new Map<string, { nombre: string | null; ini: number; d: number; h: number; fin: number; conIni: boolean; conFin: boolean }>()
   let filasTercero = 0
   for (let i = filaEncabezado + 1; i < filas.length; i++) {
     const fila = filas[i] ?? []
@@ -171,11 +193,21 @@ export function parseBalancePeriodo(filas: string[][], forzado?: { fila: number;
       filasTercero++
       const d = parseNumeroLocal(celda(fila, c.debito))
       const h = parseNumeroLocal(celda(fila, c.credito))
+      {
+        const ini = c.saldoInicial !== null ? parseNumeroLocal(celda(fila, c.saldoInicial)) : NaN
+        const fin = c.saldoFinal !== null ? parseNumeroLocal(celda(fila, c.saldoFinal)) : NaN
+        const acc = sumaTercero.get(cod.codigo) ?? { nombre: c.terceroNombre !== null ? celda(fila, c.nombre) || null : null, ini: 0, d: 0, h: 0, fin: 0, conIni: false, conFin: false }
+        if (isFinite(ini)) { acc.ini += ini; acc.conIni = true }
+        if (isFinite(fin)) { acc.fin += fin; acc.conFin = true }
+        if (isFinite(d)) acc.d += d
+        if (isFinite(h)) acc.h += h
+        sumaTercero.set(cod.codigo, acc)
+      }
       if ((isFinite(d) && d !== 0) || (isFinite(h) && h !== 0)) {
         const id = celda(fila, c.tercero).replace(/^nit\s*/i, '').replace(/\.0$/, '').replace(/-\d$/, '').replace(/\D/g, '')
         // World Office pone el nombre del tercero donde va el nombre de la cuenta; Siesa lo trae en su propia columna.
         const nombre = c.terceroNombre !== null ? celda(fila, c.terceroNombre) : celda(fila, c.nombre) || cod.nombre || ''
-        terceros.push({ cuenta: cod.codigo, cuentaNombre: nombreCuenta.get(cod.codigo) ?? null, tercero: id || null, terceroNombre: nombre || (id ? null : celda(fila, c.tercero)) || null, debitos: isFinite(d) ? d : 0, creditos: isFinite(h) ? h : 0 })
+        terceros.push({ cuenta: cod.codigo, cuentaNombre: nombreCuenta.get(cod.codigo) ?? (c.terceroNombre !== null ? celda(fila, c.nombre) || null : null), tercero: id || null, terceroNombre: nombre || (id ? null : celda(fila, c.tercero)) || null, debitos: isFinite(d) ? d : 0, creditos: isFinite(h) ? h : 0 })
       }
       continue
     }
@@ -194,6 +226,16 @@ export function parseBalancePeriodo(filas: string[][], forzado?: { fila: number;
       saldoFinal: isFinite(fin) ? fin : null,
       nivel: cod.codigo.length,
     })
+  }
+  // Cuentas que el archivo trae solo como detalle por tercero (Pluss100 "balance con terceros": la subcuenta de
+  // 8 dígitos no tiene fila propia): la cuenta es la suma de sus terceros. Así quedan al mismo nivel que en un
+  // auxiliar o en el mismo balance sin terceros, y no se confunden con su cuenta padre.
+  const conFila = new Set(todas.map((t) => t.cuenta))
+  let sinFila = 0
+  for (const [cuenta, a] of sumaTercero) {
+    if (conFila.has(cuenta)) continue
+    sinFila++
+    todas.push({ cuenta, nombre: a.nombre, saldoInicial: a.conIni ? a.ini : null, debitos: a.d, creditos: a.h, saldoFinal: a.conFin ? a.fin : null, nivel: cuenta.length })
   }
   if (todas.length === 0) return null
 
@@ -220,6 +262,7 @@ export function parseBalancePeriodo(filas: string[][], forzado?: { fila: number;
   }
   cuentas.sort((a, b) => a.cuenta.localeCompare(b.cuenta))
   if (filasTercero > 0) advertencias.push(`${filasTercero} fila(s) de detalle por tercero no se sumaron (ya están en su cuenta).`)
+  if (sinFila > 0) advertencias.push(`${sinFila} subcuenta(s) aparecen solo en el detalle por tercero: se tomaron como la suma de sus terceros.`)
   advertencias.push('Balance de prueba: trae débitos y créditos por cuenta pero no los asientos, así que no se puede detectar un cierre de IVA dentro del período ni verificar tarifas factura por factura.')
 
   // Si los saldos no cuadran con los movimientos en buena parte de las cuentas, las columnas no son lo que parecen

@@ -10,9 +10,9 @@
  * el nombre que les dio el auditor y se vuelven a leer al recargar (para poder
  * volver a analizar sin subirlos otra vez).
  *
- * Auxiliares: pueden ser varios (uno por cuenta o uno solo con todas). Se suman
- * sus movimientos antes de resumir y mapear; si un archivo nuevo trae las mismas
- * cuentas que uno ya cargado, lo reemplaza para no duplicar.
+ * Auxiliares y balances: pueden ser varios. Se combinan sin sumar dos veces una
+ * cuenta (combinarFuentesLibro): cada cuenta sale de un solo archivo. Un archivo
+ * nuevo reemplaza solo a una versión anterior de sí mismo.
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -39,6 +39,8 @@ import {
   type HojaLegible,
   type HojaLibro,
   elegirHojaLibro,
+  combinarFuentesLibro,
+  type LibrosCombinados,
   columnasDetectadas,
   firmaEncabezado,
   leerConColumnas,
@@ -122,8 +124,10 @@ export type AnalisisAuxiliar = {
   advertencias: string[]
   /** Nombre sugerido según las cuentas que trae. */
   sugerencia: string
-  /** Auxiliares ya cargados que comparten cuentas con este (se reemplazarían). */
+  /** Versiones anteriores de este mismo archivo (se reemplazan al cargar). */
   reemplaza: AuxiliarCargado[]
+  /** Otros archivos cargados con cuentas en común (conviven; cada cuenta se toma de uno solo). */
+  comparte: AuxiliarCargado[]
 }
 
 /** Archivo que no se pudo leer solo: la ventana de columnas le pide al auditor qué es cada una. */
@@ -209,19 +213,13 @@ export function mapearLibros(
 }
 
 /** Combina todos los libros cargados en un solo resumen del período: movimientos resumidos + saldos de balances. */
-export function combinarLibros(lista: Pick<AuxiliarCargado, 'movimientos' | 'saldos' | 'nombre'>[], rango: { desde: string; hasta: string }, memoria: MemoriaIvaEmpresa): ResumenAuxiliarPeriodo {
-  const movimientos = lista.flatMap((a) => a.movimientos)
-  const resumen = resumirAuxiliarPeriodo({ movimientos }, rango, { tiposDocCierre: memoria.tiposDocCierre })
-  const vistas = new Set(resumen.cuentas.map((c) => c.cuenta))
-  for (const a of lista) {
-    for (const c of a.saldos) {
-      if (vistas.has(c.cuenta)) { resumen.bitacora.push(`Cuenta ${c.cuenta} viene en un auxiliar y en el balance "${a.nombre}": se usó el auxiliar.`); continue }
-      vistas.add(c.cuenta)
-      resumen.cuentas.push(c)
-    }
-  }
-  resumen.cuentas.sort((x, y) => x.cuenta.localeCompare(y.cuenta))
-  return resumen
+/**
+ * Combina todos los libros cargados sin sumar dos veces una cuenta: cada cuenta sale de un solo archivo
+ * (auxiliar antes que balance; balance con terceros antes que sin ellos; el último cargado entre iguales),
+ * aunque los archivos la traigan a distinto nivel (236515 en uno, 23651501 en otro). Ver combinarFuentesLibro.
+ */
+export function combinarLibros(lista: Pick<AuxiliarCargado, 'movimientos' | 'saldos' | 'saldosTercero' | 'nombre'>[], rango: { desde: string; hasta: string }, memoria: MemoriaIvaEmpresa): LibrosCombinados {
+  return combinarFuentesLibro(lista.map((a) => ({ nombre: a.nombre, movimientos: a.movimientos, saldos: a.saldos, saldosTercero: a.saldosTercero })), rango, { tiposDocCierre: memoria.tiposDocCierre })
 }
 
 export function useAgenteIva(revision: RevisionTributariaDetalle, sellada: boolean, onCambio: () => void, nitEmpresa: string | null = null) {
@@ -269,14 +267,15 @@ export function useAgenteIva(revision: RevisionTributariaDetalle, sellada: boole
   const sinConcluir = useMemo(() => cedulasSinConcluir(cedulas, conclusiones), [cedulas, conclusiones])
 
   // ─── Auxiliares: combinación de todos los cargados, con la memoria de la empresa ──
-  const tercerosDe = (lista: AuxiliarCargado[]) => ({
-    saldos: lista.flatMap((a) => a.saldosTercero), anio: obligacion.anioFiscal, nitEmpresa,
+  // El detalle por tercero de los balances viene de la combinación: el del archivo del que salió cada cuenta.
+  const tercerosDe = (lista: AuxiliarCargado[], combinado: LibrosCombinados) => ({
+    saldos: combinado.saldosTercero, anio: obligacion.anioFiscal, nitEmpresa,
     obligacion: { id: obligacion.id, nombre: obligacion.nombre, municipio: obligacion.municipio }, nombresCuentas: Object.assign({}, ...lista.map((a) => a.nombresCuentas)) as Record<string, string | null>,
   })
   const combinado = useMemo(() => {
     if (!rango || auxiliares.length === 0) return null
     const resumen = combinarLibros(auxiliares, rango, memoria)
-    const mapeo = mapearLibros(tipo, resumen, auxiliares.flatMap((a) => a.movimientos), memoria, tercerosDe(auxiliares))
+    const mapeo = mapearLibros(tipo, resumen, resumen.movimientosUsados, memoria, tercerosDe(auxiliares, resumen))
     return { resumen, mapeo, bitacora: [...auxiliares.flatMap((a) => a.advertencias), ...resumen.bitacora, ...mapeo.bitacora] }
   }, [auxiliares, rango, memoria, tipo]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -355,7 +354,10 @@ export function useAgenteIva(revision: RevisionTributariaDetalle, sellada: boole
         cierres: resumen.cuentas.reduce((s, c) => s + c.cierres.length, 0),
         advertencias: libro.advertencias,
         sugerencia: `${sugerirNombreAuxiliar(codigos, etiqueta, libro.familia, tipo)}${varias ? ` — hoja ${hoja.nombre}` : ''}`,
-        reemplaza: auxiliares.filter((a) => a.cuentas.some((c) => codigos.includes(c))),
+        // Solo se reemplaza una versión anterior del mismo archivo (mismo tipo y todas sus cuentas vienen en el nuevo).
+        // Si solo comparten algunas cuentas, conviven: la combinación toma cada cuenta de un solo archivo.
+        reemplaza: auxiliares.filter((a) => a.familia === libro.familia && a.cuentas.length > 0 && a.cuentas.every((c) => codigos.includes(c))),
+        comparte: auxiliares.filter((a) => !(a.familia === libro.familia && a.cuentas.length > 0 && a.cuentas.every((c) => codigos.includes(c))) && a.cuentas.some((c) => codigos.some((k) => k === c || k.startsWith(c) || c.startsWith(k)))),
       }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'No se pudo leer el auxiliar')
@@ -406,7 +408,8 @@ export function useAgenteIva(revision: RevisionTributariaDetalle, sellada: boole
       const lista = [...auxiliares.filter((a) => !reemplazados.has(a.id)), nuevo]
       setAuxiliares(lista)
       if (rango) {
-        persistirLibros(mapearLibros(tipo, combinarLibros(lista, rango, memoria), lista.flatMap((a) => a.movimientos), memoria, tercerosDe(lista)))
+        const comb = combinarLibros(lista, rango, memoria)
+        persistirLibros(mapearLibros(tipo, comb, comb.movimientosUsados, memoria, tercerosDe(lista, comb)))
       }
       toast.success(`${nombreFinal}: ${analisis.familia === 'balance' ? `${analisis.cuentas.length} cuenta(s) con movimiento` : `${analisis.enPeriodo} asiento(s) en ${analisis.cuentas.length} cuenta(s)`}${analisis.reemplaza.length ? `, reemplaza ${analisis.reemplaza.length} auxiliar(es) anterior(es)` : ''}.`)
     } finally {
@@ -429,7 +432,8 @@ export function useAgenteIva(revision: RevisionTributariaDetalle, sellada: boole
     const lista = auxiliares.filter((x) => x.id !== id)
     setAuxiliares(lista)
     if (rango) {
-      const mapeo = lista.length ? mapearLibros(tipo, combinarLibros(lista, rango, memoria), lista.flatMap((x) => x.movimientos), memoria, tercerosDe(lista)) : null
+      const comb = lista.length ? combinarLibros(lista, rango, memoria) : null
+      const mapeo = comb ? mapearLibros(tipo, comb, comb.movimientosUsados, memoria, tercerosDe(lista, comb)) : null
       persistirLibros(mapeo)
     }
   }
