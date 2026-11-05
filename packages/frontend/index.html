@@ -1,13 +1,31 @@
 <!doctype html>
-<html lang="es">
+<html lang="es-CO">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <link rel="icon" type="image/png" href="/favicon.png" />
-    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <!-- Fuente Inter: se pide en paralelo con el CSS de la app (antes era un @import encadenado). -->
+    <link rel="preconnect" href="https://rsms.me" />
+    <link rel="stylesheet" href="https://rsms.me/inter/inter.css" />
+    <link rel="icon" type="image/png" sizes="64x64" href="/favicon-64.png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon2.png" />
     <meta name="theme-color" content="#2a1240" />
-    <meta name="description" content="Software de auditoría financiera externa para firmas auditoras colombianas." />
-    <title>AuditorYa</title>
+    <meta
+      name="description"
+      content="Organiza tus encargos de auditoría bajo NIA, conecta riesgos, pruebas, evidencias y conclusiones, y apóyate en la IA sin reemplazar tu criterio profesional."
+    />
+    <!-- Open Graph: lo que ven WhatsApp, LinkedIn, etc. al compartir el enlace.
+         og:url y la canónica se agregan en la landing desde VITE_SITE_URL.
+         Pendiente: og:image (1200×630, URL absoluta) — ver docs/landing.md. -->
+    <meta property="og:type" content="website" />
+    <meta property="og:locale" content="es_CO" />
+    <meta property="og:site_name" content="AuditorYa" />
+    <meta property="og:title" content="AuditorYa · Cada encargo bajo control. Cada conclusión, sustentada." />
+    <meta
+      property="og:description"
+      content="Plataforma de auditoría con IA para revisores fiscales y firmas pequeñas y medianas en Colombia."
+    />
+    <meta name="twitter:card" content="summary" />
+    <title>AuditorYa · Plataforma de auditoría con IA para revisores fiscales y firmas en Colombia</title>
   </head>
   <body>
     <div id="root"></div>

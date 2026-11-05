@@ -1,301 +1,245 @@
-import { useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { useEffect } from 'react'
+import { Info, Sparkles, UserRound } from 'lucide-react'
+import { fijarContextoAnalitica } from '../lib/analitica'
+import { useVarianteHero } from '../hooks/useVarianteHero'
 import {
-  BrainCircuit,
-  CheckCircle2,
-  ClipboardCheck,
-  FileCheck2,
-  FolderLock,
-  ListChecks,
-  ShieldCheck,
-} from 'lucide-react'
-import { useAuthStore } from '../store/auth.store'
-import { Button } from '../components/ui/Button'
-import { Logo, Isotipo } from '../components/ui/Logo'
+  COMO_FUNCIONA,
+  EXPERIENCIA,
+  IA,
+  MENSAJES_WHATSAPP,
+  PREGUNTAS,
+  PROBLEMA,
+  SITIO,
+  enlaceWhatsApp,
+} from '../components/landing/contenido'
+import { Navbar } from '../components/landing/Navbar'
+import { Hero } from '../components/landing/Hero'
+import { FeatureCard } from '../components/landing/FeatureCard'
+import { WorkflowDiagram } from '../components/landing/WorkflowDiagram'
+import { FounderProgram } from '../components/landing/FounderProgram'
+import { FAQAccordion } from '../components/landing/FAQAccordion'
+import { Footer } from '../components/landing/Footer'
+import { CtaLink } from '../components/landing/CtaLink'
+import { Eyebrow, Pill, Resaltado, TituloSeccion } from '../components/landing/Tipografia'
 
-const CARACTERISTICAS = [
-  {
-    icon: ClipboardCheck,
-    titulo: 'Planificación NIA completa',
-    texto:
-      'Carta de encargo, entendimiento del cliente, control interno COSO, riesgos por área, materialidad y memo de planeación (NIA 210, 315, 320 y 300).',
-  },
-  {
-    icon: ListChecks,
-    titulo: 'Del riesgo a la evidencia',
-    texto:
-      'Cada riesgo genera pruebas, cada prueba pide sus documentos al cliente (PBC) y la evidencia queda atada al papel de trabajo. El hilo completo, sin hojas sueltas.',
-  },
-  {
-    icon: FolderLock,
-    titulo: 'Papeles de trabajo ordenados',
-    texto:
-      'Índices por área con consecutivo (NIA 230), notas de revisión del socio (NIA 220) y archivos servidos siempre con URL firmada, nunca públicos.',
-  },
-  {
-    icon: FileCheck2,
-    titulo: 'Informes listos para firmar',
-    texto:
-      'Dictamen (NIA 700), carta de control interno (NIA 265) y carta de representaciones (NIA 580), exportables a PDF y Word con el membrete de tu firma.',
-  },
-  {
-    icon: BrainCircuit,
-    titulo: 'Asistente con IA',
-    texto:
-      'Sugerencia de riesgos con el contexto real del encargo, análisis analítico del balance (NIA 520) y un asistente NIA conversacional para el equipo.',
-  },
-  {
-    icon: ShieldCheck,
-    titulo: 'Pista de auditoría inmutable',
-    texto:
-      'Quién hizo qué y cuándo: cada aprobación, importación y acción de IA queda registrada. Tu trabajo resiste una revisión de calidad.',
-  },
-]
+/** Título, canónica y og:url de la landing; se restauran al salir hacia la app. */
+function useSeoLanding() {
+  useEffect(() => {
+    const tituloPrevio = document.title
+    document.title = SITIO.titulo
+    const creados: Element[] = []
+    if (SITIO.url) {
+      const canonical = document.createElement('link')
+      canonical.rel = 'canonical'
+      canonical.href = SITIO.url
+      const ogUrl = document.createElement('meta')
+      ogUrl.setAttribute('property', 'og:url')
+      ogUrl.content = SITIO.url
+      document.head.append(canonical, ogUrl)
+      creados.push(canonical, ogUrl)
+    }
+    return () => {
+      document.title = tituloPrevio
+      creados.forEach((el) => el.remove())
+    }
+  }, [])
+}
 
-const FASES = [
-  {
-    numero: '1',
-    titulo: 'Acepta el encargo',
-    texto: 'Empresa, independencia y conflictos antes de empezar.',
-    normas: 'NIA 210 · Código de Ética IESBA',
-    detalle:
-      'Antes de firmar nada, evalúas si puedes tomar el encargo: registras la empresa cliente con su NIT, sector y marco contable, y respondes la evaluación de independencia y conflictos de interés. Solo si el encargo queda aceptado el sistema te deja crear la auditoría.',
-    pasos: [
-      'Registra la empresa cliente (NIT, sector, marco contable)',
-      'Evalúa independencia y conflictos de interés',
-      'Acepta el encargo y crea la auditoría del período',
-      'Genera la carta de encargo (NIA 210)',
-    ],
-  },
-  {
-    numero: '2',
-    titulo: 'Planea',
-    texto: 'Riesgos, materialidad, COSO y memo de planeación.',
-    normas: 'NIA 300 · 315 · 320 · 520',
-    detalle:
-      'Aquí construyes el mapa del encargo: entiendes el negocio, cargas el balance de prueba, evalúas el control interno con los 5 componentes COSO e identificas los riesgos por área con su respuesta planeada. Al calcular la materialidad y aprobarla, se desbloquea la ejecución.',
-    pasos: [
-      'Entendimiento del cliente y su entorno (NIA 315)',
-      'Balance de prueba + analíticos preliminares (NIA 520)',
-      'Control interno COSO y riesgos por área',
-      'Materialidad (NIA 320), cronograma y memo de planeación (NIA 300)',
-    ],
-  },
-  {
-    numero: '3',
-    titulo: 'Ejecuta',
-    texto: 'Pruebas, PBC y papeles de trabajo con evidencia.',
-    normas: 'NIA 230 · 330 · 500',
-    detalle:
-      'Cada riesgo identificado se convierte en pruebas concretas, y cada prueba pide sus documentos al cliente (PBC). Cuando llega el documento, queda adjunto como evidencia del papel de trabajo — el hilo riesgo → prueba → evidencia se arma solo, y el socio revisa con notas de revisión.',
-    pasos: [
-      'Asigna tareas al equipo por área',
-      'Diseña pruebas desde los riesgos (NIA 330/500)',
-      'Solicita documentos al cliente (PBC) y adjunta evidencia',
-      'Papeles de trabajo con índices por área y notas de revisión (NIA 230/220)',
-    ],
-  },
-  {
-    numero: '4',
-    titulo: 'Informa y cierra',
-    texto: 'Dictamen, cartas y cierre del socio (NIA 560/570/220).',
-    normas: 'NIA 700 · 265 · 580 · 560 · 570',
-    detalle:
-      'Con la evidencia completa generas el dictamen y las cartas, exportables a PDF y Word con el membrete de tu firma. El cierre exige el checklist de hechos posteriores, negocio en marcha y revisión de calidad — y el socio no puede cerrar si quedan notas de revisión abiertas.',
-    pasos: [
-      'Dictamen (NIA 700) con editor enriquecido',
-      'Carta de control interno (NIA 265) y de representaciones (NIA 580)',
-      'Checklist de cierre: hechos posteriores y negocio en marcha (NIA 560/570)',
-      'Cierre del socio con revisión de calidad (NIA 220)',
-    ],
-  },
-]
+const CONTENEDOR = 'mx-auto max-w-6xl px-4 sm:px-6'
+const SECCION = 'scroll-mt-20 py-20 sm:py-24'
+const BANDA = 'border-y border-marca-linea bg-marca-banda'
 
 export function LandingPage() {
-  const navigate = useNavigate()
-  const { isAuthenticated } = useAuthStore()
-  const [faseActiva, setFaseActiva] = useState(0)
-  const fase = FASES[faseActiva]
-
-  const irAlPanel = () => navigate(isAuthenticated ? '/dashboard' : '/onboarding')
+  const { variante, titular, cta } = useVarianteHero()
+  useSeoLanding()
+  useEffect(() => fijarContextoAnalitica({ varianteHero: variante }), [variante])
 
   return (
-    <div className="min-h-screen bg-white text-gray-900">
-      {/* Header */}
-      <header className="sticky top-0 z-10 border-b border-gray-100 bg-white/90 backdrop-blur">
-        <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-4 sm:px-6">
-          <Link to="/" className="flex items-center">
-            <Logo className="h-9 w-auto" />
-          </Link>
-          <nav className="hidden items-center gap-6 text-sm text-gray-600 sm:flex">
-            <a href="#caracteristicas" className="hover:text-gray-900">Características</a>
-            <a href="#como-funciona" className="hover:text-gray-900">Cómo funciona</a>
-          </nav>
-          <div className="flex items-center gap-2">
-            {isAuthenticated ? (
-              <Button size="sm" onClick={() => navigate('/dashboard')}>Ir al panel</Button>
-            ) : (
-              <>
-                <Button variant="ghost" size="sm" onClick={() => navigate('/login')}>
-                  Ingresar
-                </Button>
-                <Button size="sm" onClick={() => navigate('/onboarding')}>
-                  Registra tu firma
-                </Button>
-              </>
-            )}
-          </div>
-        </div>
-      </header>
+    <div className="min-h-screen bg-marca-fondo text-marca-tinta">
+      <a
+        href="#contenido"
+        className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:rounded-lg focus:bg-white focus:px-4 focus:py-2 focus:shadow-card-hover"
+      >
+        Saltar al contenido
+      </a>
+      <Navbar />
 
-      {/* Hero */}
-      <section className="mx-auto max-w-6xl px-4 pb-20 pt-16 text-center sm:px-6 sm:pt-24">
-        <span className="inline-flex items-center rounded-full border border-indigo-100 bg-indigo-50 px-3 py-1 text-xs font-medium text-indigo-700">
-          Revisoría Fiscal (NIA) · Auditoría Interna (IIA IPPF)
-        </span>
-        <h1 className="mx-auto mt-5 max-w-3xl text-4xl font-semibold tracking-tight sm:text-5xl">
-          La auditoría de tu firma, de la planeación al dictamen
-        </h1>
-        <p className="mx-auto mt-5 max-w-2xl text-lg text-gray-600">
-          AuditorYa acompaña a las firmas auditoras colombianas en todo el encargo: riesgos,
-          materialidad, papeles de trabajo, evidencia e informes — con la norma como guía en cada paso.
-        </p>
-        <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
-          <Button size="lg" onClick={irAlPanel}>
-            {isAuthenticated ? 'Ir al panel' : 'Comienza ahora'}
-          </Button>
-          <Button variant="secondary" size="lg" onClick={() => navigate('/login')}>
-            Ya tengo cuenta
-          </Button>
-        </div>
-        <p className="mt-4 text-sm text-gray-500">
-          Multiusuario por firma · Encargos por empresa y período · Español, pensado para Colombia
-        </p>
-      </section>
+      <main id="contenido">
+        <Hero titular={titular} cta={cta} />
 
-      {/* Características */}
-      <section id="caracteristicas" className="border-t border-gray-100 bg-gray-50 py-20">
-        <div className="mx-auto max-w-6xl px-4 sm:px-6">
-          <h2 className="text-center text-3xl font-semibold tracking-tight">
-            Todo el encargo en un solo lugar
-          </h2>
-          <p className="mx-auto mt-3 max-w-2xl text-center text-gray-600">
-            Deja las plantillas de Excel dispersas: el hilo riesgo → prueba → documentos → evidencia →
-            conclusión vive en un solo sistema.
-          </p>
-          <div className="mt-12 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-            {CARACTERISTICAS.map(({ icon: Icon, titulo, texto }) => (
-              <div key={titulo} className="rounded-2xl border border-gray-100 bg-white p-6 shadow-card">
-                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600">
-                  <Icon className="h-5 w-5" />
-                </div>
-                <h3 className="mt-4 font-semibold">{titulo}</h3>
-                <p className="mt-2 text-sm leading-relaxed text-gray-600">{texto}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* Cómo funciona */}
-      <section id="como-funciona" className="py-20">
-        <div className="mx-auto max-w-6xl px-4 sm:px-6">
-          <h2 className="text-center text-3xl font-semibold tracking-tight">
-            Una guía por fases que no te suelta
-          </h2>
-          <p className="mx-auto mt-3 max-w-2xl text-center text-gray-600">
-            El sistema calcula en qué fase vas, tu porcentaje de avance y el siguiente paso del encargo.
-          </p>
-          <div className="mt-12 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            {FASES.map(({ numero, titulo, texto }, i) => {
-              const activa = i === faseActiva
-              return (
-                <button
-                  key={numero}
-                  type="button"
-                  onClick={() => setFaseActiva(i)}
-                  aria-expanded={activa}
-                  className={`rounded-2xl border p-6 text-left transition-all focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 ${
-                    activa
-                      ? 'border-indigo-600 bg-indigo-50/60 shadow-card'
-                      : 'border-gray-100 bg-white hover:border-indigo-200 hover:shadow-card'
-                  }`}
-                >
-                  <span
-                    className={`flex h-8 w-8 items-center justify-center rounded-full text-sm font-semibold transition-colors ${
-                      activa ? 'bg-indigo-600 text-white' : 'bg-gray-100 text-gray-500'
-                    }`}
-                  >
-                    {numero}
-                  </span>
-                  <h3 className="mt-4 font-semibold">{titulo}</h3>
-                  <p className="mt-2 text-sm text-gray-600">{texto}</p>
-                </button>
-              )
-            })}
-          </div>
-
-          {/* Detalle de la fase seleccionada */}
-          <div
-            key={fase.numero}
-            className="mt-6 animate-slide-up rounded-2xl border border-indigo-100 bg-indigo-50/40 p-6 sm:p-8"
-          >
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <h3 className="text-lg font-semibold">
-                Fase {fase.numero} · {fase.titulo}
-              </h3>
-              <span className="inline-flex w-fit items-center rounded-full bg-white px-3 py-1 text-xs font-medium text-indigo-700 ring-1 ring-indigo-100">
-                {fase.normas}
-              </span>
+        {/* Problema */}
+        <section id="problema" aria-labelledby="problema-titulo" className="scroll-mt-20 pb-20 pt-24 sm:pb-24 sm:pt-32">
+          <div className={CONTENEDOR}>
+            <div className="mx-auto max-w-4xl text-center">
+              <TituloSeccion id="problema-titulo" titulo={PROBLEMA.titulo} />
+              <p className="mt-4 text-lg leading-relaxed text-marca-suave">{PROBLEMA.bajada}</p>
             </div>
-            <p className="mt-3 max-w-3xl leading-relaxed text-gray-700">{fase.detalle}</p>
-            <ul className="mt-5 grid gap-3 sm:grid-cols-2">
-              {fase.pasos.map((paso) => (
-                <li key={paso} className="flex items-start gap-2 text-sm text-gray-700">
-                  <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-indigo-600" />
-                  {paso}
-                </li>
+            <div className="mt-12 grid gap-5 md:grid-cols-3">
+              {PROBLEMA.tarjetas.map((t) => (
+                <FeatureCard key={t.titulo} {...t} />
               ))}
-            </ul>
+            </div>
           </div>
-        </div>
-      </section>
+        </section>
 
-      {/* CTA final */}
-      <section className="px-4 pb-20 sm:px-6">
-        <div className="mx-auto max-w-6xl rounded-3xl bg-[#2a1240] px-6 py-16 text-center text-white sm:px-12">
-          <Isotipo className="mx-auto h-12 w-12" />
-          <h2 className="mt-6 text-3xl font-semibold tracking-tight">
-            Empieza tu próximo encargo en AuditorYa
-          </h2>
-          <p className="mx-auto mt-3 max-w-xl text-indigo-100">
-            Registra tu firma, invita a tu equipo y crea tu primera empresa cliente en minutos.
-          </p>
-          <div className="mt-8">
-            <Button
-              size="lg"
-              className="bg-white text-[#2a1240] hover:bg-indigo-50"
-              onClick={irAlPanel}
-            >
-              {isAuthenticated ? 'Ir al panel' : 'Registra tu firma'}
-            </Button>
+        {/* Cómo funciona */}
+        <section id="como-funciona" aria-labelledby="flujo-titulo" className={`${SECCION} ${BANDA}`}>
+          <div className={CONTENEDOR}>
+            <div className="mx-auto mb-12 max-w-3xl text-center">
+              <Eyebrow>{COMO_FUNCIONA.eyebrow}</Eyebrow>
+              <TituloSeccion id="flujo-titulo" titulo={COMO_FUNCIONA.titulo} className="mt-3" />
+              <p className="mt-4 text-lg leading-relaxed text-marca-suave">{COMO_FUNCIONA.bajada}</p>
+            </div>
+            <WorkflowDiagram etapas={COMO_FUNCIONA.etapas} />
           </div>
-        </div>
-      </section>
+        </section>
 
-      {/* Footer */}
-      <footer className="border-t border-gray-100 py-8">
-        <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-4 px-4 text-sm text-gray-500 sm:flex-row sm:px-6">
-          <div className="flex items-center gap-2">
-            <Isotipo className="h-6 w-6" />
-            <span>AuditorYa · Software de auditoría para firmas colombianas</span>
+        {/* IA: única banda oscura de la página */}
+        <section id="ia" aria-labelledby="ia-titulo" className={`${SECCION} relative overflow-hidden bg-marca-950 text-[#f3ecff]`}>
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-0 bg-[radial-gradient(620px_380px_at_85%_8%,rgba(139,92,246,0.45),transparent_70%),radial-gradient(520px_340px_at_5%_100%,rgba(109,63,242,0.3),transparent_70%)]"
+          />
+          <div className={`${CONTENEDOR} relative`}>
+            <div className="mx-auto mb-12 max-w-3xl text-center">
+              <Eyebrow className="text-marca-300">{IA.eyebrow}</Eyebrow>
+              <h2 id="ia-titulo" className="mt-3 text-balance text-3xl font-extrabold tracking-tight text-white sm:text-4xl lg:text-[2.75rem] lg:leading-[1.1]">
+                {IA.titulo[0]}
+                <br />
+                <span className="text-marca-300">{IA.titulo[1]}</span>
+              </h2>
+              <p className="mt-4 text-lg leading-relaxed text-[#cdbcf5]">{IA.bajada}</p>
+            </div>
+
+            <div className="grid grid-cols-1 items-center gap-10 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] lg:gap-12">
+              <div>
+                <h3 className="text-2xl font-bold tracking-tight text-white">
+                  {IA.criteriosTitulo[0]} <span className="text-marca-300">{IA.criteriosTitulo[1]}</span>
+                </h3>
+                <ul className="mt-4">
+                  {IA.criterios.map(({ icon: Icon, texto }) => (
+                    <li key={texto} className="flex items-center gap-3.5 border-b border-white/10 py-3.5 last:border-0">
+                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-white/10 text-marca-300">
+                        <Icon className="h-[18px] w-[18px]" aria-hidden="true" />
+                      </span>
+                      {texto}
+                    </li>
+                  ))}
+                </ul>
+                <p className="mt-5 flex items-start gap-2.5 rounded-xl border border-white/15 bg-white/[0.08] px-3.5 py-3 text-sm text-[#e9ddff]">
+                  <Info className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                  {IA.advertencia}
+                </p>
+              </div>
+              <FichaIA />
+            </div>
           </div>
-          <div className="flex items-center gap-6">
-            <Link to="/login" className="hover:text-gray-900">Ingresar</Link>
-            <Link to="/onboarding" className="hover:text-gray-900">Registra tu firma</Link>
+        </section>
+
+        {/* Quiénes somos */}
+        <section id="nosotros" aria-labelledby="nosotros-titulo" className={SECCION}>
+          <div className={`${CONTENEDOR} grid grid-cols-1 items-center gap-12 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)] lg:gap-14`}>
+            <div>
+              <Eyebrow>{EXPERIENCIA.eyebrow}</Eyebrow>
+              <TituloSeccion id="nosotros-titulo" titulo={EXPERIENCIA.titulo} className="mt-3" />
+              <p className="mt-5 text-lg leading-relaxed text-marca-suave">{EXPERIENCIA.texto}</p>
+              <p className="mt-7 border-l-[3px] border-marca-600 pl-4 text-lg font-bold">
+                {EXPERIENCIA.frase[0]} <span className="text-marca-700">{EXPERIENCIA.frase[1]}</span>
+              </p>
+            </div>
+            <PerfilAuditor />
           </div>
-        </div>
-      </footer>
+        </section>
+
+        {/* Preguntas frecuentes */}
+        <section id="faq" aria-labelledby="faq-titulo" className={`${SECCION} ${BANDA}`}>
+          <div className={`${CONTENEDOR} grid grid-cols-1 items-start gap-8 lg:grid-cols-[minmax(0,0.7fr)_minmax(0,1.3fr)] lg:gap-14`}>
+            <div>
+              <Eyebrow>FAQ</Eyebrow>
+              <h2 id="faq-titulo" className="mt-3 text-3xl font-extrabold tracking-tight sm:text-4xl lg:text-[2.75rem]">
+                Preguntas frecuentes
+              </h2>
+              <p className="mt-4 text-marca-suave">
+                ¿Tienes otra duda?{' '}
+                <CtaLink href={enlaceWhatsApp(MENSAJES_WHATSAPP.pregunta) ?? '#contacto'} variante="texto" ubicacion="faq" className="text-base underline underline-offset-2">
+                  Escríbenos.
+                </CtaLink>
+              </p>
+            </div>
+            <FAQAccordion preguntas={PREGUNTAS} />
+          </div>
+        </section>
+
+        <FounderProgram />
+      </main>
+
+      <Footer />
     </div>
+  )
+}
+
+/** Ficha de una función de IA real (formato Usa / Genera / Se registra en / Tú revisas). */
+function FichaIA() {
+  const { ficha } = IA
+  return (
+    <figure className="rounded-[20px] bg-white p-6 text-marca-tinta shadow-[0_40px_80px_-30px_rgba(0,0,0,0.6)]">
+      <figcaption className="flex flex-wrap items-center gap-2.5 text-sm font-bold">
+        <span className="flex h-[26px] w-[26px] items-center justify-center rounded-lg bg-marca-600 text-white">
+          <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />
+        </span>
+        {ficha.nombre}
+        <span className="ml-auto">
+          <Pill tono="marca">{ficha.estado}</Pill>
+        </span>
+      </figcaption>
+      <blockquote className="my-4 rounded-xl bg-marca-100 p-3.5 text-sm text-marca-800">“{ficha.cita}”</blockquote>
+      <dl className="grid grid-cols-1 overflow-hidden rounded-xl border border-marca-linea text-[13px] sm:grid-cols-[120px_minmax(0,1fr)]">
+        {ficha.filas.map(({ campo, valor }, i) => {
+          const borde = i < ficha.filas.length - 1 ? 'border-b border-marca-linea' : ''
+          return (
+            <div key={campo} className="contents">
+              <dt className={`bg-[#faf8ff] px-3 py-2.5 text-[11px] uppercase tracking-[0.06em] text-marca-suave ${borde}`}>{campo}</dt>
+              <dd className={`px-3 py-2.5 ${borde}`}>{valor}</dd>
+            </div>
+          )
+        })}
+      </dl>
+      <div aria-hidden="true" className="mt-4 flex justify-end gap-2 text-[13px] font-semibold">
+        <span className="rounded-[10px] border border-marca-linea px-3.5 py-2">{ficha.acciones[0]}</span>
+        <span className="rounded-[10px] bg-marca-600 px-3.5 py-2 text-white">{ficha.acciones[1]}</span>
+      </div>
+    </figure>
+  )
+}
+
+/** Foto, nombre y perfil del auditor; espacio reservado mientras el equipo no lo complete. */
+function PerfilAuditor() {
+  const { auditor, anios } = EXPERIENCIA
+  return (
+    <figure className="rounded-[22px] border border-marca-linea bg-white p-7 shadow-[0_30px_60px_-36px_rgba(91,33,182,0.6)]">
+      {auditor.foto ? (
+        <img
+          src={auditor.foto}
+          alt={auditor.nombre ? `Foto de ${auditor.nombre}` : 'Foto del auditor'}
+          width={640}
+          height={480}
+          loading="lazy"
+          className="aspect-[4/3] w-full rounded-2xl object-cover"
+        />
+      ) : (
+        <div className="flex aspect-[4/3] flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-[#d3c8f3] bg-[repeating-linear-gradient(135deg,#f7f4ff_0_12px,#fff_12px_24px)] text-xs tracking-[0.08em] text-[#8a80b3]">
+          <UserRound className="h-8 w-8" aria-hidden="true" />
+          FOTO DEL AUDITOR (PENDIENTE)
+        </div>
+      )}
+      <figcaption>
+        <p className="mt-5 text-lg font-semibold">{auditor.nombre ?? 'Nombre del auditor (pendiente)'}</p>
+        <p className="text-sm text-marca-suave">{auditor.perfil ?? 'Auditor · Rol en AuditorYa · Credenciales'}</p>
+        <div className="mt-5 flex items-baseline gap-3 border-t border-marca-linea pt-5">
+          <Resaltado className="text-[2.6rem] font-extrabold tracking-tight">{anios.valor}</Resaltado>
+          <span className="max-w-[10rem] text-sm leading-snug text-marca-suave">{anios.texto}</span>
+        </div>
+      </figcaption>
+    </figure>
   )
 }

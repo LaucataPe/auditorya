@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+# Pendiente: agregar "Sitemap: https://<dominio>/sitemap.xml" cuando exista el dominio (docs/landing.md).

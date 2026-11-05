@@ -1,5 +1,5 @@
-import logoUrl from '../../assets/logo.png'
-import isotipoUrl from '../../assets/isotipo.png'
+import logoUrl from '../../assets/logo.webp'
+import isotipoUrl from '../../assets/isotipo.webp'
 
 /**
  * Marca AuditorYa. El lockup completo lleva el texto en azul oscuro, así que solo

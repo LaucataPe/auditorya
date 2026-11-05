@@ -1,5 +1,5 @@
-import { useEffect } from 'react'
-import { Navigate, Route, Routes, useNavigate } from 'react-router-dom'
+import { Suspense, lazy, useEffect, type ComponentType } from 'react'
+import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { useAuthStore } from './store/auth.store'
 import { EVENTO_SESION_EXPIRADA } from './lib/api'
 import { toast } from './store/toast.store'
@@ -7,40 +7,55 @@ import { Toaster } from './components/ui/Toaster'
 import { ConfirmDialog } from './components/ui/ConfirmDialog'
 import { ErrorBoundary } from './components/ui/ErrorBoundary'
 
-// Guards & layouts
-import { AppLayout } from './components/layout/AppLayout'
-import { EmpresaLayout } from './components/empresa/EmpresaLayout'
-
-// Auth pages
+// La landing (/) carga eager para que la primera visita solo descargue su código; el resto
+// de la app se divide por ruta y se descarga al entrar (ver docs/landing.md → Rendimiento).
 import { LandingPage } from './pages/LandingPage'
-import { LoginPage } from './pages/LoginPage'
-import { OnboardingPage } from './pages/OnboardingPage'
 
-// Admin panel pages
-import { DashboardPage } from './pages/DashboardPage'
-import { MiTrabajoPage } from './pages/MiTrabajoPage'
-import { FirmaPage } from './pages/FirmaPage'
-import { EmpresasPage } from './pages/EmpresasPage'
+const AppLayout = lazy(() => import('./components/layout/AppLayout').then((m) => ({ default: m.AppLayout })))
+const EmpresaLayout = lazy(() => import('./components/empresa/EmpresaLayout').then((m) => ({ default: m.EmpresaLayout })))
+const LoginPage = lazy(() => import('./pages/LoginPage').then((m) => ({ default: m.LoginPage })))
+const OnboardingPage = lazy(() => import('./pages/OnboardingPage').then((m) => ({ default: m.OnboardingPage })))
+const DashboardPage = lazy(() => import('./pages/DashboardPage').then((m) => ({ default: m.DashboardPage })))
+const MiTrabajoPage = lazy(() => import('./pages/MiTrabajoPage').then((m) => ({ default: m.MiTrabajoPage })))
+const FirmaPage = lazy(() => import('./pages/FirmaPage').then((m) => ({ default: m.FirmaPage })))
+const EmpresasPage = lazy(() => import('./pages/EmpresasPage').then((m) => ({ default: m.EmpresasPage })))
+const SuperadminLayout = lazy(() => import('./components/superadmin/SuperadminLayout').then((m) => ({ default: m.SuperadminLayout })))
+const SuperadminLogin = lazy(() => import('./pages/superadmin/SuperadminLogin').then((m) => ({ default: m.SuperadminLogin })))
+const SuperadminFirmas = lazy(() => import('./pages/superadmin/SuperadminFirmas').then((m) => ({ default: m.SuperadminFirmas })))
+const SuperadminUsuarios = lazy(() => import('./pages/superadmin/SuperadminUsuarios').then((m) => ({ default: m.SuperadminUsuarios })))
+const SuperadminPermisos = lazy(() => import('./pages/superadmin/SuperadminPermisos').then((m) => ({ default: m.SuperadminPermisos })))
+const SuperadminPrefijos = lazy(() => import('./pages/superadmin/SuperadminPrefijos').then((m) => ({ default: m.SuperadminPrefijos })))
+const EmpresaDashboard = lazy(() => import('./pages/empresa/EmpresaDashboard').then((m) => ({ default: m.EmpresaDashboard })))
+const EmpresaEncargos = lazy(() => import('./pages/empresa/EmpresaEncargos').then((m) => ({ default: m.EmpresaEncargos })))
+const EmpresaArranque = lazy(() => import('./pages/empresa/EmpresaArranque').then((m) => ({ default: m.EmpresaArranque })))
+const EmpresaAuditoria = lazy(() => import('./pages/empresa/EmpresaAuditoria').then((m) => ({ default: m.EmpresaAuditoria })))
+const EmpresaPapel = lazy(() => import('./pages/empresa/EmpresaPapel').then((m) => ({ default: m.EmpresaPapel })))
+const EmpresaEvaluacion = lazy(() => import('./pages/empresa/EmpresaEvaluacion').then((m) => ({ default: m.EmpresaEvaluacion })))
+const EmpresaDocumentos = lazy(() => import('./pages/empresa/EmpresaDocumentos').then((m) => ({ default: m.EmpresaDocumentos })))
+const EmpresaInformacion = lazy(() => import('./pages/empresa/EmpresaInformacion').then((m) => ({ default: m.EmpresaInformacion })))
+const EmpresaTributario = lazy(() => import('./pages/empresa/EmpresaTributario').then((m) => ({ default: m.EmpresaTributario })))
+const EmpresaTributarioRevision = lazy(() => import('./pages/empresa/EmpresaTributarioRevision').then((m) => ({ default: m.EmpresaTributarioRevision })))
 
-// Superadmin
-import { SuperadminLayout } from './components/superadmin/SuperadminLayout'
-import { SuperadminLogin } from './pages/superadmin/SuperadminLogin'
-import { SuperadminFirmas } from './pages/superadmin/SuperadminFirmas'
-import { SuperadminUsuarios } from './pages/superadmin/SuperadminUsuarios'
-import { SuperadminPermisos } from './pages/superadmin/SuperadminPermisos'
-import { SuperadminPrefijos } from './pages/superadmin/SuperadminPrefijos'
+/** Spinner mientras se descarga el código de una ruta (o se verifica la sesión). */
+function Cargando({ completa = true }: { completa?: boolean }) {
+  return (
+    <div className={completa ? 'min-h-screen flex items-center justify-center bg-gray-50' : 'flex min-h-[40vh] items-center justify-center'}>
+      <div className="h-6 w-6 animate-spin rounded-full border-2 border-indigo-600 border-t-transparent" />
+    </div>
+  )
+}
 
-// Empresa panel pages
-import { EmpresaDashboard } from './pages/empresa/EmpresaDashboard'
-import { EmpresaEncargos } from './pages/empresa/EmpresaEncargos'
-import { EmpresaArranque } from './pages/empresa/EmpresaArranque'
-import { EmpresaAuditoria } from './pages/empresa/EmpresaAuditoria'
-import { EmpresaPapel } from './pages/empresa/EmpresaPapel'
-import { EmpresaEvaluacion } from './pages/empresa/EmpresaEvaluacion'
-import { EmpresaDocumentos } from './pages/empresa/EmpresaDocumentos'
-import { EmpresaInformacion } from './pages/empresa/EmpresaInformacion'
-import { EmpresaTributario } from './pages/empresa/EmpresaTributario'
-import { EmpresaTributarioRevision } from './pages/empresa/EmpresaTributarioRevision'
+/**
+ * Ruta con carga diferida. Cada una lleva su propio Suspense: así, al navegar dentro de un
+ * layout, solo el contenido espera y el layout (sidebar, encabezado) no desaparece.
+ */
+function L({ c: C, completa = false }: { c: ComponentType; completa?: boolean }) {
+  return (
+    <Suspense fallback={<Cargando completa={completa} />}>
+      <C />
+    </Suspense>
+  )
+}
 
 function OnboardingGuard({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, onboardingComplete } = useAuthStore()
@@ -65,19 +80,17 @@ function useSesionExpirada() {
 
 export default function App() {
   const { checkSession, sessionChecked } = useAuthStore()
+  const { pathname } = useLocation()
   useSesionExpirada()
 
   useEffect(() => {
     checkSession()
   }, [checkSession])
 
-  // Espera el check inicial antes de renderizar rutas para evitar flash
-  if (!sessionChecked) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        <div className="h-6 w-6 animate-spin rounded-full border-2 border-indigo-600 border-t-transparent" />
-      </div>
-    )
+  // Espera el check inicial antes de renderizar rutas para evitar flash. La landing es
+  // pública y no depende de la sesión: se pinta de inmediato aunque el backend tarde.
+  if (!sessionChecked && pathname !== '/') {
+    return <Cargando />
   }
 
   return (
@@ -87,47 +100,47 @@ export default function App() {
     <Routes>
       {/* Public */}
       <Route path="/" element={<LandingPage />} />
-      <Route path="/login" element={<LoginPage />} />
+      <Route path="/login" element={<L c={LoginPage} completa />} />
       <Route
         path="/onboarding"
         element={
           <OnboardingGuard>
-            <OnboardingPage />
+            <L c={OnboardingPage} completa />
           </OnboardingGuard>
         }
       />
 
       {/* Admin panel */}
-      <Route element={<AppLayout />}>
-        <Route path="/dashboard" element={<DashboardPage />} />
-        <Route path="/mi-trabajo" element={<MiTrabajoPage />} />
-        <Route path="/firma" element={<FirmaPage />} />
-        <Route path="/empresas" element={<EmpresasPage />} />
+      <Route element={<L c={AppLayout} completa />}>
+        <Route path="/dashboard" element={<L c={DashboardPage} />} />
+        <Route path="/mi-trabajo" element={<L c={MiTrabajoPage} />} />
+        <Route path="/firma" element={<L c={FirmaPage} />} />
+        <Route path="/empresas" element={<L c={EmpresasPage} />} />
       </Route>
 
       {/* Empresa panel — layout propio por empresa */}
-      <Route path="/empresas/:id" element={<EmpresaLayout />}>
+      <Route path="/empresas/:id" element={<L c={EmpresaLayout} completa />}>
         <Route index element={<Navigate to="dashboard" replace />} />
-        <Route path="dashboard" element={<EmpresaDashboard />} />
-        <Route path="encargos" element={<EmpresaEncargos />} />
-        <Route path="encargos/:auditoriaId" element={<EmpresaAuditoria />} />
-        <Route path="encargos/:auditoriaId/arranque" element={<EmpresaArranque />} />
-        <Route path="encargos/:auditoriaId/papeles/:papelId" element={<EmpresaPapel />} />
-        <Route path="evaluacion" element={<EmpresaEvaluacion />} />
-        <Route path="documentos" element={<EmpresaDocumentos />} />
-        <Route path="informacion" element={<EmpresaInformacion />} />
-        <Route path="tributario" element={<EmpresaTributario />} />
-        <Route path="tributario/:revisionId" element={<EmpresaTributarioRevision />} />
+        <Route path="dashboard" element={<L c={EmpresaDashboard} />} />
+        <Route path="encargos" element={<L c={EmpresaEncargos} />} />
+        <Route path="encargos/:auditoriaId" element={<L c={EmpresaAuditoria} />} />
+        <Route path="encargos/:auditoriaId/arranque" element={<L c={EmpresaArranque} />} />
+        <Route path="encargos/:auditoriaId/papeles/:papelId" element={<L c={EmpresaPapel} />} />
+        <Route path="evaluacion" element={<L c={EmpresaEvaluacion} />} />
+        <Route path="documentos" element={<L c={EmpresaDocumentos} />} />
+        <Route path="informacion" element={<L c={EmpresaInformacion} />} />
+        <Route path="tributario" element={<L c={EmpresaTributario} />} />
+        <Route path="tributario/:revisionId" element={<L c={EmpresaTributarioRevision} />} />
       </Route>
 
       {/* Superadmin */}
-      <Route path="/superadmin/login" element={<SuperadminLogin />} />
-      <Route path="/superadmin" element={<SuperadminLayout />}>
+      <Route path="/superadmin/login" element={<L c={SuperadminLogin} completa />} />
+      <Route path="/superadmin" element={<L c={SuperadminLayout} completa />}>
         <Route index element={<Navigate to="firmas" replace />} />
-        <Route path="firmas" element={<SuperadminFirmas />} />
-        <Route path="usuarios" element={<SuperadminUsuarios />} />
-        <Route path="permisos" element={<SuperadminPermisos />} />
-        <Route path="prefijos" element={<SuperadminPrefijos />} />
+        <Route path="firmas" element={<L c={SuperadminFirmas} />} />
+        <Route path="usuarios" element={<L c={SuperadminUsuarios} />} />
+        <Route path="permisos" element={<L c={SuperadminPermisos} />} />
+        <Route path="prefijos" element={<L c={SuperadminPrefijos} />} />
       </Route>
 
       <Route path="*" element={<Navigate to="/" replace />} />

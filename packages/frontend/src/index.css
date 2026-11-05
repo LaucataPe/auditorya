@@ -1,5 +1,3 @@
-@import url('https://rsms.me/inter/inter.css');
-
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -33,5 +31,12 @@
   }
   *::-webkit-scrollbar-track {
     background: transparent;
+  }
+}
+
+/* Anclas de la landing: desplazamiento suave solo si el usuario no pidió reducir movimiento. */
+@media (prefers-reduced-motion: no-preference) {
+  html {
+    scroll-behavior: smooth;
   }
 }
