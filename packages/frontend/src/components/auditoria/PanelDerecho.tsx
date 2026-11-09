@@ -1,7 +1,10 @@
 import type { GuiaItem } from '@auditorya/types'
-import { Check, Circle, CircleDot, BookMarked, Lightbulb } from 'lucide-react'
+import { useState } from 'react'
+import { Check, Circle, CircleDot, BookMarked, Lightbulb, PanelRightClose, PanelRightOpen } from 'lucide-react'
 import { CATALOGO_ETAPAS } from '../../lib/catalogo-etapas'
 import { cn } from '../../lib/cn'
+
+const LS_KEY = 'panel-derecho-colapsado'
 
 export function PanelDerecho({
   faseLabel,
@@ -21,9 +24,46 @@ export function PanelDerecho({
 }) {
   const info = CATALOGO_ETAPAS[pasoActivo]
   const faltan = items.filter((i) => i.requerido && !i.hecho).length
+  const [colapsado, setColapsado] = useState(() => {
+    try { return localStorage.getItem(LS_KEY) === '1' } catch { return false }
+  })
+  const alternar = () => {
+    const nuevo = !colapsado
+    setColapsado(nuevo)
+    try { localStorage.setItem(LS_KEY, nuevo ? '1' : '0') } catch { /* sin almacenamiento */ }
+  }
+
+  if (colapsado) {
+    return (
+      <aside className="shrink-0">
+        <button
+          onClick={alternar}
+          title="Mostrar checklist y tips"
+          aria-label="Mostrar checklist y tips"
+          className="flex flex-col items-center gap-2 rounded-2xl border border-gray-200 bg-white px-2 py-3 text-gray-500 hover:text-indigo-600 hover:bg-gray-50 transition-colors"
+        >
+          <PanelRightOpen size={18} />
+          {faltan > 0 && (
+            <span className="text-xs font-medium px-1.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700">{faltan}</span>
+          )}
+          <span className="text-xs font-medium [writing-mode:vertical-rl]">Checklist y tips</span>
+        </button>
+      </aside>
+    )
+  }
 
   return (
     <aside className="w-80 shrink-0 space-y-4">
+      <div className="flex justify-end -mb-2">
+        <button
+          onClick={alternar}
+          title="Ocultar panel"
+          aria-label="Ocultar panel"
+          className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-gray-500 hover:text-indigo-600 hover:bg-gray-100 transition-colors"
+        >
+          Ocultar <PanelRightClose size={15} />
+        </button>
+      </div>
       {/* Card 1 · Checklist de la etapa (o el panel del agente) */}
       {arriba ?? (
       <div className="rounded-2xl border border-gray-200 bg-white p-4">
