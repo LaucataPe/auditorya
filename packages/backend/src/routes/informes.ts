@@ -19,7 +19,7 @@ import {
   usuarios,
 } from '../db/schema'
 import sanitizeHtml from 'sanitize-html'
-import { TIPOS_INFORME_ENRIQUECIDO, ETIQUETAS_INFORME_ENRIQUECIDO, compararIndices, type TipoInforme } from '@auditorya/types'
+import { TIPOS_INFORME_ENRIQUECIDO, ETIQUETAS_INFORME_ENRIQUECIDO, esHtmlInforme, compararIndices, type TipoInforme } from '@auditorya/types'
 import { authMiddleware } from '../middleware/auth'
 import { esSocioResponsable, ERROR_NO_SOCIO_RESPONSABLE } from '../lib/permisos'
 import { encargoCerrado, ERROR_ENCARGO_CERRADO } from '../lib/encargo'
@@ -355,12 +355,15 @@ app.put(
     if (body.contenido) {
       // Los informes con editor enriquecido guardan HTML: se sanitiza contra la
       // whitelist compartida (sin atributos → sin estilos/fuentes libres, sin XSS).
-      // Los demás tipos guardan texto plano y se dejan intactos.
+      // Los demás tipos, y las secciones aún en texto plano de la plantilla, se dejan
+      // intactos: sanitizarlas escaparía `&` y el PDF las escaparía otra vez.
       updates.contenido = TIPOS_INFORME_ENRIQUECIDO.includes(row.informe.tipo as TipoInforme)
         ? Object.fromEntries(
             Object.entries(body.contenido).map(([k, v]) => [
               k,
-              sanitizeHtml(v, { allowedTags: ETIQUETAS_INFORME_ENRIQUECIDO, allowedAttributes: {} }),
+              esHtmlInforme(v)
+                ? sanitizeHtml(v, { allowedTags: ETIQUETAS_INFORME_ENRIQUECIDO, allowedAttributes: {} })
+                : v,
             ]),
           )
         : body.contenido

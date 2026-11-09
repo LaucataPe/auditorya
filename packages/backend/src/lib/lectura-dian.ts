@@ -112,17 +112,37 @@ async function leerConN8n(archivo: ArchivoLLM, tipo: string): Promise<Casillas> 
  * si no extrae ningún valor (formularios MUISCA con campos XFA o PDFs escaneados)
  * o falla, se reintenta con OCR (mistral-ocr).
  */
-async function leerConLlm(archivo: ArchivoLLM, system: string, prompt: string): Promise<Casillas> {
+async function leerConLlm(
+  archivo: ArchivoLLM,
+  system: string,
+  prompt: string,
+  descuadres?: (c: Casillas) => number,
+  soloOcr = false,
+): Promise<Casillas> {
   const intentar = async (engine?: 'pdf-text' | 'mistral-ocr') => {
     const crudo = await completarJSONArchivo<unknown>({ system, prompt, archivo, inicioJson: '{', maxTokens: 3000, engine })
     return parsearCasillas(crudo)
   }
 
   if (archivo.mime !== 'application/pdf') return intentar()
+  if (soloOcr) return intentar('mistral-ocr')
 
   try {
     const casillas = await intentar('pdf-text')
-    if (Object.values(casillas).some((v) => typeof v === 'number' && v !== 0)) return casillas
+    if (Object.values(casillas).some((v) => typeof v === 'number' && v !== 0)) {
+      // Valores no nulos no prueban que estén en su casilla: un modelo barato
+      // corre el formulario una casilla. Si los totales no cuadran se prueba
+      // con OCR y se queda la lectura que más cuadra.
+      const malos = descuadres?.(casillas) ?? 0
+      if (malos === 0) return casillas
+      console.warn(`[lectura-dian] pdf-text dejó ${malos} total(es) sin cuadrar; reintentando con OCR`)
+      try {
+        const ocr = await intentar('mistral-ocr')
+        return descuadres!(ocr) < malos ? ocr : casillas
+      } catch {
+        return casillas
+      }
+    }
     console.warn('[lectura-dian] pdf-text no extrajo valores del borrador; reintentando con OCR')
     return await intentar('mistral-ocr')
   } catch (err) {
@@ -143,8 +163,12 @@ export async function transcribirCasillas(opts: {
   /** System + prompt del camino LLM; el workflow de n8n no los necesita. */
   system: string
   prompt: string
+  /** Cuántos totales del formulario no cuadran con esas casillas (0 = lectura coherente). */
+  descuadres?: (c: Casillas) => number
+  /** Reintento pedido por la persona: salta n8n y lee solo con OCR. */
+  forzarOcr?: boolean
 }): Promise<{ casillas: Casillas; fuente: FuenteLectura }> {
-  if (n8nDisponible()) {
+  if (n8nDisponible() && !opts.forzarOcr) {
     try {
       return { casillas: await leerConN8n(opts.archivo, opts.tipo), fuente: 'n8n' }
     } catch (err) {
@@ -152,5 +176,5 @@ export async function transcribirCasillas(opts: {
       console.warn('[lectura-dian] el workflow n8n falló; cayendo al LLM:', (err as Error).message)
     }
   }
-  return { casillas: await leerConLlm(opts.archivo, opts.system, opts.prompt), fuente: 'llm' }
+  return { casillas: await leerConLlm(opts.archivo, opts.system, opts.prompt, opts.descuadres, opts.forzarOcr), fuente: 'llm' }
 }

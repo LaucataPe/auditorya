@@ -40,3 +40,16 @@
     scroll-behavior: smooth;
   }
 }
+
+/* Calendario del CampoFecha (react-day-picker): acento de la marca y celdas compactas. */
+.campo-fecha {
+  --rdp-accent-color: #4f46e5;
+  --rdp-accent-background-color: #eef2ff;
+  --rdp-day-height: 36px;
+  --rdp-day-width: 36px;
+  --rdp-day_button-height: 34px;
+  --rdp-day_button-width: 34px;
+  --rdp-nav_button-height: 2rem;
+  --rdp-nav_button-width: 2rem;
+  font-size: 0.8125rem;
+}

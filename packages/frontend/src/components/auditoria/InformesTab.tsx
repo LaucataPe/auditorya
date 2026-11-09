@@ -2,17 +2,16 @@ import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   SECCIONES_INFORME, TIPO_INFORME_LABEL, TIPO_OPINION_LABEL, OPINION_LABEL,
-  ESTADO_HALLAZGO_LABEL, TIPOS_INFORME_ENRIQUECIDO, esHtmlInforme, textoPlanoAHtml, compararIndices,
+  ESTADO_HALLAZGO_LABEL, compararIndices,
   type TipoInforme, type TipoOpinion, type EvaluacionOpinion, type OpinionSugerida,
   type HallazgoConPapel,
 } from '@auditorya/types'
-import { FileText, CheckCircle, Printer, FileDown, ShieldCheck, Mail, FilePlus2, RefreshCw } from 'lucide-react'
+import { FileText, CheckCircle, Printer, FileDown, ShieldCheck, Mail, FilePlus2, RefreshCw, Eye } from 'lucide-react'
 import { BloqueoMaterialidad } from './BloqueoMaterialidad'
 import { Button } from '../ui/Button'
 import { Modal } from '../ui/Modal'
 import { Select } from '../ui/Select'
-import { Textarea } from '../ui/Textarea'
-import { RichTextEditor } from '../ui/RichTextEditor'
+import { DocumentoEditable } from '../ui/DocumentoEditable'
 import { api } from '../../lib/api'
 import { useAuthStore } from '../../store/auth.store'
 import { cn } from '../../lib/cn'
@@ -173,6 +172,7 @@ function CartaRecomendaciones({
 }) {
   const { areaLabel } = useAreas()
   const { firma } = useAuthStore()
+  const [vistaPrevia, setVistaPrevia] = useState(false)
 
   const { data: hallazgos = [] } = useQuery<HallazgoConPapel[]>({
     queryKey: ['hallazgos', auditoriaId],
@@ -251,6 +251,9 @@ function CartaRecomendaciones({
           </div>
         </div>
         <div className="flex gap-2">
+          <Button size="sm" variant="secondary" className="gap-1.5" disabled={pendientes.length === 0} onClick={() => setVistaPrevia(true)}>
+            <Eye size={13} /> Vista previa
+          </Button>
           <Button size="sm" variant="secondary" className="gap-1.5" disabled={pendientes.length === 0} onClick={pdf}>
             <Printer size={13} /> PDF
           </Button>
@@ -259,6 +262,17 @@ function CartaRecomendaciones({
           </Button>
         </div>
       </div>
+
+      {vistaPrevia && (
+        <Modal open onClose={() => setVistaPrevia(false)} title="Carta de recomendaciones" size="xl">
+          <DocumentoEditable
+            {...exportOpts()}
+            secciones={exportOpts().secciones.map((s, i) => ({ ...s, key: String(i) }))}
+            disabled
+            aviso="Vista previa de solo lectura: la carta se arma con los hallazgos pendientes; corrige el texto en cada hallazgo."
+          />
+        </Modal>
+      )}
     </div>
   )
 }
@@ -328,8 +342,8 @@ function InformeEditor({
   const nombreArchivo = `${TIPO_INFORME_LABEL[tipo].replace(/[^\w]+/g, '_')}_${empresaNombre.replace(/[^\w]+/g, '_')}`
 
   return (
-    <Modal open onClose={onClose} title={TIPO_INFORME_LABEL[tipo]} size="lg">
-      <div className="space-y-4 max-h-[72vh] overflow-y-auto pr-1">
+    <Modal open onClose={onClose} title={TIPO_INFORME_LABEL[tipo]} size="xl">
+      <div className="space-y-4">
         {/* Sin generar */}
         {!informe ? (
           <div className="text-center py-6 space-y-4">
@@ -391,37 +405,18 @@ function InformeEditor({
               </div>
             )}
 
-            {secciones.map((s) => {
-              const valor = contenido[s.key] ?? ''
-              // El dictamen se edita con formato enriquecido; los borradores de
-              // plantilla (texto plano) se convierten a párrafos HTML al abrir.
-              if (TIPOS_INFORME_ENRIQUECIDO.includes(tipo)) {
-                return (
-                  <RichTextEditor
-                    key={s.key}
-                    id={`inf-${s.key}`}
-                    label={s.label}
-                    value={esHtmlInforme(valor) ? valor : textoPlanoAHtml(valor)}
-                    disabled={aprobado}
-                    onChange={(html) => setContenido((prev) => ({ ...prev, [s.key]: html }))}
-                  />
-                )
-              }
-              return (
-                <Textarea
-                  key={s.key}
-                  id={`inf-${s.key}`}
-                  label={s.label}
-                  rows={s.key === 'firma' || s.key === 'destinatario' ? 3 : 5}
-                  value={valor}
-                  disabled={aprobado}
-                  onChange={(e) => setContenido((prev) => ({ ...prev, [s.key]: e.target.value }))}
-                />
-              )
-            })}
+            <DocumentoEditable
+              {...exportOpts()}
+              secciones={secciones.map((s) => ({
+                key: s.key, label: s.label, contenido: contenido[s.key] ?? '', editable: true,
+              }))}
+              disabled={aprobado}
+              onChange={(key, html) => setContenido((prev) => ({ ...prev, [key]: html }))}
+            />
 
             {/* Acciones */}
-            <div className="border-t border-gray-100 pt-4 flex flex-wrap items-center gap-2">
+            {/* Fija al pie del modal: el documento completo puede ser largo. */}
+            <div className="sticky bottom-0 bg-white border-t border-gray-100 pt-4 flex flex-wrap items-center gap-2">
               {!aprobado && (
                 <Button size="sm" loading={guardar.isPending} onClick={() => guardar.mutate()}>
                   Guardar

@@ -12,13 +12,16 @@ import { cn } from '../../lib/cn'
  * del editor. `value` es HTML; para texto plano legado usar textoPlanoAHtml.
  */
 export function RichTextEditor({
-  id, label, value, onChange, disabled,
+  id, label, value, onChange, disabled, claseContenido, autoFocus,
 }: {
   id?: string
   label?: string
   value: string
   onChange: (html: string) => void
   disabled?: boolean
+  /** Clases del área editable; la vista previa del documento las usa para heredar su tipografía. */
+  claseContenido?: string
+  autoFocus?: boolean
 }) {
   const editor = useEditor({
     extensions: [
@@ -35,6 +38,7 @@ export function RichTextEditor({
     ],
     content: value,
     editable: !disabled,
+    autofocus: autoFocus ? 'end' : false,
     onUpdate: ({ editor }) => onChange(editor.getHTML()),
     editorProps: {
       attributes: {
@@ -42,6 +46,7 @@ export function RichTextEditor({
         class: cn(
           'min-h-[110px] px-3 py-2 text-sm text-gray-900 focus:outline-none',
           '[&_p]:my-0.5 [&_ul]:list-disc [&_ul]:pl-5 [&_ul]:my-1 [&_ol]:list-decimal [&_ol]:pl-5 [&_ol]:my-1',
+          claseContenido,
         ),
       },
     },

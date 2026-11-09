@@ -15,7 +15,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   AlertTriangle, ArrowLeft, ArrowRight, Bot, Calculator, Check, CheckCircle2, ChevronDown, ChevronRight, ClipboardList, Download, FileSpreadsheet,
-  FileText, FolderOpen, Landmark, LayoutList, Play, Plus, Printer, Sparkles, Trash2, Upload,
+  Eye, FileText, FolderOpen, Landmark, LayoutList, Play, Plus, Printer, Sparkles, Trash2, Upload,
 } from 'lucide-react'
 import {
   AGENTES_TRIBUTARIOS,
@@ -27,9 +27,12 @@ import {
   type ProgramaRevision,
   type RevisionTributariaDetalle,
   type TipoAgentico,
+  type TipoAdjuntoTributario,
   hallazgosDelAgente,
   mapeoMemoriaDe,
+  textoConclusion,
 } from '@auditorya/types'
+import { Link } from 'react-router-dom'
 import { cn } from '../../lib/cn'
 import { fechaCorta } from '../../lib/fechas'
 import { Button } from '../ui/Button'
@@ -63,7 +66,8 @@ type Props = {
   guardando: boolean
   invalidar: () => void
   onLeerBorrador: () => void
-  onAdjuntar: (hallazgoId: string | null) => void
+  /** `tipo` fija el tipo de soporte (p. ej. la declaración presentada del período anterior). */
+  onAdjuntar: (hallazgoId: string | null, tipo?: TipoAdjuntoTributario) => void
   onDescargar: (adjuntoId: string) => void
   onEliminarAdjunto: (adjuntoId: string) => void
   onFirmar: () => void
@@ -73,6 +77,8 @@ type Props = {
   /** Renglones con diferencia entre declarado y libros, para el indicador del botón. */
   diferenciasCifras: number
   exportarDocumento: (formato: 'pdf' | 'word') => void
+  /** Abre el documento (preliminar o constancia) como vista previa editable. */
+  onVistaPrevia: () => void
   /** Cédulas (papel de trabajo interno) con todo lo comparado y las conclusiones. */
   exportarCedulas: (formato: 'pdf' | 'word') => void
   irAPestanas: () => void
@@ -201,7 +207,7 @@ function PasoPrograma({ revision, empresa, sellada, programa, agenteDef, onGuard
             ayuda="Qué cubre la revisión de este período y qué no. Viene un borrador estándar; ajústalo si hace falta."
             valor={revision.alcance}
             sugerido={alcanceSugerido({ obligacion: revision.obligacion, periodo: revision.periodo, empresaNombre: empresa?.nombre ?? '' })}
-            remontar={`${empresa?.nombre ?? ''}|${revision.alcance === null}`}
+            remontar={`${empresa?.nombre ?? ''}|${revision.alcance ?? ''}`}
             filas={12}
             deshabilitado={sellada}
             onGuardar={(v) => guardar({ alcance: v })}
@@ -283,9 +289,8 @@ function PasoDocumentos({ p, agente, programa, agenteDef, soportes }: { p: Props
   const { revision, sellada } = p
   const activos = new Set(programa.pasos.filter((x) => x.origen === 'agente' && x.activo).map((x) => x.id))
   const insumos: InsumoIva[] = (['borrador', 'auxiliar', 'dian', 'anterior'] as InsumoIva[]).filter((i) => agenteDef.programa.some((x) => activos.has(x.id) && x.insumos.includes(i)))
-  const tieneAnteriorEnPlataforma = !!agente.anterior
+  const anterior = agente.anterior
   const recomendadoAnterior = agenteDef.anteriorRelevante(revision.cifras)
-  const declaracionAnteriorAdjunta = revision.adjuntos.some((a) => a.tipo === 'declaracion' && /anterior/i.test(a.nombre))
 
   const estado = (i: InsumoIva): { listo: boolean; texto: string; opcional?: boolean } => {
     switch (i) {
@@ -297,9 +302,13 @@ function PasoDocumentos({ p, agente, programa, agenteDef, soportes }: { p: Props
           : agente.librosDiligenciados ? 'Según libros ya guardado en la revisión' : `Falta: el libro auxiliar de ${agenteDef.cuentas.map((c) => c.prefijo).join(', ')} del período, o el balance de prueba del período. Puede ser un archivo por cuenta o uno solo con todas; se lee tal como lo exporta el programa contable.`,
       }
       case 'dian': return { listo: !!agente.dian, texto: agente.dian ? `${agente.dian.archivo}: ${agente.dian.reporte.documentos.length} documento(s)` : 'Falta: se descarga del portal de facturación electrónica de la DIAN', opcional: true }
-      case 'anterior': return tieneAnteriorEnPlataforma
-        ? { listo: true, texto: `La revisión de ${agente.anterior!.etiqueta} está en la plataforma: no hace falta adjuntarla` }
-        : { listo: declaracionAnteriorAdjunta, texto: declaracionAnteriorAdjunta ? 'Declaración anterior adjunta' : recomendadoAnterior ?? agenteDef.anteriorOpcional, opcional: true }
+      // La fuente es solo el PDF de la declaración presentada que se sube al período anterior. Sin él no se
+      // compara; no bloquea nada, solo se avisa.
+      case 'anterior':
+        if (!anterior) return { listo: false, texto: agenteDef.anteriorOpcional, opcional: true }
+        return anterior.estado === 'encontrada'
+          ? { listo: true, texto: `Se lee la declaración presentada de ${anterior.etiqueta} (${anterior.archivo}) al correr el análisis${anterior.origen === 'subida' ? '' : ', tomada de ese período'}` }
+          : { listo: false, texto: `${recomendadoAnterior ? `${recomendadoAnterior}. ` : ''}No se encontró la declaración presentada del período anterior (${anterior.etiqueta}): el análisis corre sin compararla. Súbela aquí para habilitar la comparación.`, opcional: true }
     }
   }
   const listos = insumos.filter((i) => estado(i).listo).length
@@ -382,7 +391,16 @@ function PasoDocumentos({ p, agente, programa, agenteDef, soportes }: { p: Props
                       />
                     )}
                     {i === 'dian' && <CargarArchivo label={agente.dian ? 'Cargar otro reporte' : 'Cargar reporte DIAN'} loading={agente.cargando === 'dian'} onFile={agente.cargarDian} />}
-                    {i === 'anterior' && !tieneAnteriorEnPlataforma && <Button size="sm" variant="secondary" className="gap-1.5" onClick={() => p.onAdjuntar(null)}><Upload size={12} /> Adjuntar declaración anterior</Button>}
+                    {i === 'anterior' && (
+                      <Button size="sm" variant="secondary" className="gap-1.5" onClick={() => p.onAdjuntar(null, 'declaracion_anterior')}>
+                        <Upload size={12} /> {anterior?.estado === 'encontrada' && anterior.origen === 'subida' ? 'Reemplazar la declaración anterior' : 'Adjuntar declaración anterior'}
+                      </Button>
+                    )}
+                    {i === 'anterior' && anterior?.estado === 'no_encontrada' && anterior.revisionId && (
+                      <Link to={`/empresas/${revision.obligacion.empresaId}/tributario/${anterior.revisionId}`} className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-2.5 py-1 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50">
+                        <ArrowLeft size={12} /> Ver {anterior.etiqueta}
+                      </Link>
+                    )}
                   </div>
                 )}
               </li>
@@ -608,7 +626,7 @@ function PasoAnalisis({ agente, sellada, exportarCedulas, onSiguiente, onAtras }
             Insumos: {[
               ...r.insumos.auxiliares.map((a) => a.nombre),
               r.insumos.dian ? `${r.insumos.dian.archivo} (${r.insumos.dian.documentos} documentos DIAN)` : null,
-              r.insumos.anterior ? `revisión de ${r.insumos.anterior}` : null,
+              r.insumos.anterior ? `declaración presentada de ${r.insumos.anterior}` : null,
             ].filter(Boolean).join(' · ') || 'solo la columna Declarado'}.
           </p>
         )}
@@ -792,9 +810,9 @@ function PasoInforme({ p, agente, programa, hechos, total, soportes }: { p: Prop
   const { revision, sellada } = p
   const pendientes = revision.hallazgos.filter((h) => h.estado !== 'resuelto').length
   const propiosPendientes = programa.pasos.filter((x) => x.origen === 'propio' && x.activo && !x.hecho).length
-  const sinConclusion = !(revision.conclusion ?? '').trim()
+  const sinConclusion = !textoConclusion(revision)
   const faltanCedulas = agente.sinConcluir.length
-  const motivoNoFirmar = sinConclusion ? 'Escribe la conclusión antes de firmar' : faltanCedulas ? `Falta tu conclusión en ${faltanCedulas} procedimiento(s)` : undefined
+  const motivoNoFirmar = sinConclusion ? 'Escribe las observaciones y la conclusión antes de firmar' : faltanCedulas ? `Falta tu conclusión en ${faltanCedulas} procedimiento(s)` : undefined
   const resumen = [
     { label: 'Programa', valor: `${programa.pasos.filter((x) => x.activo).length} paso(s)${propiosPendientes ? ` · ${propiosPendientes} propio(s) sin marcar` : ''}`, ok: propiosPendientes === 0 },
     { label: 'Checklist del impuesto', valor: `${hechos} de ${total} puntos`, ok: hechos === total },
@@ -812,17 +830,10 @@ function PasoInforme({ p, agente, programa, hechos, total, soportes }: { p: Prop
         </div>
         <div className="space-y-4 p-5">
           <div>
-            <label className="mb-1.5 block text-sm font-semibold text-gray-900">Observaciones</label>
-            <textarea rows={3} defaultValue={revision.observaciones ?? ''} disabled={sellada}
-              onBlur={(e) => { if ((e.target.value || null) !== revision.observaciones) p.guardar({ observaciones: e.target.value }) }}
-              placeholder="Partidas por aclarar, recomendaciones generales al cliente…"
-              className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 placeholder:text-gray-300 focus:border-indigo-300 focus:outline-none disabled:bg-gray-50" />
-          </div>
-          <div>
-            <label className="mb-1.5 block text-sm font-semibold text-gray-900">Conclusión</label>
-            <textarea rows={4} defaultValue={revision.conclusion ?? ''} disabled={sellada}
-              onBlur={(e) => { if ((e.target.value || null) !== revision.conclusion) p.guardar({ conclusion: e.target.value }) }}
-              placeholder="p. ej. Revisada la declaración del período contra libros y facturación electrónica; las bases, tarifas y descontables son razonables y se presentó y pagó oportunamente."
+            <textarea key={textoConclusion(revision)} rows={7} defaultValue={textoConclusion(revision)} disabled={sellada}
+              // Un solo campo: se guarda como conclusión y las observaciones heredadas (ya mostradas aquí dentro) se vacían.
+              onBlur={(e) => { if (e.target.value.trim() !== textoConclusion(revision)) p.guardar({ conclusion: e.target.value, observaciones: null }) }}
+              placeholder="Partidas por aclarar y recomendaciones al cliente; y tu conclusión. p. ej. Revisada la declaración del período contra libros y facturación electrónica; las bases, tarifas y descontables son razonables y se presentó y pagó oportunamente."
               className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 placeholder:text-gray-300 focus:border-indigo-300 focus:outline-none disabled:bg-gray-50" />
             <p className="mt-1 text-xs text-gray-400">Requerida para firmar. El informe lleva alcance, programa, lo verificado, hallazgos, conclusión y soportes.</p>
             {faltanCedulas > 0 && !sellada && (
@@ -836,6 +847,7 @@ function PasoInforme({ p, agente, programa, hechos, total, soportes }: { p: Prop
             <Button variant="ghost" className="gap-2" onClick={() => p.onPaso(4)}><ArrowLeft size={15} /> Hallazgos</Button>
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-xs text-gray-400">{sellada ? 'Constancia:' : 'Informe preliminar:'}</span>
+              <Button size="sm" variant="secondary" className="gap-1.5" onClick={p.onVistaPrevia}><Eye size={13} /> Vista previa</Button>
               <Button size="sm" variant="secondary" className="gap-1.5" onClick={() => p.exportarDocumento('pdf')}><Printer size={13} /> PDF</Button>
               <Button size="sm" variant="secondary" className="gap-1.5" onClick={() => p.exportarDocumento('word')}><Download size={13} /> Word</Button>
               {!sellada && <Button className="gap-2" disabled={!!motivoNoFirmar} onClick={p.onFirmar} title={motivoNoFirmar}><CheckCircle2 size={15} /> Firmar revisión</Button>}

@@ -150,7 +150,7 @@ export function correrRevisionReteica(entrada: EntradaCorridaReteica): Resultado
     libros: cedulaDePaso('libros', 'cruce', `Verificar que las retenciones, devoluciones y bases declaradas${nombreMun ? ` a ${nombreMun}` : ''} son las que la contabilidad registró en el período.`, `${tolTexto} Base: margen del ${UMBRALES_RETEICA.margenBasePct} % contra la base que explican las retenciones a la tarifa de su subcuenta.`, [fuenteBorrador, fuenteLibros]),
     tarifas: cedulaDePaso('tarifas', 'detalle', 'Verificar que cada tarifa por mil aplicada es una de las admisibles del municipio y ver a qué proveedores se les retuvo.', tarifasTexto, [fuenteLibros]),
     territorialidad: cedulaDePaso('territorialidad', 'analitica', 'Identificar retenciones de ICA de otros municipios contabilizadas en el período y si la empresa tiene la declaración de cada uno.', 'La retención se declara en el municipio donde se ejecuta la actividad gravada; cada municipio con retenciones exige su propia declaración.', [fuenteLibros, 'Obligaciones de reteICA de la empresa en la plataforma']),
-    anterior: cedulaDePaso('periodo-anterior', 'analitica', 'Comparar con el bimestre anterior para identificar variaciones que necesitan explicación.', `Procedimiento analítico (NIA 520): se espera una variación inferior al ${UMBRALES_RETEICA.variacionPct} %.`, [fuenteBorrador, entrada.anterior ? `Revisión de ${entrada.anterior.etiqueta} en la plataforma` : 'Sin revisión del período anterior']),
+    anterior: cedulaDePaso('periodo-anterior', 'analitica', 'Comparar con el bimestre anterior para identificar variaciones que necesitan explicación.', `Procedimiento analítico (NIA 520): se espera una variación inferior al ${UMBRALES_RETEICA.variacionPct} %.`, [fuenteBorrador, entrada.anterior ? `Declaración presentada de ${entrada.anterior.etiqueta}` : 'Sin la declaración presentada del período anterior']),
     oportunidad: cedulaDePaso('oportunidad', 'oportunidad', 'Confirmar que la declaración se presentó a tiempo, revisar las sanciones y que el total se pagó.', 'Calendario tributario del municipio; régimen sancionatorio municipal.', [fuenteBorrador, 'Fechas registradas en la revisión']),
   }
   const fila = (c: CedulaBorrador, t: Tabla, valores: FilaCedula['valores'], estado: EstadoFilaCedula, extra: { regla?: string; nota?: string | null; propuesta?: Prop | null } = {}) =>
@@ -425,7 +425,7 @@ export function correrRevisionReteica(entrada: EntradaCorridaReteica): Resultado
   }
   if (C.anterior.estado === 'ejecutada' && C.anterior.tablas.length === 0) {
     C.anterior.estado = 'sin_insumos'
-    C.anterior.motivo = 'No hay revisión del bimestre anterior con cifras declaradas en la plataforma.'
+    C.anterior.motivo = 'No se encontró la declaración presentada del período anterior: no se hizo la comparación.'
     limitaciones.push({ regla: 'RI-30', motivo: C.anterior.motivo })
   }
 

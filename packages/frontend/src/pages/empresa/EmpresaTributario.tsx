@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Copy, Plus, Trash2 } from 'lucide-react'
+import { CalendarDays, Copy, Plus, Trash2 } from 'lucide-react'
 import {
   IMPUESTOS_CATALOGO,
   MUNICIPIOS_RETEICA,
@@ -14,6 +14,8 @@ import {
   nombreMunicipio,
   nombreObligacion,
   presentacionExtemporanea,
+  validarVencimientos,
+  mesSugeridoVencimiento,
   type ObligacionConRevisiones,
   type Periodicidad,
   type RevisionTributaria,
@@ -28,6 +30,7 @@ import { Button } from '../../components/ui/Button'
 import { Input } from '../../components/ui/Input'
 import { Select } from '../../components/ui/Select'
 import { Modal } from '../../components/ui/Modal'
+import { CampoFecha } from '../../components/ui/CampoFecha'
 
 type MatrizTributaria = {
   anio: number
@@ -74,6 +77,7 @@ export function EmpresaTributario() {
   const [modalAbierto, setModalAbierto] = useState(false)
   // Obligación municipal creada antes de existir el campo municipio: se le asigna aquí.
   const [sinMunicipio, setSinMunicipio] = useState<ObligacionConRevisiones | null>(null)
+  const [vencimientosDe, setVencimientosDe] = useState<ObligacionConRevisiones | null>(null)
 
   const { data, isLoading } = useQuery<MatrizTributaria>({
     queryKey: ['tributario', empresaId, anio],
@@ -139,7 +143,7 @@ export function EmpresaTributario() {
             options={anios.map((a) => ({ value: String(a), label: `Vigencia ${a}` }))}
           />
           <Button size="sm" className="gap-2" onClick={() => setModalAbierto(true)}>
-            <Plus size={14} /> Agregar obligación
+            <Plus size={14} /> Agregar impuesto
           </Button>
         </div>
       </div>
@@ -218,6 +222,25 @@ export function EmpresaTributario() {
                           ))}
                         </select>
                       </div>
+                      {(() => {
+                        const sinFirmar = o.revisiones.filter((r) => r.estado !== 'revisada')
+                        const sinFechas = sinFirmar.length > 0 && sinFirmar.every((r) => !r.fechaVencimiento)
+                        return (
+                          <button
+                            onClick={() => setVencimientosDe(o)}
+                            className={cn(
+                              'mt-1 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium transition-colors',
+                              sinFechas
+                                ? 'bg-amber-50 text-amber-700 hover:bg-amber-100'
+                                : 'text-gray-400 hover:bg-indigo-50 hover:text-indigo-600',
+                            )}
+                            title="Fijar los vencimientos de todos los períodos de la vigencia"
+                          >
+                            <CalendarDays size={11} />
+                            {sinFechas ? 'Sin vencimientos · fijar' : 'Vencimientos'}
+                          </button>
+                        )
+                      })()}
                     </td>
                     {o.revisiones.map((r) => {
                       const vencida =
@@ -281,6 +304,13 @@ export function EmpresaTributario() {
           <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm border border-rose-200 bg-rose-50" /> Vencida sin revisar</span>
         </div>
       )}
+
+      <ModalVencimientos
+        obligacion={vencimientosDe}
+        existentes={obligaciones}
+        onClose={() => setVencimientosDe(null)}
+        onGuardado={() => { setVencimientosDe(null); invalidar() }}
+      />
 
       <ModalMunicipio
         obligacion={sinMunicipio}
@@ -357,7 +387,7 @@ function ModalNuevaObligacion({
     : existentes.some((o) => o.tipo === tipo))
 
   return (
-    <Modal open={open} onClose={onClose} title={`Agregar obligación — vigencia ${anio}`}>
+    <Modal open={open} onClose={onClose} title={`Agregar impuesto — vigencia ${anio}`}>
       <div className="space-y-4">
         <Select
           label="Impuesto"
@@ -438,6 +468,121 @@ function CampoMunicipio({ valor, onCambio }: { valor: string; onCambio: (v: stri
 }
 
 /** Asigna el municipio a una obligación municipal que no lo tiene (creada antes de existir el campo). */
+// Fija los vencimientos de todos los períodos de una obligación en una sola
+// pantalla. Las firmadas quedan bloqueadas (la constancia sella su fecha).
+function ModalVencimientos({ obligacion, existentes, onClose, onGuardado }: {
+  obligacion: ObligacionConRevisiones | null
+  existentes: ObligacionConRevisiones[]
+  onClose: () => void
+  onGuardado: () => void
+}) {
+  // El contenido se monta por obligación (key) para arrancar el estado desde sus fechas.
+  if (!obligacion) return null
+  return <GrillaVencimientos key={obligacion.id} obligacion={obligacion} existentes={existentes} onClose={onClose} onGuardado={onGuardado} />
+}
+
+function GrillaVencimientos({ obligacion, existentes, onClose, onGuardado }: {
+  obligacion: ObligacionConRevisiones
+  existentes: ObligacionConRevisiones[]
+  onClose: () => void
+  onGuardado: () => void
+}) {
+  const inicial = Object.fromEntries(obligacion.revisiones.map((r) => [r.periodo, r.fechaVencimiento ?? '']))
+  const [fechas, setFechas] = useState<Record<string, string>>(inicial)
+  const [origen, setOrigen] = useState('')
+
+  // Solo se copia desde una obligación de la misma periodicidad que ya tenga fechas.
+  const candidatas = existentes.filter(
+    (o) => o.id !== obligacion.id && o.periodicidad === obligacion.periodicidad && o.revisiones.some((r) => r.fechaVencimiento),
+  )
+
+  const editables = obligacion.revisiones.filter((r) => r.estado !== 'revisada')
+  const cambios = Object.fromEntries(
+    editables.filter((r) => (fechas[r.periodo] ?? '') !== (inicial[r.periodo] ?? '')).map((r) => [r.periodo, fechas[r.periodo] || null]),
+  )
+  const errores = validarVencimientos(obligacion.periodicidad, obligacion.anioFiscal, cambios)
+
+  const copiarDe = (id: string) => {
+    setOrigen(id)
+    const fuente = existentes.find((o) => o.id === id)
+    if (!fuente) return
+    const porPeriodo = new Map(fuente.revisiones.map((r) => [r.periodo, r.fechaVencimiento]))
+    setFechas((prev) => {
+      const sig = { ...prev }
+      for (const r of editables) {
+        const f = porPeriodo.get(r.periodo)
+        if (f) sig[r.periodo] = f
+      }
+      return sig
+    })
+  }
+
+  const guardar = useMutation({
+    mutationFn: () => api.put<{ actualizadas: number; omitidas: string[] }>(`/tributario/obligaciones/${obligacion.id}/vencimientos`, { vencimientos: cambios }),
+    onSuccess: (r) => {
+      toast.success(r.actualizadas ? `${r.actualizadas} vencimiento${r.actualizadas === 1 ? '' : 's'} guardado${r.actualizadas === 1 ? '' : 's'}` : 'Sin cambios')
+      onGuardado()
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : 'No se pudieron guardar los vencimientos'),
+  })
+
+  const nCambios = Object.keys(cambios).length
+  return (
+    <Modal open onClose={onClose} title={`Vencimientos de ${nombreObligacion(obligacion)} ${obligacion.anioFiscal}`} size="md">
+      <div className="space-y-4">
+        <p className="text-xs text-gray-500">
+          El calendario depende del último dígito del NIT (o del municipio): confírmalo con la resolución vigente.
+          Cada fecha se puede ajustar después desde su revisión.
+        </p>
+        {candidatas.length > 0 && (
+          <Select
+            aria-label="Copiar fechas de otra obligación"
+            value={origen}
+            onChange={(e) => copiarDe(e.target.value)}
+            options={[
+              { value: '', label: 'Copiar fechas de otra obligación…' },
+              ...candidatas.map((o) => ({ value: o.id, label: nombreObligacion(o) })),
+            ]}
+          />
+        )}
+        <div className="max-h-[50vh] space-y-1.5 overflow-y-auto pr-1">
+          {obligacion.revisiones.map((r) => {
+            const firmada = r.estado === 'revisada'
+            return (
+              <div key={r.id} className="grid grid-cols-[1fr_11rem] items-center gap-3">
+                <label htmlFor={`venc-${r.periodo}`} className="text-sm text-gray-700">
+                  {etiquetaPeriodo(obligacion.periodicidad, r.periodo)}
+                  {firmada && <span className="ml-2 text-[11px] text-emerald-600">Firmada</span>}
+                </label>
+                <div>
+                  <CampoFecha
+                    id={`venc-${r.periodo}`}
+                    value={fechas[r.periodo] ?? ''}
+                    mesInicial={mesSugeridoVencimiento(obligacion.periodicidad, r.periodo, obligacion.anioFiscal) ?? undefined}
+                    disabled={firmada}
+                    error={!!errores[r.periodo]}
+                    onChange={(v) => setFechas((prev) => ({ ...prev, [r.periodo]: v }))}
+                  />
+                  {errores[r.periodo] && <p className="mt-0.5 text-[11px] text-red-600">{errores[r.periodo]}</p>}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+        <div className="flex items-center justify-between gap-2 pt-1">
+          <p className="text-xs text-gray-400">{nCambios ? `${nCambios} cambio${nCambios === 1 ? '' : 's'} sin guardar` : 'Sin cambios'}</p>
+          <div className="flex gap-2">
+            <Button variant="secondary" onClick={onClose}>Cancelar</Button>
+            <Button loading={guardar.isPending} disabled={nCambios === 0 || Object.keys(errores).length > 0} onClick={() => guardar.mutate()}>
+              Guardar
+            </Button>
+          </div>
+        </div>
+      </div>
+    </Modal>
+  )
+}
+
 function ModalMunicipio({ obligacion, existentes, onClose, onGuardado }: {
   obligacion: ObligacionConRevisiones | null
   existentes: ObligacionConRevisiones[]

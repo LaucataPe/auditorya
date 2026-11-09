@@ -29,9 +29,17 @@ import { cerrarCedula, nuevaCedula, tablaDeCedula, type CedulaBorrador, type Ced
 export type InsumosCorridaIva = {
   auxiliares: { adjuntoId: string | null; nombre: string; archivo: string; enPeriodo: number; cuentas: string[]; cierres: number }[]
   dian: { adjuntoId: string | null; archivo: string; documentos: number } | null
-  /** Etiqueta de la revisión anterior usada para el arrastre, si existía en la plataforma. */
+  /** Etiqueta del período anterior cuya declaración presentada se leyó y se usó para comparar; null = no se comparó. */
   anterior: string | null
 }
+
+/**
+ * Declaración presentada del período anterior: se sube como soporte "declaración"
+ * a ese período después de firmarlo. Sin ella el agente no compara (no bloquea).
+ */
+export type AnteriorPresentada =
+  | { estado: 'encontrada'; etiqueta: string; revisionId: string; archivo: string; origen: 'subida' | 'periodo_anterior' }
+  | { estado: 'no_encontrada'; etiqueta: string; revisionId: string | null; motivo: string }
 
 /**
  * Memoria de la empresa para el IVA (memoria_empresa_agente, clave MEMORIA_IVA_CLAVE):
@@ -85,6 +93,8 @@ export type EstadoAgenteIva = {
   /** Conclusiones del auditor por cédula (revisiones_tributarias.conclusiones_cedulas). */
   conclusiones: ConclusionesCedulas
   memoria: MemoriaIvaEmpresa
+  /** Dónde está la declaración presentada del período anterior (la ruta la agrega; no sale de la corrida). */
+  anteriorPresentada?: AnteriorPresentada
 }
 
 /** Resumen del trabajo del agente que viaja con el detalle de la revisión y se sella en el snapshot (constancia). */
@@ -179,7 +189,7 @@ export const INSUMO_IVA_LABEL: Record<InsumoIva, { nombre: string; para: string 
   borrador: { nombre: 'Borrador del Formulario 300', para: 'Llena la columna Declarado. Sin él no hay nada que verificar.' },
   auxiliar: { nombre: 'Auxiliar contable o balance de prueba del período (2408, ingresos y 1355)', para: 'Llena Según libros y permite conciliar el formulario con la contabilidad. Sirve el libro auxiliar por movimientos o el balance de prueba del período, tal como lo exporta el programa contable.' },
   dian: { nombre: 'Reporte de documentos electrónicos de la DIAN', para: 'Cruza ventas, notas crédito y compras con lo facturado electrónicamente.' },
-  anterior: { nombre: 'Declaración de IVA del período anterior', para: 'Verifica el arrastre del saldo a favor (casilla 84). Si la revisión anterior está en la plataforma, no hace falta.' },
+  anterior: { nombre: 'Declaración de IVA del período anterior', para: 'Verifica el arrastre del saldo a favor (casilla 84). Es el PDF de la declaración presentada, que se sube al período anterior después de firmarlo; sin él no se compara.' },
 }
 
 export type PasoAgenteIva = {
@@ -426,7 +436,7 @@ export function correrRevisionIva(entrada: EntradaCorridaIva): ResultadoCorridaI
     lecturaDian: nuevaCedula({ id: 'lectura-dian', pasoId: null, fase: 'dian', titulo: 'Leer el reporte de documentos electrónicos de la DIAN', objetivo: 'Dejar a la vista qué documentos electrónicos se tomaron del reporte, por tipo, y si el reporte es de esta empresa y cubre el período.', criterio: 'Documentos con fecha de emisión dentro del período. El reporte no trae base gravable: la base es estimada (total menos impuestos). Las respuestas de aplicación se excluyen; el documento soporte emitido es una compra.', fuentes: [fuenteDian], reglas: ['P-05', 'P-06', 'I-27'], checklistItem: null }),
     dianVentas: cedulaDePaso('dian-ventas', 'dian', 'Verificar que las ventas, las devoluciones y el IVA generado declarados corresponden a lo facturado electrónicamente en el período.', `Arts. 429, 447, 484 y 617 ET; Resolución DIAN 000042 de 2020. ${tolCruce}`, [fuenteBorrador, fuenteDian]),
     dianCompras: cedulaDePaso('dian-compras', 'dian', 'Verificar que el IVA descontable declarado tiene soporte en facturas electrónicas recibidas dentro de la ventana de oportunidad.', `Arts. 488, 496 y 771-2 ET; Resolución DIAN 000167 de 2021. Ventana: el período y los dos anteriores. ${tolCruce}`, [fuenteBorrador, fuenteDian]),
-    saldo: cedulaDePaso('saldo-favor', 'analitica', 'Verificar que el saldo a favor imputado es el que dejó la declaración del período anterior.', `Arts. 815 y 850 ET. ${tolRedondeo}`, [fuenteBorrador, entrada.anterior ? `Revisión de ${entrada.anterior.etiqueta} en la plataforma` : 'Sin revisión del período anterior']),
+    saldo: cedulaDePaso('saldo-favor', 'analitica', 'Verificar que el saldo a favor imputado es el que dejó la declaración del período anterior.', `Arts. 815 y 850 ET. ${tolRedondeo}`, [fuenteBorrador, entrada.anterior ? `Declaración presentada de ${entrada.anterior.etiqueta}` : 'Sin la declaración presentada del período anterior']),
     proporcionalidad: cedulaDePaso('proporcionalidad', 'analitica', 'Evaluar si, habiendo operaciones excluidas o no gravadas, el descontable debía limitarse en proporción a las operaciones gravadas.', 'Art. 490 ET. Se alerta cuando hay operaciones excluidas o no gravadas, hay descontables y no hay ajuste en la casilla 80.', [fuenteBorrador]),
     oportunidad: cedulaDePaso('oportunidad', 'oportunidad', 'Confirmar que la declaración se presentó a tiempo y revisar las sanciones liquidadas.', 'Arts. 639, 640, 641 y 644 ET.', [fuenteBorrador, 'Fechas registradas en la revisión']),
   }
@@ -957,13 +967,13 @@ export function correrRevisionIva(entrada: EntradaCorridaIva): ResultadoCorridaI
         }
       }
     } else if (c84 !== null && c84 > 0) {
-      regla('I-30', `I-30: casilla 84 ${fmt(c84)} sin revisión anterior en la plataforma para contrastar.`)
+      regla('I-30', `I-30: casilla 84 ${fmt(c84)} sin la declaración presentada del período anterior para contrastar.`)
       const pr = proponer({
         cedula: 'saldo-favor',
         tipo: 'documento', reglasIds: ['I-30'], titulo: 'Declaración de IVA del período anterior', renglonId: 'iva-saldo-favor-ant', monto: c84, severidad: 'media', certeza: 'requiere_evidencia',
         datos: [{ etiqueta: 'casilla 84 declarada', valor: fmt(c84) }], checklistItem: 'saldos-favor',
         contenido: {
-          descripcion: `El formulario imputa ${fmt(c84)} de saldo a favor del período anterior y la plataforma no tiene la revisión de ese período.`,
+          descripcion: `El formulario imputa ${fmt(c84)} de saldo a favor del período anterior y no se encontró la declaración presentada del período anterior para contrastarlo.`,
           para: `Verificar que la casilla 84 coincida con el saldo a favor (casilla 89) de la declaración anterior.`,
           norma: 'Arts. 815 y 850 ET',
         },
@@ -971,10 +981,10 @@ export function correrRevisionIva(entrada: EntradaCorridaIva): ResultadoCorridaI
       })
       fila(C.saldo, T_PUNTOS, { punto: 'Saldo a favor del período anterior imputado', dato: 'Casilla 84, sin declaración anterior para contrastar', valor: c84 }, 'no_verificable', { regla: 'I-30', propuesta: pr })
     } else {
-      limitaciones.push({ regla: 'I-30', motivo: 'Sin revisión del período anterior en la plataforma.' })
-      if (C.saldo.estado === 'ejecutada') { C.saldo.estado = 'sin_insumos'; C.saldo.motivo = 'El formulario no imputa saldo a favor anterior y no hay revisión del período anterior en la plataforma.' }
+      limitaciones.push({ regla: 'I-30', motivo: 'No se encontró la declaración presentada del período anterior: no se hizo la comparación.' })
+      if (C.saldo.estado === 'ejecutada') { C.saldo.estado = 'sin_insumos'; C.saldo.motivo = 'El formulario no imputa saldo a favor anterior y no se encontró la declaración presentada del período anterior.' }
     }
-    if (C.saldo.estado === 'ejecutada' && C.saldo.tablas.length === 0) { C.saldo.estado = 'sin_insumos'; C.saldo.motivo = `La revisión de ${entrada.anterior?.etiqueta ?? 'el período anterior'} no tiene cifras declaradas.` }
+    if (C.saldo.estado === 'ejecutada' && C.saldo.tablas.length === 0) { C.saldo.estado = 'sin_insumos'; C.saldo.motivo = `La declaración presentada de ${entrada.anterior?.etiqueta ?? 'el período anterior'} no trae cifras legibles.` }
   }
   {
     const excl = (dec('iva-ing-excluidos') ?? 0) + (dec('iva-ing-no-gravadas') ?? 0)

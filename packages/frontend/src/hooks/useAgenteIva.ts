@@ -30,7 +30,6 @@ import {
   leerLibroContable,
   parseAuxiliarMovimientos,
   parseReporteDian,
-  periodoAnterior,
   rangoPeriodo,
   resumirAuxiliarPeriodo,
   resumirReporteDianPeriodo,
@@ -57,7 +56,6 @@ import {
   type MapeoLibrosRetefuente,
   type MemoriaIvaEmpresa,
   type MovimientoAuxiliar,
-  type ObligacionConRevisiones,
   type ResumenAuxiliarPeriodo,
   type ResumenCuentaAuxiliar,
   type SaldoTerceroPeriodo,
@@ -239,18 +237,6 @@ export function useAgenteIva(revision: RevisionTributariaDetalle, sellada: boole
   const rango = rangoPeriodo(obligacion.periodicidad, revision.periodo, obligacion.anioFiscal)
   const etiqueta = `${etiquetaPeriodo(obligacion.periodicidad, revision.periodo)} ${obligacion.anioFiscal}`
 
-  // Revisión del período anterior (misma obligación), para el arrastre del saldo a favor.
-  const { data: matriz } = useQuery<{ obligaciones: ObligacionConRevisiones[] }>({
-    queryKey: ['tributario', obligacion.empresaId, obligacion.anioFiscal],
-    queryFn: () => api.get(`/empresas/${obligacion.empresaId}/tributario?anio=${obligacion.anioFiscal}`),
-  })
-  const anterior = useMemo(() => {
-    const clave = periodoAnterior(obligacion.periodicidad, revision.periodo)
-    if (!clave) return null
-    const r = matriz?.obligaciones.find((o) => o.id === obligacion.id)?.revisiones.find((x) => x.periodo === clave)
-    return r ? { etiqueta: `${etiquetaPeriodo(obligacion.periodicidad, clave)} ${obligacion.anioFiscal}`, cifras: r.cifras } : null
-  }, [matriz, obligacion, revision.periodo])
-
   // ─── Estado persistido del agente: última corrida, propuestas y memoria de la empresa ──
   const claveEstado = ['tributario-agente', revision.id] as const
   const { data: estado, isLoading: cargandoEstado } = useQuery<EstadoAgenteIva>({
@@ -258,6 +244,8 @@ export function useAgenteIva(revision: RevisionTributariaDetalle, sellada: boole
     queryFn: () => api.get(`/tributario/revisiones/${revision.id}/agente`),
   })
   const corrida = estado?.corrida ?? null
+  // Declaración presentada del período anterior (PDF subido a ese período): la busca el servidor.
+  const anterior = estado?.anteriorPresentada ?? null
   const propuestas = estado?.propuestas ?? []
   const resumen = corrida?.resultado ?? null
   const memoria: MemoriaIvaEmpresa = estado?.memoria ?? MEMORIA_IVA_VACIA

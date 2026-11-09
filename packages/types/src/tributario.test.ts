@@ -6,6 +6,11 @@ import {
   TIPOS_IMPUESTO,
   alcanceSugerido,
   aplicarLecturaFormulario,
+  validarVencimientos,
+  mesSugeridoVencimiento,
+  textoConclusion,
+  elegirDeclaracionPresentada,
+  periodoAnteriorCruzando,
   etiquetaPeriodo,
   hallazgoTributarioPendiente,
   nombreObligacion,
@@ -198,6 +203,18 @@ describe('aplicarLecturaFormulario (Formulario 300 real)', () => {
     expect(r.advertencias.some((a) => a.includes('Total impuestos descontables'))).toBe(true)
   })
 
+  it('cuenta los totales que no cuadran: 0 si cuadra, >0 si la lectura está corrida', () => {
+    expect(aplicarLecturaFormulario('iva', casillas)!.descuadres).toBe(0)
+    // Falla real de flash-lite: cada casilla recibe el valor de la anterior (c41 queda con el de la c40).
+    const corrida = { ...casillas }
+    for (let n = 28; n <= 89; n++) corrida[String(n)] = casillas[String(n - 1)]
+    expect(aplicarLecturaFormulario('iva', corrida)!.descuadres).toBeGreaterThan(0)
+    // Una casilla suelta sin renglón es advertencia, pero no prueba una lectura corrida.
+    const suelta = aplicarLecturaFormulario('iva', { ...casillas, '999': 5 })!
+    expect(suelta.advertencias.length).toBe(1)
+    expect(suelta.descuadres).toBe(0)
+  })
+
   it('devuelve null para impuestos sin mapeo de casillas', () => {
     expect(aplicarLecturaFormulario('reteica', {})).toBeNull()
   })
@@ -377,5 +394,78 @@ describe('presentacionExtemporanea', () => {
   it('sin alguna de las dos fechas no se puede afirmar que fue extemporánea', () => {
     expect(presentacionExtemporanea({ fechaVencimiento: null, fechaPresentacion: '2026-03-17' })).toBe(false)
     expect(presentacionExtemporanea({ fechaVencimiento: '2026-03-16', fechaPresentacion: null })).toBe(false)
+  })
+})
+
+describe('validarVencimientos', () => {
+  it('acepta fechas reales de la vigencia o de la siguiente y permite quitar una con null', () => {
+    expect(validarVencimientos('mensual', 2026, { '01': '2026-02-10', '12': '2027-01-13', '02': null })).toEqual({})
+  })
+  it('rechaza períodos ajenos, fechas que no existen y años fuera de rango', () => {
+    const e = validarVencimientos('bimestral', 2026, { B1: '2026-03-12', B9: '2026-03-12', B2: '2026-02-31', B3: '2062-07-10', B4: '2025-12-31' })
+    expect(Object.keys(e).sort()).toEqual(['B2', 'B3', 'B4', 'B9'])
+    expect(e.B9).toMatch(/período/)
+  })
+  it('un mensual no acepta claves de otra periodicidad', () => {
+    expect(validarVencimientos('mensual', 2026, { B1: '2026-03-12' }).B1).toBeDefined()
+  })
+})
+
+describe('mesSugeridoVencimiento', () => {
+  it('es el mes siguiente al último del período, y diciembre salta al año siguiente', () => {
+    expect(mesSugeridoVencimiento('mensual', '01', 2026)).toBe('2026-02-01')
+    expect(mesSugeridoVencimiento('mensual', '12', 2026)).toBe('2027-01-01')
+    expect(mesSugeridoVencimiento('bimestral', 'B3', 2026)).toBe('2026-07-01')
+    expect(mesSugeridoVencimiento('cuatrimestral', 'C2', 2026)).toBe('2026-09-01')
+    expect(mesSugeridoVencimiento('anual', 'A', 2026)).toBe('2027-01-01')
+    expect(mesSugeridoVencimiento('mensual', '13', 2026)).toBeNull()
+  })
+})
+
+describe('textoConclusion', () => {
+  it('une observaciones heredadas con la conclusión, sin vacíos ni duplicar separadores', () => {
+    expect(textoConclusion({ observaciones: null, conclusion: 'Conforme.' })).toBe('Conforme.')
+    expect(textoConclusion({ observaciones: ' Falta soporte. ', conclusion: 'Conforme.' })).toBe('Falta soporte.\n\nConforme.')
+    expect(textoConclusion({ observaciones: 'Solo observación', conclusion: null })).toBe('Solo observación')
+    expect(textoConclusion({ observaciones: null, conclusion: '  ' })).toBe('')
+  })
+})
+
+describe('periodoAnteriorCruzando', () => {
+  it('dentro de la vigencia se comporta como periodoAnterior', () => {
+    expect(periodoAnteriorCruzando('mensual', '05')).toEqual({ periodo: '04', anio: 0 })
+    expect(periodoAnteriorCruzando('bimestral', 'B3')).toEqual({ periodo: 'B2', anio: 0 })
+  })
+  it('el primer período de la vigencia busca el último del año anterior', () => {
+    expect(periodoAnteriorCruzando('mensual', '01')).toEqual({ periodo: '12', anio: -1 })
+    expect(periodoAnteriorCruzando('bimestral', 'B1')).toEqual({ periodo: 'B6', anio: -1 })
+    expect(periodoAnteriorCruzando('cuatrimestral', 'C1')).toEqual({ periodo: 'C3', anio: -1 })
+    expect(periodoAnteriorCruzando('anual', 'A')).toEqual({ periodo: 'A', anio: -1 })
+  })
+})
+
+describe('elegirDeclaracionPresentada', () => {
+  const adj = (id: string, extra: Partial<{ tipo: string; hallazgoId: string | null; archivoMime: string; createdAt: string }> = {}) =>
+    ({ id, tipo: 'declaracion', hallazgoId: null, archivoMime: 'application/pdf', createdAt: '2026-02-01T10:00:00Z', ...extra })
+  const snapshot = { adjuntos: [{ id: 'borrador' }] }
+
+  it('toma la declaración subida después de firmar y no el borrador sellado', () => {
+    const r = elegirDeclaracionPresentada([adj('borrador'), adj('presentada', { createdAt: '2026-03-01T10:00:00Z' })], snapshot)
+    expect(r?.id).toBe('presentada')
+  })
+  it('sin declaración posterior a la firma no hay nada que elegir', () => {
+    expect(elegirDeclaracionPresentada([adj('borrador')], snapshot)).toBeNull()
+    expect(elegirDeclaracionPresentada([], null)).toBeNull()
+  })
+  it('ignora recibos de pago, evidencias de hallazgos y archivos que no se pueden leer', () => {
+    const r = elegirDeclaracionPresentada(
+      [adj('pago', { tipo: 'pago' }), adj('evid', { hallazgoId: 'h1' }), adj('excel', { archivoMime: 'application/vnd.ms-excel' })],
+      snapshot,
+    )
+    expect(r).toBeNull()
+  })
+  it('si hay varias presentadas (una corrección), usa la más reciente', () => {
+    const r = elegirDeclaracionPresentada([adj('a', { createdAt: '2026-03-01T10:00:00Z' }), adj('b', { createdAt: '2026-03-20T10:00:00Z' })], snapshot)
+    expect(r?.id).toBe('b')
   })
 })

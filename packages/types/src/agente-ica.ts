@@ -169,8 +169,8 @@ export function correrRevisionIca(entrada: EntradaCorridaIca): ResultadoCorridaI
     ingresos: cedulaDePaso('ingresos-libros', 'cruce', `Verificar que los ingresos y las deducciones declarados${nombreMun ? ` a ${nombreMun}` : ''} son los que la contabilidad registró en el período.`, `${tolTexto} Renglón 8 = créditos de la clase 4 del período; exportaciones netas de sus devoluciones y anulaciones.`, [fuenteBorrador, fuenteLibros]),
     deducciones: cedulaDePaso('deducciones', 'detalle', 'Identificar qué ingresos explican lo restado como no sujeto, excluido o exento, y que tenga soporte normativo.', 'Ley 14 de 1983 (art. 39: actividades no sujetas) y acuerdo municipal (exenciones). La clasificación de cada cuenta la decide la firma y queda en la memoria de la empresa.', [fuenteBorrador, fuenteLibros]),
     territorialidad: cedulaDePaso('territorialidad', 'analitica', 'Identificar ingresos de otros municipios en los libros y si la empresa tiene la declaración de ICA de cada uno.', 'El ICA se declara donde se realiza la actividad (Ley 1819 de 2016, art. 343): los ingresos de otros municipios se restan en el renglón 9 y se declaran allá.', [fuenteBorrador, fuenteLibros, 'Obligaciones de ICA de la empresa en la plataforma']),
-    retenciones: cedulaDePaso('retenciones', 'cruce', 'Verificar que los descuentos de la liquidación (retenciones, autorretenciones, anticipos, saldo a favor) están soportados y que el impuesto quedó causado.', `${tolTexto} Retenciones contra los débitos del período en la 135518; saldo a favor contra el renglón 34 del período anterior.`, [fuenteBorrador, fuenteLibros, entrada.anterior ? `Revisión de ${entrada.anterior.etiqueta} en la plataforma` : 'Sin revisión del período anterior']),
-    anterior: cedulaDePaso('periodo-anterior', 'analitica', 'Comparar con el período anterior para identificar variaciones que necesitan explicación.', `Procedimiento analítico (NIA 520): se espera una variación inferior al ${UMBRALES_ICA.variacionPct} %.`, [fuenteBorrador, entrada.anterior ? `Revisión de ${entrada.anterior.etiqueta} en la plataforma` : 'Sin revisión del período anterior']),
+    retenciones: cedulaDePaso('retenciones', 'cruce', 'Verificar que los descuentos de la liquidación (retenciones, autorretenciones, anticipos, saldo a favor) están soportados y que el impuesto quedó causado.', `${tolTexto} Retenciones contra los débitos del período en la 135518; saldo a favor contra el renglón 34 del período anterior.`, [fuenteBorrador, fuenteLibros, entrada.anterior ? `Declaración presentada de ${entrada.anterior.etiqueta}` : 'Sin la declaración presentada del período anterior']),
+    anterior: cedulaDePaso('periodo-anterior', 'analitica', 'Comparar con el período anterior para identificar variaciones que necesitan explicación.', `Procedimiento analítico (NIA 520): se espera una variación inferior al ${UMBRALES_ICA.variacionPct} %.`, [fuenteBorrador, entrada.anterior ? `Declaración presentada de ${entrada.anterior.etiqueta}` : 'Sin la declaración presentada del período anterior']),
     oportunidad: cedulaDePaso('oportunidad', 'oportunidad', 'Confirmar que la declaración se presentó a tiempo, revisar las sanciones y que el total se pagó.', 'Calendario tributario del municipio; régimen sancionatorio municipal.', [fuenteBorrador, 'Fechas registradas en la revisión']),
   }
   const fila = (c: CedulaBorrador, t: Tabla, valores: FilaCedula['valores'], estado: EstadoFilaCedula, extra: { regla?: string; nota?: string | null; propuesta?: Prop | null } = {}) =>
@@ -527,14 +527,14 @@ export function correrRevisionIca(entrada: EntradaCorridaIca): ResultadoCorridaI
         fila(C.retenciones, T_CRUCE, valores, dif > 0 ? 'diferencia' : 'por_confirmar', { regla: 'IC-24', propuesta: pr })
       }
     } else {
-      regla('IC-24', `IC-24: saldo a favor imputado ${fmt(sfa)} sin la declaración anterior en la plataforma.`)
+      regla('IC-24', `IC-24: saldo a favor imputado ${fmt(sfa)} sin la declaración presentada del período anterior.`)
       const pr = proponer({
         cedula: 'retenciones', tipo: 'juicio', reglasIds: ['IC-24'], titulo: `Saldo a favor del período anterior (${fmt(sfa)})`, renglonId: 'ica-saldo-favor-ant', monto: sfa, severidad: 'baja', certeza: 'requiere_evidencia',
         datos: [{ etiqueta: 'renglón 32', valor: fmt(sfa) }], checklistItem: 'retenciones-anticipos',
-        contenido: { descripcion: `El borrador imputa ${fmt(sfa)} de saldo a favor y la declaración anterior no está en la plataforma.`, para: 'Verificar contra el renglón 34 de la declaración anterior.', opciones: [{ clave: 'ok', label: 'Verificado' }, { clave: 'revisar', label: 'Pedir la declaración anterior' }] },
+        contenido: { descripcion: `El borrador imputa ${fmt(sfa)} de saldo a favor y no se encontró la declaración presentada del período anterior.`, para: 'Verificar contra el renglón 34 de la declaración anterior.', opciones: [{ clave: 'ok', label: 'Verificado' }, { clave: 'revisar', label: 'Pedir la declaración anterior' }] },
         bitacora: [{ tipo: 'regla', texto: 'IC-24: sin declaración anterior.', referencia: { regla: 'IC-24' } }],
       })
-      fila(C.retenciones, T_PUNTOS, { punto: conRenglon('ica-saldo-favor-ant'), dato: 'Sin la declaración anterior en la plataforma', valor: sfa }, 'por_confirmar', { regla: 'IC-24', propuesta: pr })
+      fila(C.retenciones, T_PUNTOS, { punto: conRenglon('ica-saldo-favor-ant'), dato: 'Sin la declaración presentada del período anterior', valor: sfa }, 'por_confirmar', { regla: 'IC-24', propuesta: pr })
     }
   }
   // IC-25 · impuesto causado en libros.
@@ -590,7 +590,7 @@ export function correrRevisionIca(entrada: EntradaCorridaIca): ResultadoCorridaI
   }
   if (C.anterior.estado === 'ejecutada' && C.anterior.tablas.length === 0) {
     C.anterior.estado = 'sin_insumos'
-    C.anterior.motivo = 'No hay revisión del período anterior con cifras declaradas en la plataforma.'
+    C.anterior.motivo = 'No se encontró la declaración presentada del período anterior: no se hizo la comparación.'
     limitaciones.push({ regla: 'IC-30', motivo: C.anterior.motivo })
   }
 

@@ -169,7 +169,7 @@ export function correrRevisionRetefuente(entrada: EntradaCorridaRetefuente): Res
     autorretencion: cedulaDePaso('autorretencion', 'cruce', 'Verificar que la autorretención declarada corresponde a la contabilizada en su subcuenta.', `Art. 114-1 ET y DUR 1.2.6.6 y siguientes. ${tolTexto} No se valida la tarifa por actividad económica.`, [fuenteBorrador, fuenteLibros]),
     detalle: cedulaDePaso('tarifas-asientos', 'detalle', 'Recalcular la retención de cada asiento del período (base por tarifa) y comprobar que la tarifa aplicada es admisible para su concepto y que el pago superaba la cuantía mínima.', 'Arts. 392 y 401 ET; DUR 1625/2016. Un asiento es excepción si la retención difiere de base por tarifa en más de $100 o del 1 %. Rentas de trabajo, pensiones y dividendos no se recalculan: no son tarifa plana. El recálculo cubre el 100 % de los asientos con base; no reemplaza la inspección de soportes.', [fuenteLibros]),
     terceros: cedulaDePaso('terceros-gasto', 'analitica', 'Evaluar si la retención practicada a cada tercero es razonable frente a lo que se le causó en gasto, costo o compras en el período, y detectar terceros a los que no se les retuvo.', `Arts. 392 y 401 ET; DUR 1625/2016. Base presunta: lo causado al tercero en el período. La retención de cada subcuenta se divide por su tarifa para obtener la base que explica, y esa base se compara con lo causado, con un margen del ${UMBRALES_TERCEROS.margenPct} %. Es una prueba analítica (NIA 520): sus alertas son puntos por confirmar, no diferencias probadas.`, [fuenteLibros]),
-    anterior: cedulaDePaso('periodo-anterior', 'analitica', 'Comparar lo declarado con el mes anterior para identificar variaciones que necesitan explicación.', `Procedimiento analítico (NIA 520). Se espera una variación del total inferior al ${UMBRALES_RETEFUENTE.variacionMensualPct} %; lo que la supere debe explicarse.`, [fuenteBorrador, entrada.anterior ? `Revisión de ${entrada.anterior.etiqueta} en la plataforma` : 'Sin revisión del mes anterior']),
+    anterior: cedulaDePaso('periodo-anterior', 'analitica', 'Comparar lo declarado con el mes anterior para identificar variaciones que necesitan explicación.', `Procedimiento analítico (NIA 520). Se espera una variación del total inferior al ${UMBRALES_RETEFUENTE.variacionMensualPct} %; lo que la supere debe explicarse.`, [fuenteBorrador, entrada.anterior ? `Declaración presentada de ${entrada.anterior.etiqueta}` : 'Sin la declaración presentada del mes anterior']),
     oportunidad: cedulaDePaso('oportunidad', 'oportunidad', 'Confirmar que la declaración se presentó a tiempo y con pago total, condición para que produzca efectos.', 'Arts. 580-1 y 641 ET.', [fuenteBorrador, 'Fechas registradas en la revisión']),
   }
   const COL = {
@@ -661,9 +661,9 @@ export function correrRevisionRetefuente(entrada: EntradaCorridaRetefuente): Res
       registrarConceptos()
     }
   } else if (totalActual !== null) {
-    limitaciones.push({ regla: 'R-30', motivo: 'Sin revisión del mes anterior en la plataforma: no se comparó la variación.' })
+    limitaciones.push({ regla: 'R-30', motivo: 'No se encontró la declaración presentada del período anterior: no se hizo la comparación.' })
   }
-  if (C.anterior.estado === 'ejecutada' && C.anterior.tablas.length === 0) { C.anterior.estado = 'sin_insumos'; C.anterior.motivo = 'No hay revisión del mes anterior con cifras declaradas en la plataforma.' }
+  if (C.anterior.estado === 'ejecutada' && C.anterior.tablas.length === 0) { C.anterior.estado = 'sin_insumos'; C.anterior.motivo = 'No se encontró la declaración presentada del período anterior: no se hizo la comparación.' }
 
   // R-31 presentación tardía; R-32 sanciones y pago total (art. 580-1).
   const T_OPO: Tabla = { id: 'oportunidad', titulo: 'Presentación, sanciones y pago', columnas: [{ clave: 'punto', titulo: 'Punto verificado', formato: 'texto' }, { clave: 'dato', titulo: 'Dato', formato: 'texto' }, { clave: 'valor', titulo: 'Valor', formato: 'moneda' }] }

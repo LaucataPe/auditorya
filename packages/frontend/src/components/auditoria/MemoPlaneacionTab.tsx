@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { SECCIONES_INFORME, TIPO_INFORME_LABEL } from '@auditorya/types'
 import { ClipboardList, FilePlus2, RefreshCw, CheckCircle, ShieldCheck, Printer, FileDown } from 'lucide-react'
 import { Button } from '../ui/Button'
-import { Textarea } from '../ui/Textarea'
+import { DocumentoEditable } from '../ui/DocumentoEditable'
 import { api } from '../../lib/api'
 import { useAuthStore } from '../../store/auth.store'
 import { construirHtmlInforme, imprimirInforme, descargarDocx } from '../../lib/informe-export'
@@ -16,8 +16,6 @@ type Informe = {
   estado: EstadoInforme
   aprobadoAt: string | null
 }
-
-const FILAS_LARGAS = new Set(['entendimiento', 'riesgos_significativos', 'control_interno'])
 
 export function MemoPlaneacionTab({
   auditoriaId,
@@ -164,24 +162,15 @@ export function MemoPlaneacionTab({
             </div>
           </div>
 
-          {/* Secciones editables */}
-          <div className="space-y-4">
-            {secciones.map((sec) => (
-              <div key={sec.key} className="bg-white rounded-xl border border-gray-200 p-5">
-                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">{sec.label}</p>
-                <Textarea
-                  id={`memo-sec-${sec.key}`}
-                  label=""
-                  value={contenidoLocal[sec.key] ?? ''}
-                  rows={FILAS_LARGAS.has(sec.key) ? 8 : 4}
-                  disabled={aprobado}
-                  onChange={(e) =>
-                    setContenidoLocal((prev) => ({ ...prev, [sec.key]: e.target.value }))
-                  }
-                />
-              </div>
-            ))}
-          </div>
+          {/* Vista previa editable */}
+          <DocumentoEditable
+            {...exportOpts()}
+            secciones={secciones.map((s) => ({
+              key: s.key, label: s.label, contenido: contenidoLocal[s.key] ?? '', editable: true,
+            }))}
+            disabled={aprobado}
+            onChange={(key, html) => setContenidoLocal((prev) => ({ ...prev, [key]: html }))}
+          />
 
           {/* Guardar */}
           {!aprobado && (

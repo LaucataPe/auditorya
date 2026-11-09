@@ -19,6 +19,7 @@ import {
   type FormatoLibro, type PropuestaBorrador, type ResultadoPersistidoIva, type ResumenAgenteRevision, type TipoAgentico,
 } from '@auditorya/types'
 import { mergeJsonbPatch } from '../jsonb'
+import { anteriorParaCorrida } from './declaracion-anterior'
 import { registrarEvento } from '../eventos'
 import type { JwtPayload } from '../jwt'
 
@@ -80,13 +81,9 @@ export async function correrProcedimientoIva(
   if (!rango) throw new Error('No se pudo resolver el rango de fechas del período')
   const etiqueta = `${etiquetaPeriodo(obligacion.periodicidad, revision.periodo)} ${obligacion.anioFiscal}`
 
-  // Revisión del período anterior (misma obligación) para el arrastre del saldo a favor.
-  const claveAnterior = periodoAnterior(obligacion.periodicidad, revision.periodo)
-  const [anteriorRow] = claveAnterior
-    ? await db.select({ cifras: revisionesTributarias.cifras }).from(revisionesTributarias)
-        .where(and(eq(revisionesTributarias.obligacionId, obligacion.id), eq(revisionesTributarias.periodo, claveAnterior)))
-    : []
-  const anterior = anteriorRow ? { etiqueta: `${etiquetaPeriodo(obligacion.periodicidad, claveAnterior!)} ${obligacion.anioFiscal}`, cifras: anteriorRow.cifras } : null
+  // Declaración PRESENTADA del período anterior (PDF subido a ese período), para el arrastre del saldo
+  // a favor y la variación mes a mes. Sin ella no se compara y se deja constancia; no bloquea nada.
+  const { anterior, nota: notaAnterior } = await anteriorParaCorrida(obligacion, revision, user)
 
   // Continuidad: los códigos no se repiten y lo decidido por una persona no se vuelve a proponer
   // (omitir no es decidir: vuelve a salir en la corrida siguiente).
@@ -158,6 +155,7 @@ export async function correrProcedimientoIva(
 
     const persistido: ResultadoPersistidoIva = {
       ...resultado.resumen,
+      limitaciones: [...resultado.resumen.limitaciones, ...(notaAnterior ? [{ regla: 'ANT', motivo: notaAnterior }] : [])],
       insumos: { ...entrada.insumos, anterior: anterior?.etiqueta ?? null },
       declaradoHuella: huellaDeclarado(revision.cifras),
       memoriaMapeo: mapeoMemoriaDe(tipo, memoria),

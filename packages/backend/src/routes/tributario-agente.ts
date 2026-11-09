@@ -19,6 +19,7 @@ import {
 import { authMiddleware } from '../middleware/auth'
 import { registrarEvento } from '../lib/eventos'
 import { mergeJsonbPatch } from '../lib/jsonb'
+import { buscarAnteriorPresentada } from '../lib/agente/declaracion-anterior'
 import { aPropuestaTributaria, cargarMemoriaIva, correrProcedimientoIva, estadoAgenteIva, guardarMemoriaIva, olvidarMemoriaIva } from '../lib/agente/corrida-iva'
 import {
   RESULTADOS_CONCLUSION_CEDULA, esTipoAgentico, faltaParaFormato, estadoConclusionCedula, nombreObligacion,
@@ -149,7 +150,11 @@ app.get('/tributario/revisiones/:id/agente', async (c) => {
   const { firmaId } = c.get('user')
   const row = await cargarRevision(c.req.param('id'), firmaId)
   if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Revisión no encontrada' } }, 404)
-  return c.json({ data: await estadoAgenteIva(row.revision.id, row.obligacion.empresaId) })
+  const [estado, anterior] = await Promise.all([
+    estadoAgenteIva(row.revision.id, row.obligacion.empresaId),
+    buscarAnteriorPresentada(row.obligacion, row.revision),
+  ])
+  return c.json({ data: { ...estado, anteriorPresentada: anterior.resumen } })
 })
 
 // DELETE /tributario/revisiones/:id/agente/memoria — la empresa vuelve a empezar de cero
@@ -207,7 +212,8 @@ app.post('/tributario/revisiones/:id/agente/corridas', zValidator('json', corrid
     user,
     entrada,
   )
-  return c.json({ data: estado }, 201)
+  const { resumen: anteriorPresentada } = await buscarAnteriorPresentada(row.obligacion, row.revision)
+  return c.json({ data: { ...estado, anteriorPresentada } }, 201)
 })
 
 // POST /tributario/revisiones/:id/agente/propuestas/:pid/decidir

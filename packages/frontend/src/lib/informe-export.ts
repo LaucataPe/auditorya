@@ -65,6 +65,16 @@ function fuenteCuerpoDe(firma?: FirmaMembrete | null): string {
   const f = firma?.fuenteCuerpo
   return f && f in PILA_FUENTE ? f : FUENTE_CUERPO_DEFECTO
 }
+
+/** Acento y pilas CSS de fuentes efectivos: la vista previa en pantalla usa los mismos que el PDF. */
+export function estiloDocumento(firma?: FirmaMembrete | null) {
+  return {
+    acento: acentoDe(firma),
+    titulos: PILA_FUENTE[fuenteTitulosDe(firma)],
+    cuerpo: PILA_FUENTE[fuenteCuerpoDe(firma)],
+  }
+}
+
 /** Columna de una tabla del documento (las de cifras se alinean a la derecha). */
 export type ColumnaTabla = { label: string; derecha?: boolean }
 export type TablaRender = { columnas: ColumnaTabla[]; filas: string[][] }
@@ -73,7 +83,13 @@ export type TablaRender = { columnas: ColumnaTabla[]; filas: string[][] }
  * Sección del documento: un texto (plano o HTML del editor), una tabla, o ambos.
  * PDF y Word renderizan las dos formas con la misma jerarquía visual.
  */
-export type SeccionRender = { label: string; contenido?: string; tabla?: TablaRender }
+export type SeccionRender = {
+  label: string
+  contenido?: string
+  tabla?: TablaRender
+  /** Identificador estable de la sección (no se imprime): la vista previa lo usa para editarla. */
+  key?: string
+}
 
 export type ExportOpts = {
   titulo: string
@@ -91,7 +107,7 @@ function escapeHtml(s: string): string {
 }
 
 /** true si el texto no aporta contenido (texto plano vacío o HTML sin texto). */
-function textoVacio(contenido?: string): boolean {
+export function textoVacio(contenido?: string): boolean {
   if (!contenido) return true
   return esHtmlInforme(contenido) ? htmlInformeVacio(contenido) : contenido.trim().length === 0
 }
@@ -102,12 +118,12 @@ function seccionVacia(sec: SeccionRender): boolean {
 }
 
 /** Subtítulo del documento: omite el período si no viene informado. */
-function subtitulo(opts: { empresaNombre: string; periodo: string }): string {
+export function subtitulo(opts: { empresaNombre: string; periodo: string }): string {
   return opts.periodo ? `${opts.empresaNombre} — Período ${opts.periodo}` : opts.empresaNombre
 }
 
 /** Fecha de emisión del documento, p. ej. "6 de agosto de 2026". */
-function fechaEmision(): string {
+export function fechaEmision(): string {
   return new Date().toLocaleDateString('es-CO', { day: 'numeric', month: 'long', year: 'numeric' })
 }
 

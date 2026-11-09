@@ -25,6 +25,7 @@ import {
   nombreObligacion,
   procedimientosSugeridos,
   type RevisionTributariaDetalle,
+  textoConclusion,
 } from '@auditorya/types'
 import { parsearFecha } from './fechas'
 import { formatoCOP } from './moneda'
@@ -52,7 +53,7 @@ function textoAgente(agente: NonNullable<RevisionTributariaDetalle['agente']>): 
   const insumos = [
     ...agente.insumos.auxiliares.map((a) => `${a.nombre} (${a.archivo}; ${a.enPeriodo} asientos del período en ${a.cuentas.length} cuentas${a.cierres ? `, ${a.cierres} asiento(s) de cierre excluidos` : ''})`),
     agente.insumos.dian ? `Reporte de documentos electrónicos DIAN (${agente.insumos.dian.archivo}; ${agente.insumos.dian.documentos} documentos)` : null,
-    agente.insumos.anterior ? `Revisión del período anterior en la plataforma (${agente.insumos.anterior})` : null,
+    agente.insumos.anterior ? `Declaración presentada del período anterior (${agente.insumos.anterior})` : null,
   ].filter(Boolean) as string[]
   const partes: string[] = []
   partes.push(
@@ -243,18 +244,21 @@ export function exportOptsRevisionTributaria(args: {
   // El documento se lee como papel de trabajo (NIA 230): qué se propuso
   // revisar, con qué procedimientos, qué se ejecutó y qué resultó.
   secciones.push({
+    key: 'alcance',
     label: 'Alcance de la revisión',
     contenido:
       revision.alcance?.trim() ||
       alcanceSugerido({ obligacion, periodo: revision.periodo, empresaNombre }),
   })
   secciones.push({
+    key: 'procedimientos',
     label: 'Procedimientos aplicados',
     contenido: revision.procedimientos?.trim() || procedimientosSugeridos(obligacion.tipo),
   })
 
   if (preliminar) {
     secciones.push({
+      key: 'estado',
       label: 'Estado de la revisión',
       contenido:
         `Avance del programa de verificación: ${hechos} de ${total} puntos completados.` +
@@ -263,6 +267,7 @@ export function exportOptsRevisionTributaria(args: {
     })
   } else {
     secciones.push({
+      key: 'certificacion',
       label: 'Certificación de la revisión',
       contenido:
         `En desarrollo de las funciones de revisoría fiscal, se deja constancia de que ${nombre}, período ${periodoEtiqueta}, de ${empresaNombre}, fue objeto de revisión conforme al programa de verificación del impuesto (${hechos} de ${total} puntos completados).\n\n` +
@@ -282,6 +287,7 @@ export function exportOptsRevisionTributaria(args: {
   // El detalle de lo ejecutado va en ambos documentos: en el preliminar es el
   // avance del programa, en la constancia es la evidencia de lo verificado.
   secciones.push({
+    key: 'checklist',
     label: preliminar ? 'Ejecución del programa a la fecha' : 'Verificaciones realizadas',
     contenido: textoChecklist(revision),
   })
@@ -289,9 +295,9 @@ export function exportOptsRevisionTributaria(args: {
   // Lo que hizo el agente queda documentado como procedimiento automatizado,
   // con sus insumos, limitaciones y la decisión humana sobre cada propuesta.
   if (revision.agente) {
-    secciones.push({ label: 'Procedimientos automatizados', contenido: textoAgente(revision.agente) })
+    secciones.push({ key: 'agente', label: 'Procedimientos automatizados', contenido: textoAgente(revision.agente) })
     if (revision.agente.cedulas?.length) {
-      secciones.push({ label: 'Conclusiones por procedimiento', contenido: textoProcedimientosConcluidos(revision.agente) })
+      secciones.push({ key: 'cedulas', label: 'Conclusiones por procedimiento', contenido: textoProcedimientosConcluidos(revision.agente) })
     }
   }
 
@@ -301,6 +307,7 @@ export function exportOptsRevisionTributaria(args: {
   // discrepancias" sería falso si hubo diferencias que no se documentaron.
   const tituloHallazgos = preliminar ? 'Hallazgos y recomendaciones parciales' : 'Hallazgos y recomendaciones'
   secciones.push({
+    key: 'hallazgos',
     label: tituloHallazgos,
     contenido:
       revision.hallazgos.length === 0
@@ -313,16 +320,19 @@ export function exportOptsRevisionTributaria(args: {
             : ''),
   })
 
-  if (revision.observaciones?.trim()) {
-    secciones.push({ label: 'Observaciones', contenido: revision.observaciones })
-  }
-  if (!preliminar && revision.conclusion?.trim()) {
-    secciones.push({ label: 'Conclusión', contenido: revision.conclusion })
-  }
+  // Se incluyen aunque estén vacías (la vista previa permite escribirlas);
+  // el PDF y el Word omiten las secciones sin texto.
+  // Observaciones y conclusión son un solo texto. En el preliminar es borrador.
+  secciones.push({
+    key: 'conclusion',
+    label: preliminar ? 'Observaciones' : 'Observaciones y conclusión',
+    contenido: textoConclusion(revision),
+  })
 
   const soportes = revision.adjuntos.filter((a) => a.hallazgoId === null)
   if (soportes.length > 0) {
     secciones.push({
+      key: 'soportes',
       label: 'Soportes de la revisión',
       // Lo subido después de firmar no estaba en el snapshot: se declara como tal.
       contenido: soportes

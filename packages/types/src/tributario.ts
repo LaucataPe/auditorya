@@ -92,6 +92,20 @@ export function mesesDePeriodo(periodicidad: Periodicidad, periodo: string): num
   return Array.from({ length: tam }, (_, i) => (n - 1) * tam + i + 1)
 }
 
+/**
+ * Mes en que normalmente vence un período: el siguiente a su último mes
+ * ('YYYY-MM-01'). Es solo el punto de partida del calendario al digitar el
+ * vencimiento, no una fecha: el día lo fija el calendario DIAN o municipal.
+ */
+export function mesSugeridoVencimiento(periodicidad: Periodicidad, periodo: string, anioFiscal: number): string | null {
+  const meses = mesesDePeriodo(periodicidad, periodo)
+  if (!meses.length) return null
+  const ultimo = meses[meses.length - 1]
+  const anio = ultimo === 12 ? anioFiscal + 1 : anioFiscal
+  const mes = ultimo === 12 ? 1 : ultimo + 1
+  return `${anio}-${String(mes).padStart(2, '0')}-01`
+}
+
 /** Rango de fechas YYYY-MM-DD (inclusive) de un período de la vigencia. */
 export function rangoPeriodo(
   periodicidad: Periodicidad,
@@ -1043,7 +1057,7 @@ export const CASILLAS_ACTIVIDADES_ICA = Array.from({ length: ACTIVIDADES_ICA }, 
 export function aplicarLecturaFormulario(
   tipo: TipoImpuesto,
   casillas: Record<string, number | null>,
-): { renglones: Record<string, number | null>; advertencias: string[] } | null {
+): { renglones: Record<string, number | null>; advertencias: string[]; descuadres: number } | null {
   const cfg = LECTURA_FORMULARIO[tipo]
   if (!cfg) return null
 
@@ -1059,6 +1073,9 @@ export function aplicarLecturaFormulario(
     CIFRAS_CATALOGO[tipo].flatMap((s) => s.renglones).map((r) => [r.id, r.label]),
   )
   const advertencias: string[] = []
+  // Totales que no cuadran: es la señal de una lectura corrida (la casilla N
+  // recibió el valor de la N+1), distinta de una casilla suelta sin renglón.
+  let descuadres = 0
 
   // Totales del formulario vs. lo que suman sus componentes.
   const resueltas = resolverCifras(
@@ -1071,6 +1088,7 @@ export function aplicarLecturaFormulario(
     const enFormulario = presentes.reduce((s, c) => s + c.signo * Math.round(casillas[c.casilla] as number), 0)
     const calculado = resueltas[v.id]?.declarado
     if (calculado !== null && calculado !== undefined && enFormulario !== calculado) {
+      descuadres++
       advertencias.push(
         `"${etiquetas.get(v.id) ?? v.id}": el formulario trae ${enFormulario.toLocaleString('es-CO')} pero sus componentes suman ${calculado.toLocaleString('es-CO')} — revisa la lectura o el formulario.`,
       )
@@ -1089,7 +1107,7 @@ export function aplicarLecturaFormulario(
     }
   }
 
-  return { renglones, advertencias }
+  return { renglones, advertencias, descuadres }
 }
 
 /**
@@ -1152,6 +1170,81 @@ export function presentacionExtemporanea(r: {
   fechaVencimiento: string | null
 }): boolean {
   return !!r.fechaPresentacion && !!r.fechaVencimiento && r.fechaPresentacion > r.fechaVencimiento
+}
+
+/**
+ * Período que precede a otro aunque cruce la vigencia: enero busca diciembre del
+ * año anterior ('anio: -1'), B1 busca B6, C1 busca C3 y el anual busca el año
+ * anterior. A diferencia de `periodoAnterior`, nunca devuelve null.
+ */
+export function periodoAnteriorCruzando(
+  periodicidad: Periodicidad,
+  periodo: string,
+): { periodo: string; anio: 0 | -1 } {
+  const mismoAnio = periodoAnterior(periodicidad, periodo)
+  if (mismoAnio) return { periodo: mismoAnio, anio: 0 }
+  const ultimo = periodosDeVigencia(periodicidad).slice(-1)[0]
+  return { periodo: ultimo, anio: -1 }
+}
+
+/**
+ * Entre los soportes de una revisión, la declaración PRESENTADA: un soporte tipo
+ * "declaración" que no está en el snapshot de la firma (se subió después de firmar;
+ * el borrador, que va antes, sí quedó sellado). Devuelve el más reciente legible
+ * (PDF o imagen) o null. Evidencias de hallazgos no cuentan.
+ */
+export function elegirDeclaracionPresentada<
+  T extends { id: string; tipo: string; hallazgoId: string | null; archivoMime: string; createdAt: Date | string },
+>(adjuntos: T[], snapshot: Record<string, unknown> | null): T | null {
+  const sellados = new Set(((snapshot?.adjuntos ?? []) as Array<{ id?: string }>).map((a) => a.id))
+  const legibles = ['application/pdf', 'image/png', 'image/jpeg', 'image/webp']
+  return (
+    adjuntos
+      .filter((a) => a.tipo === 'declaracion' && a.hallazgoId === null && !sellados.has(a.id) && legibles.includes(a.archivoMime))
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0] ?? null
+  )
+}
+
+/**
+ * Texto único de "observaciones y conclusión". Las observaciones eran un campo
+ * aparte; ahora todo va en la conclusión, y en las revisiones anteriores que
+ * aún traen observaciones se antepone ese texto para no perderlo.
+ */
+export function textoConclusion(r: { observaciones: string | null; conclusion: string | null }): string {
+  return [r.observaciones, r.conclusion].map((t) => (t ?? '').trim()).filter(Boolean).join('\n\n')
+}
+
+/** ¿Es una fecha 'YYYY-MM-DD' que existe en el calendario (rechaza 2026-02-31)? */
+export function fechaCalendarioValida(valor: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(valor)) return false
+  const d = new Date(`${valor}T00:00:00Z`)
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === valor
+}
+
+/**
+ * Valida los vencimientos de una obligación antes de guardarlos en bloque.
+ * Cada clave debe ser un período de la periodicidad y cada fecha debe existir y
+ * caer en la vigencia o en la siguiente (un impuesto de 2026 vence en 2026 o
+ * 2027): así se atrapa un "2062" digitado por error. Devuelve un error por período.
+ */
+export function validarVencimientos(
+  periodicidad: Periodicidad,
+  anioFiscal: number,
+  vencimientos: Record<string, string | null>,
+): Record<string, string> {
+  const validos = new Set(periodosDeVigencia(periodicidad))
+  const errores: Record<string, string> = {}
+  for (const [periodo, fecha] of Object.entries(vencimientos)) {
+    if (!validos.has(periodo)) {
+      errores[periodo] = 'No es un período de esta obligación'
+    } else if (fecha !== null) {
+      if (!fechaCalendarioValida(fecha)) errores[periodo] = 'Fecha inválida'
+      else if (Number(fecha.slice(0, 4)) < anioFiscal || Number(fecha.slice(0, 4)) > anioFiscal + 1) {
+        errores[periodo] = `El vencimiento debe caer en ${anioFiscal} o ${anioFiscal + 1}`
+      }
+    }
+  }
+  return errores
 }
 
 /** Mismo patrón que `pasosEstado` de papeles de trabajo: clave = id del ítem del catálogo. */
@@ -1244,6 +1337,9 @@ export const TIPOS_ADJUNTO_TRIBUTARIO = [
   // documentos electrónicos de la DIAN (ver docs/agente/procedimiento-iva-v1.md).
   'auxiliar',
   'reporte_dian',
+  // Declaración presentada del período anterior subida directamente a esta revisión: el agente la lee
+  // para comparar (sirve aunque el período anterior no esté en la plataforma, p. ej. un cliente nuevo).
+  'declaracion_anterior',
   'otro',
 ] as const
 export type TipoAdjuntoTributario = (typeof TIPOS_ADJUNTO_TRIBUTARIO)[number]
@@ -1256,6 +1352,7 @@ export const TIPO_ADJUNTO_LABELS: Record<TipoAdjuntoTributario, string> = {
   evidencia: 'Evidencia de hallazgo',
   auxiliar: 'Auxiliar contable del período',
   reporte_dian: 'Reporte de documentos electrónicos (DIAN)',
+  declaracion_anterior: 'Declaración presentada del período anterior',
   otro: 'Otro soporte',
 }
 

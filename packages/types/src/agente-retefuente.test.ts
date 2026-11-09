@@ -60,7 +60,7 @@ describe('clasificación de subcuentas y terceros', () => {
     expect(tarifaAdmisible('servicios', 1)).toBe(true)
     expect(tarifaAdmisible('trabajo', 19)).toBeNull()
     expect(cuantiaMinima('compras', 2025)).toBe(27 * 49_799)
-    expect(cuantiaMinima('compras', 2026)).toBeNull() // sin UVT configurada
+    expect(cuantiaMinima('compras', 2027)).toBeNull() // sin UVT configurada
     expect(cuantiaMinima('honorarios', 2025)).toBeNull()
   })
 })
@@ -178,8 +178,8 @@ describe('motor R-xx', () => {
     expect(porRegla(r, 'R-15').some((p) => /no es base × tarifa/.test(p.titulo))).toBe(true)
   })
   it('R-16: cuantía mínima solo con UVT del año; sin UVT queda como limitación', () => {
-    const r26 = correrRevisionRetefuente({ ...base, periodo: { ...periodo, anio: 2026 } })
-    expect(r26.resumen.limitaciones.some((l) => l.regla === 'R-16')).toBe(true)
+    const r27 = correrRevisionRetefuente({ ...base, periodo: { ...periodo, anio: 2027 } })
+    expect(r27.resumen.limitaciones.some((l) => l.regla === 'R-16')).toBe(true)
     // 2025: las compras del archivo (bases de 4 a 5 millones) están sobre 27 UVT → nada; salarios no tienen mínima.
     const r25 = correrRevisionRetefuente(base)
     expect(porRegla(r25, 'R-16')).toEqual([])

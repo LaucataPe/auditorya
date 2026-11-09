@@ -82,9 +82,13 @@ export const SECCIONES_INFORME: Record<TipoInforme, SeccionInforme[]> = {
    Los informes de este catálogo se editan con el editor de texto enriquecido
    (formato acotado: negrita/cursiva/subrayado/listas) y guardan HTML en
    `contenido`; el resto sigue guardando texto plano. El backend sanitiza el
-   HTML contra ETIQUETAS_INFORME_ENRIQUECIDO al guardar. */
+   HTML contra ETIQUETAS_INFORME_ENRIQUECIDO al guardar. Desde la vista previa
+   editable (DocumentoEditable) son todos: las secciones que el revisor no ha
+   tocado siguen siendo texto plano de la plantilla hasta que las edita. */
 
-export const TIPOS_INFORME_ENRIQUECIDO: TipoInforme[] = ['dictamen']
+export const TIPOS_INFORME_ENRIQUECIDO: TipoInforme[] = [
+  'carta_encargo', 'memo_planeacion', 'dictamen', 'carta_control_interno', 'carta_representaciones', 'informe_ai',
+]
 
 /** Etiquetas HTML permitidas en el contenido enriquecido (sin atributos). */
 export const ETIQUETAS_INFORME_ENRIQUECIDO = ['p', 'br', 'strong', 'b', 'em', 'i', 'u', 'ul', 'ol', 'li']

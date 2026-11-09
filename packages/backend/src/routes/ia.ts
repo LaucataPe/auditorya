@@ -22,16 +22,17 @@ import {
   obligacionesTributarias, revisionesTributarias, adjuntosTributarios,
 } from '../db/schema'
 import {
-  esClaseBalance, AREAS_BASE_CLAVES, ACTIVIDADES_ICA, CIFRAS_CATALOGO, IMPUESTOS_CATALOGO, LECTURA_FORMULARIO,
-  aplicarLecturaFormulario, etiquetaPeriodo, nombreObligacion,
+  esClaseBalance, AREAS_BASE_CLAVES, IMPUESTOS_CATALOGO, LECTURA_FORMULARIO,
+  etiquetaPeriodo, nombreObligacion,
   TIPO_HALLAZGO_LABEL, SEVERIDAD_HALLAZGO_LABEL,
 } from '@auditorya/types'
 import { authMiddleware } from '../middleware/auth'
 import {
-  iaDisponible, completarJSON, completarJSONArchivo, completarTexto, MODELO,
+  iaDisponible, completarJSON, completarTexto, MODELO, SYSTEM_AUDITOR,
   type MensajeChat,
 } from '../lib/llm'
-import { transcribirCasillas, lecturaCasillasDisponible, type FuenteLectura } from '../lib/lectura-dian'
+import { lecturaCasillasDisponible, type FuenteLectura } from '../lib/lectura-dian'
+import { leerDeclaracion } from '../lib/lectura-declaracion'
 import { storage } from '../lib/storage'
 import { sugerirRiesgos } from '../lib/ia'
 import { registrarEvento } from '../lib/eventos'
@@ -163,8 +164,6 @@ async function contextoEncargo(auditoriaId: string, firmaId: string) {
   return { row, texto: lineas.join('\n') }
 }
 
-const SYSTEM_AUDITOR = `Eres un auditor externo colombiano con 20 años de experiencia en firmas de auditoría, experto en Normas Internacionales de Auditoría (NIA), NIIF y normativa colombiana (revisoría fiscal, Ley 43 de 1990, Código de Comercio arts. 207-209, PUC).
-Escribes en español profesional, preciso y conciso. Tus respuestas son un apoyo al juicio del auditor, nunca lo reemplazan.`
 
 // ─── Endpoints ───────────────────────────────────────────────────────────────
 
@@ -600,11 +599,6 @@ Devuelve un objeto JSON con exactamente estas claves:
 const MIMES_BORRADOR = ['application/pdf', 'image/png', 'image/jpeg', 'image/webp']
 const MAX_BORRADOR_BYTES = 10 * 1024 * 1024 // el archivo viaja en base64 al workflow o al LLM
 
-const LecturaBorradorSchema = z.object({
-  renglones: z.record(z.number().nullable()),
-  advertencias: z.array(z.string()).max(20).optional(),
-})
-
 // POST /tributario/revisiones/:id/ia/leer-borrador — multipart: `archivo`
 // (PDF/imagen del borrador) + `guardarSoporte` ('1' para adjuntarlo como
 // declaración). Devuelve renglón → valor declarado; el frontend los aplica.
@@ -645,7 +639,6 @@ app.post('/tributario/revisiones/:id/ia/leer-borrador', async (c) => {
   }
 
   const contenido = Buffer.from(await archivo.arrayBuffer())
-  const impuesto = IMPUESTOS_CATALOGO[row.obligacion.tipo]
   const periodo = `${etiquetaPeriodo(row.obligacion.periodicidad, row.revision.periodo)} ${row.obligacion.anioFiscal}`
   const archivoLLM = { nombre: archivo.name, mime: archivo.type, base64: contenido.toString('base64') }
   const cfgCasillas = LECTURA_FORMULARIO[row.obligacion.tipo]
@@ -656,84 +649,17 @@ app.post('/tributario/revisiones/:id/ia/leer-borrador', async (c) => {
   let renglones: Record<string, number | null> = {}
   let advertencias: string[] = []
   let fuente: FuenteLectura = 'llm'
+  let descuadres = 0
 
   try {
-    if (cfgCasillas) {
-      // Formulario con casillas numeradas (300, 350, y el único nacional de ICA por renglón): la fuente solo TRANSCRIBE
-      // casilla → valor (tarea simple y fiable); el mapeo a renglones, las sumas
-      // de casillas agrupadas y la verificación de totales son código determinista.
-      const prompt = row.obligacion.tipo === 'ica'
-        ? `El archivo adjunto es el BORRADOR de la declaración de ${nombreObligacion(row.obligacion)} en el Formulario Único Nacional de declaración y pago del impuesto de industria y comercio, período ${periodo}, de la empresa ${row.empresa.nombre}.
-
-TRANSCRIBE los renglones numerados 8 a 38 con su valor:
-- La clave es el NÚMERO del renglón como texto (p. ej. "16"); el valor, el número en pesos colombianos como ENTERO (sin puntos, comas ni símbolos).
-- Transcribe tal cual, incluidos los renglones en cero. NO calcules, NO corrijas, NO omitas renglones.
-- Omite los renglones 1 a 7 (identificación) y el 18 (capacidad instalada en kW).
-
-Además, transcribe la sección C "Discriminación de actividades gravadas", incluida la hoja de "otras actividades" si la hay, en el orden en que aparecen (la actividad principal es la 1):
-- "act1_ingresos": ingresos gravados de la actividad 1; "act1_impuesto": impuesto de la actividad 1 (columna IMPUESTO, tal cual, sin redondear).
-- Igual para act2, act3… hasta act${ACTIVIDADES_ICA}. Solo las actividades que tienen valores. NO transcribas el código ni la tarifa.
-- Si una casilla no se puede leer con certeza, omítela del objeto.
-
-Devuelve un objeto JSON: {"casillas": {"8": 7958955000, "9": 320101000, ..., "act1_ingresos": 5751351000, "act1_impuesto": 23810593, ...}}`
-        : `El archivo adjunto es el BORRADOR de la declaración de ${nombreObligacion(row.obligacion)} (formulario oficial de la DIAN), período ${periodo}, de la empresa ${row.empresa.nombre}.
-
-TRANSCRIBE todas las casillas numeradas del formulario con su valor:
-- La clave es el NÚMERO de la casilla como texto (p. ej. "28"); el valor, el número en pesos colombianos como ENTERO (sin puntos, comas ni símbolos).
-- Transcribe tal cual, incluidas las casillas en cero. NO calcules, NO corrijas, NO omitas casillas.
-- Ignora las casillas de identificación (año, período, NIT, códigos, teléfonos): solo las casillas con valores en pesos.
-- Si una casilla no se puede leer con certeza, omítela del objeto.
-
-Devuelve un objeto JSON: {"casillas": {"27": 0, "28": 122149000, ...}}`
-
-      const leido = await transcribirCasillas({
-        archivo: archivoLLM,
-        tipo: row.obligacion.tipo,
-        system: SYSTEM_AUDITOR,
-        prompt,
-      })
-      fuente = leido.fuente
-      const aplicado = aplicarLecturaFormulario(row.obligacion.tipo, leido.casillas)
-      renglones = aplicado?.renglones ?? {}
-      advertencias = aplicado?.advertencias ?? []
-    } else {
-      // Impuestos sin formulario estándar (reteica, otros): la IA
-      // mapea directo a los renglones digitables del catálogo.
-      const digitables = CIFRAS_CATALOGO[row.obligacion.tipo]
-        .flatMap((s) => s.renglones.map((r) => ({ ...r, seccion: s.titulo })))
-        .filter((r) => r.tipo === 'digitable')
-      const listaRenglones = digitables
-        .map((r) => `- "${r.id}": ${r.label} (sección: ${r.seccion}${r.ayuda ? ` · ${r.ayuda}` : ''})`)
-        .join('\n')
-
-      const prompt = `El archivo adjunto es el BORRADOR de la declaración de ${nombreObligacion(row.obligacion)} (${impuesto.descripcion}), período ${periodo}, de la empresa ${row.empresa.nombre}.
-
-Extrae los valores del formulario y mapéalos a estos renglones (la clave es el id exacto):
-${listaRenglones}
-
-Reglas:
-- Valores en pesos colombianos como números ENTEROS, tal como aparecen en el formulario (sin puntos, comas ni símbolos).
-- En retenciones los renglones piden el VALOR RETENIDO por concepto, no la base.
-- Usa null en los renglones que el formulario no traiga.
-- NO inventes valores: si algo no se puede leer con certeza, déjalo en null y explícalo en "advertencias".
-- En "advertencias" lista también los valores DISTINTOS DE CERO que no encajaron en ningún renglón (formato "concepto: valor").
-
-Devuelve un objeto JSON: {"renglones": {"<id>": <numero|null>, ...}, "advertencias": ["...", ...]}`
-
-      const crudo = await completarJSONArchivo<unknown>({
-        system: SYSTEM_AUDITOR,
-        prompt,
-        archivo: archivoLLM,
-        inicioJson: '{',
-        maxTokens: 3000,
-      })
-      const lectura = LecturaBorradorSchema.parse(crudo)
-      const idsValidos = new Set(digitables.map((r) => r.id))
-      for (const [id, valor] of Object.entries(lectura.renglones)) {
-        if (idsValidos.has(id)) renglones[id] = valor === null ? null : Math.round(valor)
-      }
-      advertencias = lectura.advertencias ?? []
-    }
+    ;({ renglones, advertencias, descuadres, fuente } = await leerDeclaracion({
+      tipo: row.obligacion.tipo,
+      obligacionNombre: nombreObligacion(row.obligacion),
+      periodo,
+      empresaNombre: row.empresa.nombre,
+      archivo: archivoLLM,
+      forzarOcr: body['forzarOcr'] === '1',
+    }))
   } catch (err) {
     console.error('[ia] leer borrador falló:', (err as Error).message)
     return c.json(
@@ -793,10 +719,12 @@ Devuelve un objeto JSON: {"renglones": {"<id>": <numero|null>, ...}, "advertenci
       // puede auditar después una cifra que entró mal.
       fuente,
       advertencias: advertencias.length,
+      descuadres,
+      forzarOcr: body['forzarOcr'] === '1',
     },
   })
 
-  return c.json({ data: { renglones, advertencias, adjuntoId, fuente } })
+  return c.json({ data: { renglones, advertencias, descuadres, adjuntoId, fuente } })
 })
 
 export default app

@@ -18,6 +18,7 @@ import {
   Sparkles,
   Trash2,
   Upload,
+  Eye,
 } from 'lucide-react'
 import {
   CIFRAS_CATALOGO,
@@ -41,10 +42,13 @@ import {
   type TipoAdjuntoTributario,
   hallazgosDelAgente,
   esTipoAgentico,
+  mesSugeridoVencimiento,
+  textoConclusion,
 } from '@auditorya/types'
 import { api, BASE_URL } from '../../lib/api'
 import { cn } from '../../lib/cn'
 import { fechaCorta } from '../../lib/fechas'
+import { CampoFecha } from '../../components/ui/CampoFecha'
 import { construirHtmlInforme, descargarDocx, imprimirInforme } from '../../lib/informe-export'
 import { exportOptsCedulasRevision, exportOptsRevisionTributaria, nombreArchivoCedulas, nombreArchivoRevision } from '../../lib/informe-tributario'
 import { formatoCOP } from '../../lib/moneda'
@@ -54,6 +58,7 @@ import { useAuthStore } from '../../store/auth.store'
 import { Button } from '../../components/ui/Button'
 import { RevisionGuiadaIva } from '../../components/empresa/RevisionGuiadaIva'
 import { CampoPapel, HallazgosTabla } from '../../components/empresa/HallazgosTributarios'
+import { VistaPreviaRevision } from '../../components/empresa/VistaPreviaRevision'
 import { Input } from '../../components/ui/Input'
 import { InputMiles } from '../../components/ui/InputMiles'
 import { Modal } from '../../components/ui/Modal'
@@ -111,7 +116,7 @@ export function EmpresaTributarioRevision() {
   const irAPaso = (n: number) => ponerParam('paso', String(n))
   const [modalFirma, setModalFirma] = useState(false)
   // null = cerrado. `hallazgoId` distingue evidencia de un hallazgo de un soporte de la revisión.
-  const [modalAdjunto, setModalAdjunto] = useState<{ hallazgoId: string | null } | null>(null)
+  const [modalAdjunto, setModalAdjunto] = useState<{ hallazgoId: string | null; tipoFijo?: TipoAdjuntoTributario } | null>(null)
   // Fila recién creada: la tabla le pone el foco y selecciona el texto para escribir encima.
   const [nuevoHallazgoId, setNuevoHallazgoId] = useState<string | null>(null)
   // Fila borrador de hallazgo abierta en la tabla (todavía no existe en la base).
@@ -143,6 +148,8 @@ export function EmpresaTributarioRevision() {
   const invalidar = () => {
     queryClient.invalidateQueries({ queryKey: ['tributario-revision', revisionId] })
     queryClient.invalidateQueries({ queryKey: ['tributario', empresaId] })
+    // El agente busca la declaración anterior entre los soportes: subir o quitar uno cambia la tarjeta.
+    queryClient.invalidateQueries({ queryKey: ['tributario-agente', revisionId] })
   }
 
   const guardar = useMutation({
@@ -187,6 +194,8 @@ export function EmpresaTributarioRevision() {
     onError: (e) => toast.error(e instanceof Error ? e.message : 'No se pudo registrar la presentación'),
   })
   const [fechaPresentacionNueva, setFechaPresentacionNueva] = useState('')
+  const [vistaPrevia, setVistaPrevia] = useState(false)
+  const hoyLocal = new Date(Date.now() - new Date().getTimezoneOffset() * 60_000).toISOString().slice(0, 10)
 
   const reabrir = useMutation({
     mutationFn: () => api.post(`/tributario/revisiones/${revisionId}/reabrir`, {}),
@@ -365,7 +374,7 @@ export function EmpresaTributarioRevision() {
       label: 'Conclusión y soportes',
       Icono: FileText,
       activo: 'border-violet-300 bg-violet-50 text-violet-800',
-      badge: (revision.conclusion ?? '').trim()
+      badge: textoConclusion(revision)
         ? { texto: '✓', clase: 'bg-emerald-100 text-emerald-700' }
         : revision.adjuntos.length > 0
           ? { texto: String(revision.adjuntos.length), clase: 'bg-gray-100 text-gray-500' }
@@ -537,12 +546,12 @@ export function EmpresaTributarioRevision() {
               {revision.obligacion.asignadoNombre && <span>Responsable: {revision.obligacion.asignadoNombre}</span>}
               <label className="flex items-center gap-1.5">
                 Vence:
-                <input
-                  type="date"
-                  defaultValue={revision.fechaVencimiento ?? ''}
+                <CampoFecha
+                  value={revision.fechaVencimiento ?? ''}
+                  mesInicial={mesSugeridoVencimiento(revision.obligacion.periodicidad, revision.periodo, revision.obligacion.anioFiscal) ?? undefined}
                   disabled={sellada}
-                  onChange={(e) => guardar.mutate({ fechaVencimiento: e.target.value || null })}
-                  className="rounded border border-gray-200 px-1.5 py-0.5 text-xs text-gray-600 disabled:bg-gray-50"
+                  onChange={(v) => guardar.mutate({ fechaVencimiento: v || null })}
+                  className="w-auto min-w-[7.5rem] rounded border-gray-200 px-1.5 py-0.5 text-xs text-gray-600"
                 />
               </label>
             </div>
@@ -550,6 +559,9 @@ export function EmpresaTributarioRevision() {
           {!sellada && !guiada && (
             <div className="flex shrink-0 items-center gap-2">
               <span className="text-xs text-gray-400">Informe preliminar:</span>
+              <Button size="sm" variant="secondary" className="gap-1.5" onClick={() => setVistaPrevia(true)}>
+                <Eye size={13} /> Vista previa
+              </Button>
               <Button size="sm" variant="secondary" className="gap-1.5" onClick={() => exportarDocumento('pdf')}>
                 <Printer size={13} /> PDF
               </Button>
@@ -580,6 +592,9 @@ export function EmpresaTributarioRevision() {
             </div>
             <div className="flex shrink-0 items-center gap-2">
               <span className="text-xs text-emerald-700">Constancia:</span>
+              <Button size="sm" variant="secondary" className="gap-1.5" onClick={() => setVistaPrevia(true)}>
+                <Eye size={13} /> Vista previa
+              </Button>
               <Button size="sm" variant="secondary" className="gap-1.5" onClick={() => exportarDocumento('pdf')}>
                 <Printer size={13} /> PDF
               </Button>
@@ -633,13 +648,14 @@ export function EmpresaTributarioRevision() {
             ) : (
               <>
                 <span>¿Ya se presentó la declaración?</span>
-                <input
-                  type="date"
+                <CampoFecha
                   value={fechaPresentacionNueva}
                   // Hoy en la zona del navegador; el backend valida lo mismo.
-                  max={new Date(Date.now() - new Date().getTimezoneOffset() * 60_000).toISOString().slice(0, 10)}
-                  onChange={(e) => setFechaPresentacionNueva(e.target.value)}
-                  className="rounded border border-emerald-200 bg-white px-1.5 py-0.5 text-xs text-gray-700"
+                  max={hoyLocal}
+                  // Se presenta cerca del vencimiento: abre ahí si ya pasó, si no en el mes de hoy.
+                  mesInicial={revision.fechaVencimiento && revision.fechaVencimiento <= hoyLocal ? revision.fechaVencimiento : hoyLocal}
+                  onChange={setFechaPresentacionNueva}
+                  className="w-auto min-w-[7.5rem] rounded border-emerald-200 bg-white px-1.5 py-0.5 text-xs text-gray-700"
                 />
                 <Button
                   size="sm"
@@ -673,13 +689,14 @@ export function EmpresaTributarioRevision() {
           guardando={guardar.isPending}
           invalidar={invalidar}
           onLeerBorrador={() => setModalBorrador(true)}
-          onAdjuntar={(hallazgoId) => setModalAdjunto({ hallazgoId })}
+          onAdjuntar={(hallazgoId, tipoFijo) => setModalAdjunto({ hallazgoId, tipoFijo })}
           onDescargar={descargar}
           onEliminarAdjunto={(adjuntoId) => eliminarAdjunto.mutate(adjuntoId)}
           onFirmar={() => setModalFirma(true)}
           onVerCifras={() => setModalCifras(true)}
           diferenciasCifras={diferencias}
           exportarDocumento={exportarDocumento}
+          onVistaPrevia={() => setVistaPrevia(true)}
           exportarCedulas={exportarCedulas}
           irAPestanas={() => ponerParam('vista', 'pestanas')}
           nuevoHallazgoId={nuevoHallazgoId}
@@ -740,7 +757,7 @@ export function EmpresaTributarioRevision() {
                 empresaNombre: empresa?.nombre ?? '',
               })}
               // Remonta cuando llega el nombre de la empresa o al restaurar el sugerido.
-              remontar={`${empresa?.nombre ?? ''}|${revision.alcance === null}`}
+              remontar={`${empresa?.nombre ?? ''}|${revision.alcance ?? ''}`}
               filas={7}
               deshabilitado={sellada}
               onGuardar={(v) => guardar.mutate({ alcance: v })}
@@ -750,7 +767,7 @@ export function EmpresaTributarioRevision() {
               ayuda="El programa de trabajo del impuesto. El borrador sale del checklist; añade los procedimientos específicos que apliques."
               valor={revision.procedimientos}
               sugerido={procedimientosSugeridos(revision.obligacion.tipo)}
-              remontar={String(revision.procedimientos === null)}
+              remontar={revision.procedimientos ?? ''}
               filas={8}
               deshabilitado={sellada}
               onGuardar={(v) => guardar.mutate({ procedimientos: v })}
@@ -884,34 +901,22 @@ export function EmpresaTributarioRevision() {
                 <FileText size={14} className="text-violet-500" /> Observaciones y conclusión
               </h2>
             </div>
-            <div className="space-y-4 p-5">
-            <div>
-              <label className="mb-1.5 block text-sm font-semibold text-gray-900">Observaciones</label>
+            <div className="p-5">
+              <label className="mb-1.5 block text-sm font-semibold text-gray-900">Observaciones y conclusión</label>
               <textarea
-                rows={3}
-                defaultValue={revision.observaciones ?? ''}
+                key={textoConclusion(revision)}
+                rows={6}
+                defaultValue={textoConclusion(revision)}
                 disabled={sellada}
                 onBlur={(e) => {
-                  if ((e.target.value || null) !== revision.observaciones) guardar.mutate({ observaciones: e.target.value })
+                  // Un solo campo: lo escrito se guarda como conclusión y las observaciones heredadas
+                  // (que ya se mostraron aquí dentro) se vacían para no imprimirlas dos veces.
+                  if (e.target.value.trim() !== textoConclusion(revision)) guardar.mutate({ conclusion: e.target.value, observaciones: null })
                 }}
-                placeholder="Diferencias encontradas, partidas por aclarar, recomendaciones al cliente…"
-                className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 placeholder:text-gray-300 focus:border-indigo-300 focus:outline-none disabled:bg-gray-50"
-              />
-            </div>
-            <div>
-              <label className="mb-1.5 block text-sm font-semibold text-gray-900">Conclusión</label>
-              <textarea
-                rows={3}
-                defaultValue={revision.conclusion ?? ''}
-                disabled={sellada}
-                onBlur={(e) => {
-                  if ((e.target.value || null) !== revision.conclusion) guardar.mutate({ conclusion: e.target.value })
-                }}
-                placeholder="p. ej. Revisada la declaración del período contra libros; las bases y tarifas son razonables y se presentó y pagó oportunamente."
+                placeholder="Diferencias encontradas, partidas por aclarar y recomendaciones al cliente; y tu conclusión. p. ej. Revisada la declaración contra libros; las bases y tarifas son razonables y se presentó y pagó oportunamente."
                 className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 placeholder:text-gray-300 focus:border-indigo-300 focus:outline-none disabled:bg-gray-50"
               />
               <p className="mt-1 text-xs text-gray-400">Requerida para firmar la revisión (constancia).</p>
-            </div>
             </div>
           </section>
           </div>
@@ -1002,6 +1007,18 @@ export function EmpresaTributarioRevision() {
       </>
       )}
 
+      {vistaPrevia && (
+        <VistaPreviaRevision
+          revision={revision}
+          empresaNombre={empresa?.nombre ?? ''}
+          firma={firma}
+          sellada={sellada}
+          guardando={guardar.isPending}
+          onGuardar={(campos) => guardar.mutate(campos, { onSuccess: () => toast.success('Cambios guardados en la revisión') })}
+          onCerrar={() => setVistaPrevia(false)}
+        />
+      )}
+
       <ModalFirmar
         open={modalFirma}
         onClose={() => setModalFirma(false)}
@@ -1019,6 +1036,7 @@ export function EmpresaTributarioRevision() {
         onClose={() => setModalAdjunto(null)}
         revisionId={revision.id}
         hallazgoId={modalAdjunto?.hallazgoId ?? null}
+        tipoFijo={modalAdjunto?.tipoFijo}
         onSubido={invalidar}
         soloPostFirma={sellada}
       />
@@ -1212,6 +1230,8 @@ type LecturaBorrador = {
   renglones: Record<string, number | null>
   advertencias: string[]
   adjuntoId: string | null
+  /** Totales del formulario que no cuadran: la lectura probablemente está corrida. */
+  descuadres?: number
   /** Qué leyó el formulario: el workflow propio o el LLM (fallback). */
   fuente?: 'n8n' | 'llm'
 }
@@ -1233,14 +1253,22 @@ function ModalBorrador({
     aplicados: number
     advertencias: string[]
     fuente?: 'n8n' | 'llm'
+    /** Lectura que no cuadra: no se escribió en "Declarado" hasta que la persona decida. */
+    rota: boolean
+    pendientes: Record<string, { declarado: number }>
   } | null>(null)
+  // Se conserva el archivo tras leerlo para poder reintentar sin volver a subirlo.
+  const [leido, setLeido] = useState<File | null>(null)
+  const [soporteGuardado, setSoporteGuardado] = useState(false)
   const inputArchivo = useRef<HTMLInputElement>(null)
 
   const leer = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (forzarOcr: boolean) => {
       const fd = new FormData()
-      fd.append('archivo', archivo!)
-      fd.append('guardarSoporte', guardarSoporte ? '1' : '0')
+      fd.append('archivo', (forzarOcr ? leido : archivo)!)
+      // Un reintento no duplica el soporte que la primera lectura ya guardó.
+      fd.append('guardarSoporte', guardarSoporte && !soporteGuardado ? '1' : '0')
+      if (forzarOcr) fd.append('forzarOcr', '1')
       const lectura = await api.upload<LecturaBorrador>(
         `/tributario/revisiones/${revision.id}/ia/leer-borrador`,
         fd,
@@ -1256,22 +1284,47 @@ function ModalBorrador({
         cifras[id] = { declarado: valor }
         aplicados++
       }
-      if (aplicados > 0) {
+      // Una lectura corrida escribiría valores en la casilla equivocada: no se
+      // aplica sola. La persona decide entre reintentar o aplicarla de todos modos.
+      const rota = (lectura.descuadres ?? 0) > 0
+      if (aplicados > 0 && !rota) {
         await api.patch(`/tributario/revisiones/${revision.id}`, { cifras })
       }
-      return { aplicados, advertencias: lectura.advertencias, fuente: lectura.fuente }
+      return {
+        aplicados,
+        advertencias: lectura.advertencias,
+        fuente: lectura.fuente,
+        rota,
+        pendientes: rota ? cifras : {},
+        guardado: !!lectura.adjuntoId,
+      }
     },
-    onSuccess: (r) => {
+    onSuccess: ({ guardado, ...r }) => {
       onCambio()
       setResultado(r)
+      if (guardado) setSoporteGuardado(true)
+      setLeido(archivo ?? leido)
       setArchivo(null)
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : 'No se pudo leer el borrador'),
   })
 
+  const aplicarDeTodosModos = useMutation({
+    mutationFn: async () => {
+      await api.patch(`/tributario/revisiones/${revision.id}`, { cifras: resultado!.pendientes })
+    },
+    onSuccess: () => {
+      onCambio()
+      setResultado((r) => (r ? { ...r, rota: false, pendientes: {} } : r))
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : 'No se pudo aplicar la lectura'),
+  })
+
   const cerrar = () => {
     setResultado(null)
     setArchivo(null)
+    setLeido(null)
+    setSoporteGuardado(false)
     onClose()
   }
 
@@ -1279,27 +1332,63 @@ function ModalBorrador({
     <Modal open={open} onClose={cerrar} title="Leer borrador de la declaración">
       {resultado ? (
         <div className="space-y-4">
-          <div className="flex items-center gap-2 rounded-lg bg-emerald-50 px-3 py-2.5 text-sm text-emerald-800">
-            <CheckCircle2 size={15} className="shrink-0 text-emerald-600" />
-            Se diligenciaron {resultado.aplicados} renglón(es) en la columna "Declarado"
-            {resultado.fuente === 'llm' ? ' (leído por el LLM: el workflow no respondió)' : ''}.
-          </div>
+          {resultado.rota ? (
+            <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-sm text-red-800">
+              <p className="font-semibold">La lectura no cuadra: no se escribió nada en "Declarado"</p>
+              <p className="mt-0.5 text-xs text-red-700">
+                Los totales del formulario no coinciden con la suma de sus casillas, señal de que los valores
+                quedaron en la casilla equivocada. Reintenta con OCR o, si el borrador mismo tiene el descuadre,
+                aplícala de todos modos.
+              </p>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 rounded-lg bg-emerald-50 px-3 py-2.5 text-sm text-emerald-800">
+              <CheckCircle2 size={15} className="shrink-0 text-emerald-600" />
+              Se diligenciaron {resultado.aplicados} renglón(es) en la columna "Declarado"
+              {resultado.fuente === 'llm' ? ' (leído por el LLM: el workflow no respondió)' : ''}.
+            </div>
+          )}
           {resultado.advertencias.length > 0 && (
-            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5">
-              <p className="mb-1 text-xs font-semibold text-amber-800">Advertencias de la lectura</p>
-              <ul className="list-disc space-y-0.5 pl-4 text-xs text-amber-700">
+            <div
+              className={
+                resultado.rota
+                  ? 'rounded-lg border border-red-200 bg-white px-3 py-2.5'
+                  : 'rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5'
+              }
+            >
+              <p className={`mb-1 text-xs font-semibold ${resultado.rota ? 'text-red-800' : 'text-amber-800'}`}>
+                Advertencias de la lectura
+              </p>
+              <ul className={`list-disc space-y-0.5 pl-4 text-xs ${resultado.rota ? 'text-red-700' : 'text-amber-700'}`}>
                 {resultado.advertencias.map((a, i) => (
                   <li key={i}>{a}</li>
                 ))}
               </ul>
             </div>
           )}
-          <p className="text-xs text-gray-400">
-            Verifica los valores contra el borrador antes de confiar en ellos: la lectura automática puede
-            equivocarse. Ahora digita la columna "Según libros" para auditar las diferencias.
-          </p>
-          <div className="flex justify-end pt-1">
-            <Button onClick={cerrar}>Listo</Button>
+          {!resultado.rota && (
+            <p className="text-xs text-gray-400">
+              Verifica los valores contra el borrador antes de confiar en ellos: la lectura automática puede
+              equivocarse. Ahora digita la columna "Según libros" para auditar las diferencias.
+            </p>
+          )}
+          <div className="flex justify-end gap-2 pt-1">
+            {resultado.rota ? (
+              <>
+                <Button
+                  variant="secondary"
+                  onClick={() => aplicarDeTodosModos.mutate()}
+                  disabled={aplicarDeTodosModos.isPending || leer.isPending}
+                >
+                  Aplicar de todos modos
+                </Button>
+                <Button onClick={() => leer.mutate(true)} loading={leer.isPending} disabled={!leido}>
+                  Reintentar con OCR
+                </Button>
+              </>
+            ) : (
+              <Button onClick={cerrar}>Listo</Button>
+            )}
           </div>
         </div>
       ) : (
@@ -1345,7 +1434,7 @@ function ModalBorrador({
             <Button variant="secondary" onClick={cerrar}>
               Cancelar
             </Button>
-            <Button onClick={() => leer.mutate()} loading={leer.isPending} disabled={!archivo}>
+            <Button onClick={() => leer.mutate(false)} loading={leer.isPending} disabled={!archivo}>
               <Sparkles size={13} className="mr-1.5" /> Leer y diligenciar
             </Button>
           </div>
@@ -1360,6 +1449,7 @@ function ModalAdjunto({
   onClose,
   revisionId,
   hallazgoId,
+  tipoFijo,
   onSubido,
   soloPostFirma,
 }: {
@@ -1368,6 +1458,8 @@ function ModalAdjunto({
   revisionId: string
   /** Evidencia de ese hallazgo; null = soporte de la revisión. */
   hallazgoId: string | null
+  /** Tipo ya decidido por quien abre el modal (no se elige); sin él, la lista normal. */
+  tipoFijo?: TipoAdjuntoTributario
   onSubido: () => void
   /** Revisión firmada: solo declaración presentada o recibo de pago. */
   soloPostFirma: boolean
@@ -1382,10 +1474,10 @@ function ModalAdjunto({
     ? TIPOS_ADJUNTO_EVIDENCIA
     : soloPostFirma
       ? TIPOS_ADJUNTO_POST_FIRMA
-      : TIPOS_ADJUNTO_TRIBUTARIO.filter((t) => t !== 'evidencia')
+      : TIPOS_ADJUNTO_TRIBUTARIO.filter((t) => t !== 'evidencia' && t !== 'declaracion_anterior')
   // El modal no se desmonta: si el tipo elegido antes no aplica al destino
   // actual, cae en el primero válido (el backend rechazaría el que no aplica).
-  const tipoEfectivo: TipoAdjuntoTributario = opciones.includes(tipo) ? tipo : opciones[0]
+  const tipoEfectivo: TipoAdjuntoTributario = tipoFijo ?? (opciones.includes(tipo) ? tipo : opciones[0])
 
   const subir = useMutation({
     mutationFn: () => {
@@ -1411,7 +1503,9 @@ function ModalAdjunto({
       open={open}
       onClose={onClose}
       title={
-        hallazgoId
+        tipoFijo === 'declaracion_anterior'
+          ? 'Declaración presentada del período anterior'
+          : hallazgoId
           ? 'Adjuntar evidencia del hallazgo'
           : soloPostFirma
             ? 'Adjuntar soporte posterior a la firma'
@@ -1420,12 +1514,19 @@ function ModalAdjunto({
       size="sm"
     >
       <div className="space-y-4">
-        <Select
-          label="Tipo de soporte"
-          value={tipoEfectivo}
-          onChange={(e) => setTipo(e.target.value as TipoAdjuntoTributario)}
-          options={opciones.map((t) => ({ value: t, label: TIPO_ADJUNTO_LABELS[t] }))}
-        />
+        {tipoFijo ? (
+          <p className="text-xs text-gray-500">
+            Sube el PDF o la imagen de la declaración <strong>presentada</strong> (no el borrador). El agente la lee para
+            comparar con este período; si no se puede leer o no cuadra, el análisis corre sin comparar.
+          </p>
+        ) : (
+          <Select
+            label="Tipo de soporte"
+            value={tipoEfectivo}
+            onChange={(e) => setTipo(e.target.value as TipoAdjuntoTributario)}
+            options={opciones.map((t) => ({ value: t, label: TIPO_ADJUNTO_LABELS[t] }))}
+          />
+        )}
         <Input
           label="Nombre del soporte"
           value={nombre}
@@ -1484,7 +1585,13 @@ function ModalFirmar({
   const [resultado, setResultado] = useState<ResultadoRevisionTributaria>('sin_observaciones')
 
   const firmar = useMutation({
-    mutationFn: () => api.post(`/tributario/revisiones/${revision.id}/firmar`, { resultado }),
+    // Si quedaban observaciones heredadas, viajan dentro de la conclusión.
+    mutationFn: () =>
+      api.post(`/tributario/revisiones/${revision.id}/firmar`, {
+        resultado,
+        conclusion: textoConclusion(revision),
+        observaciones: null,
+      }),
     onSuccess: () => {
       onFirmada()
       toast.success('Revisión firmada: la constancia quedó sellada')
@@ -1493,10 +1600,8 @@ function ModalFirmar({
     onError: (e) => toast.error(e instanceof Error ? e.message : 'No se pudo firmar la revisión'),
   })
 
-  const sinConclusion = !(revision.conclusion ?? '').trim()
+  const sinConclusion = !textoConclusion(revision)
   const pendientes = revision.hallazgos.filter(hallazgoTributarioPendiente).length
-  const sinObservaciones =
-    resultado === 'con_observaciones' && revision.hallazgos.length === 0 && !(revision.observaciones ?? '').trim()
   const conflictoHallazgos = resultado === 'sin_observaciones' && pendientes > 0
 
   return (
@@ -1521,12 +1626,7 @@ function ModalFirmar({
           ]}
         />
         {sinConclusion && (
-          <p className="text-xs text-amber-600">Escribe la conclusión antes de firmar.</p>
-        )}
-        {sinObservaciones && (
-          <p className="text-xs text-amber-600">
-            Documenta las observaciones o registra un hallazgo antes de firmar con ese resultado.
-          </p>
+          <p className="text-xs text-amber-600">Escribe las observaciones y la conclusión antes de firmar.</p>
         )}
         {conflictoHallazgos && (
           <p className="text-xs text-amber-600">
@@ -1551,7 +1651,7 @@ function ModalFirmar({
           <Button
             onClick={() => firmar.mutate()}
             loading={firmar.isPending}
-            disabled={sinConclusion || sinObservaciones || conflictoHallazgos}
+            disabled={sinConclusion || conflictoHallazgos}
           >
             Firmar
           </Button>

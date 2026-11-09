@@ -16,6 +16,7 @@ export const UVT_POR_ANIO: Record<number, number> = {
   2023: 42_412,
   2024: 47_065,
   2025: 49_799,
+  2026: 52_374, // Res. DIAN 000238 de 2025
 }
 
 export type TarifaConcepto = {

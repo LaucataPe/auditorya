@@ -900,7 +900,7 @@ export const adjuntosTributarios = pgTable('adjuntos_tributarios', {
   hallazgoId: uuid('hallazgo_id').references(() => hallazgosTributarios.id),
   nombre: text('nombre').notNull(),
   // Columna text sin CHECK: agregar un tipo no requiere migración.
-  tipo: text('tipo', { enum: ['declaracion', 'pago', 'conciliacion', 'certificado', 'evidencia', 'auxiliar', 'reporte_dian', 'otro'] })
+  tipo: text('tipo', { enum: ['declaracion', 'pago', 'conciliacion', 'certificado', 'evidencia', 'auxiliar', 'reporte_dian', 'declaracion_anterior', 'otro'] })
     .default('otro')
     .notNull(),
   archivoKey: text('archivo_key').notNull(),

@@ -44,6 +44,7 @@ import {
   nombreObligacion,
   periodosDeVigencia,
   procedimientosSugeridos,
+  validarVencimientos,
   type TipoAdjuntoTributario,
 } from '@auditorya/types'
 import type { JwtPayload } from '../lib/jwt'
@@ -472,6 +473,60 @@ app.patch(
   },
 )
 
+// PUT /tributario/obligaciones/:id/vencimientos — fija los vencimientos de varios
+// períodos de una vez ({ vencimientos: { '01': '2026-02-10', '02': null } }).
+// Las revisiones firmadas no se tocan: la constancia sella el vencimiento con el
+// que se firmó. Los períodos que no vienen en el cuerpo se dejan como están.
+app.put(
+  '/tributario/obligaciones/:id/vencimientos',
+  zValidator('json', z.object({ vencimientos: z.record(z.string().nullable()) })),
+  async (c) => {
+    const user = c.get('user')
+    const obligacionId = c.req.param('id')
+    const { vencimientos } = c.req.valid('json')
+
+    const row = await cargarObligacion(obligacionId, user.firmaId)
+    if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Obligación no encontrada' } }, 404)
+
+    const errores = validarVencimientos(row.obligacion.periodicidad, row.obligacion.anioFiscal, vencimientos)
+    if (Object.keys(errores).length) {
+      const [periodo, motivo] = Object.entries(errores)[0]
+      return c.json({ error: { code: 'VENCIMIENTO_INVALIDO', message: `${etiquetaPeriodo(row.obligacion.periodicidad, periodo)}: ${motivo}` } }, 400)
+    }
+
+    const revisiones = await db
+      .select()
+      .from(revisionesTributarias)
+      .where(eq(revisionesTributarias.obligacionId, obligacionId))
+
+    const omitidas: string[] = []
+    let actualizadas = 0
+    await db.transaction(async (tx) => {
+      for (const r of revisiones) {
+        if (!(r.periodo in vencimientos)) continue
+        const nueva = vencimientos[r.periodo]
+        if (r.estado === 'revisada') {
+          if ((r.fechaVencimiento ?? null) !== nueva) omitidas.push(r.periodo)
+          continue
+        }
+        if ((r.fechaVencimiento ?? null) === nueva) continue
+        await tx.update(revisionesTributarias).set({ fechaVencimiento: nueva }).where(eq(revisionesTributarias.id, r.id))
+        actualizadas++
+      }
+    })
+
+    registrarEvento(user, {
+      accion: 'tributario.obligacion.vencimientos',
+      entidad: 'obligacion_tributaria',
+      entidadId: obligacionId,
+      empresaId: row.obligacion.empresaId,
+      detalle: { obligacion: nombreObligacion(row.obligacion), anio: row.obligacion.anioFiscal, actualizadas, omitidasFirmadas: omitidas },
+    })
+
+    return c.json({ data: { actualizadas, omitidas } })
+  },
+)
+
 // DELETE /tributario/obligaciones/:id — solo si ninguna revisión está firmada
 app.delete('/tributario/obligaciones/:id', async (c) => {
   const user = c.get('user')
@@ -743,15 +798,8 @@ app.post(
         409,
       )
     }
-    if (body.resultado === 'con_observaciones' && hallazgos.length === 0) {
-      const observaciones = body.observaciones !== undefined ? body.observaciones : row.revision.observaciones
-      if (!(observaciones ?? '').trim()) {
-        return c.json(
-          { error: { code: 'SIN_OBSERVACIONES', message: 'Si el resultado es "con observaciones", documenta las observaciones o registra un hallazgo' } },
-          409,
-        )
-      }
-    }
+    // "Con observaciones" ya no pide un texto aparte: las observaciones van dentro
+    // de la conclusión, que arriba es obligatoria para firmar.
 
     // El encabezado del papel de trabajo se materializa al firmar: si el
     // revisor nunca lo editó queda escrito el borrador vigente hoy, para que

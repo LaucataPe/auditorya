@@ -51,7 +51,7 @@ export const AGENTES_TRIBUTARIOS: Record<TipoAgentico, DefinicionAgente> = {
       const c84 = cifras['iva-saldo-favor-ant']?.declarado
       return typeof c84 === 'number' && c84 > 0 ? 'Recomendado: el formulario imputa saldo a favor anterior' : null
     },
-    anteriorOpcional: 'Solo si el formulario imputa saldo a favor del período anterior',
+    anteriorOpcional: 'Se toma de la declaración presentada del período anterior; sin ella no se compara',
     ejemploPasoPropio: 'Verificar el certificado de retención de IVA del cliente X',
   },
   retefuente: {
@@ -62,14 +62,14 @@ export const AGENTES_TRIBUTARIOS: Record<TipoAgentico, DefinicionAgente> = {
       borrador: { nombre: 'Borrador del Formulario 350', para: 'Llena la columna Declarado: bases y retenciones por concepto y beneficiario. Sin él no hay nada que verificar.' },
       auxiliar: { nombre: 'Auxiliar contable o balance de prueba del mes (2365 y 2367)', para: 'Llena Según libros por concepto. Si el auxiliar trae la base y la tarifa por asiento (World Office, Siesa), el agente verifica tarifa y cuantía mínima uno por uno y separa jurídicas de naturales por el tercero.' },
       dian: { nombre: 'Reporte de documentos electrónicos recibidos', para: 'Etapa siguiente: universo de pagos por tercero para detectar retenciones no practicadas.' },
-      anterior: { nombre: 'Declaración del mes anterior', para: 'Compara el total retenido mes a mes. Si la revisión anterior está en la plataforma, no hace falta.' },
+      anterior: { nombre: 'Declaración del mes anterior', para: 'Compara el total retenido mes a mes. Es el PDF de la declaración presentada, que se sube al período anterior después de firmarlo; sin él no se compara.' },
     },
     programaSugerido: programaSugeridoRetefuente,
     reglasOmitidas: reglasOmitidasRetefuente,
     cuentas: [{ prefijo: '2365', etiqueta: 'retención en la fuente (2365)' }, { prefijo: '2364', etiqueta: 'retención en la fuente (2364)' }, { prefijo: '2367', etiqueta: 'rete-IVA (2367)' }],
     memoriaClave: 'mapeo2365',
     anteriorRelevante: () => null,
-    anteriorOpcional: 'Opcional: permite comparar el total retenido con el mes anterior',
+    anteriorOpcional: 'Se toma de la declaración presentada del período anterior; sin ella no se compara',
     ejemploPasoPropio: 'Revisar los certificados de retención expedidos a los cinco mayores proveedores',
   },
   reteica: {
@@ -80,14 +80,14 @@ export const AGENTES_TRIBUTARIOS: Record<TipoAgentico, DefinicionAgente> = {
       borrador: { nombre: 'Borrador de la declaración de retención de ICA', para: 'Llena la columna Declarado: base, retenciones, autorretenciones, devoluciones y sanciones. Cada municipio tiene su formulario; la lectura los lleva a los mismos renglones.' },
       auxiliar: { nombre: 'Auxiliar o balance de prueba de la 2368 (mejor por terceros)', para: 'Llena Según libros con la 2368 del municipio. Con el detalle por tercero separa las devoluciones a proveedores del pago al municipio y muestra lo retenido a cada uno.' },
       dian: { nombre: 'Reporte de documentos electrónicos recibidos', para: 'Etapa siguiente: universo de pagos a proveedores del municipio.' },
-      anterior: { nombre: 'Declaración del bimestre anterior', para: 'Compara las retenciones con el período anterior. Si la revisión anterior está en la plataforma, no hace falta.' },
+      anterior: { nombre: 'Declaración del bimestre anterior', para: 'Compara las retenciones con el período anterior. Es el PDF de la declaración presentada, que se sube al período anterior después de firmarlo; sin él no se compara.' },
     },
     programaSugerido: programaSugeridoReteica,
     reglasOmitidas: reglasOmitidasReteica,
     cuentas: [{ prefijo: '2368', etiqueta: 'ICA retenido (2368)' }],
     memoriaClave: 'mapeo2368',
     anteriorRelevante: () => null,
-    anteriorOpcional: 'Opcional: permite comparar las retenciones con el bimestre anterior',
+    anteriorOpcional: 'Se toma de la declaración presentada del período anterior; sin ella no se compara',
     ejemploPasoPropio: 'Verificar el código de actividad de los cinco mayores proveedores',
   },
   ica: {
@@ -98,7 +98,7 @@ export const AGENTES_TRIBUTARIOS: Record<TipoAgentico, DefinicionAgente> = {
       borrador: { nombre: 'Borrador del Formulario Único Nacional de ICA', para: 'Llena la columna Declarado: base gravable (renglones 8 a 16), actividades gravadas con su impuesto, liquidación y pago.' },
       auxiliar: { nombre: 'Balance de prueba o auxiliar del período (ingresos, 135518 y 2412)', para: 'Llena Según libros: ingresos brutos, devoluciones, exportaciones e ingresos de otros municipios desde la clase 4; retenciones desde la 135518; causación desde la 2412.' },
       dian: { nombre: 'Reporte de documentos electrónicos emitidos', para: 'Etapa siguiente: cruzar los ingresos con la facturación electrónica.' },
-      anterior: { nombre: 'Declaración del período anterior', para: 'Verifica el saldo a favor imputado (renglón 32) y compara la base y el impuesto. Si la revisión anterior está en la plataforma, no hace falta.' },
+      anterior: { nombre: 'Declaración del período anterior', para: 'Verifica el saldo a favor imputado (renglón 32) y compara la base y el impuesto. Es el PDF de la declaración presentada, que se sube al período anterior después de firmarlo; sin él no se compara.' },
     },
     programaSugerido: programaSugeridoIca,
     reglasOmitidas: reglasOmitidasIca,
@@ -108,7 +108,7 @@ export const AGENTES_TRIBUTARIOS: Record<TipoAgentico, DefinicionAgente> = {
       const sfa = cifras['ica-saldo-favor-ant']?.declarado
       return typeof sfa === 'number' && sfa > 0 ? 'Recomendado: el formulario imputa saldo a favor del período anterior' : null
     },
-    anteriorOpcional: 'Opcional: permite comparar la base y el impuesto con el período anterior',
+    anteriorOpcional: 'Se toma de la declaración presentada del período anterior; sin ella no se compara',
     ejemploPasoPropio: 'Revisar los certificados de reteICA de los tres mayores clientes',
   },
 }
