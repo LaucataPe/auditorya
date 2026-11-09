@@ -184,7 +184,7 @@ export type ArranqueAgente = {
     marcoContable: string
     ciudad: string | null
   }
-  documentos: { rut: boolean; camaraComercio: boolean; estadosAnteriores: boolean }
+  documentos: { rut: boolean; camaraComercio: boolean }
   entendimiento: { cambiosSignificativos: string | null; sinCambios: boolean; confirmado: boolean } | null
   memoria: Record<string, unknown>
   balanceCargado: boolean

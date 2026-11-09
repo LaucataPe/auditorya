@@ -16,7 +16,7 @@ export type TipoDocumentoEmpresa =
   | 'otro'
 
 export type CatalogoDocumentoEmpresa = {
-  tipo: Exclude<TipoDocumentoEmpresa, 'otro'>
+  tipo: Exclude<TipoDocumentoEmpresa, 'otro' | 'estados_financieros_anteriores' | 'declaracion_renta'>
   label: string
   descripcion: string
 }
@@ -38,11 +38,6 @@ export const CATALOGO_DOCUMENTOS_EMPRESA: CatalogoDocumentoEmpresa[] = [
     descripcion: 'Documento de identidad del representante legal.',
   },
   {
-    tipo: 'estados_financieros_anteriores',
-    label: 'Estados financieros año anterior',
-    descripcion: 'Estados financieros firmados del período anterior.',
-  },
-  {
     tipo: 'composicion_accionaria',
     label: 'Composición accionaria',
     descripcion: 'Libro de socios/accionistas o certificación de composición accionaria.',
@@ -51,11 +46,6 @@ export const CATALOGO_DOCUMENTOS_EMPRESA: CatalogoDocumentoEmpresa[] = [
     tipo: 'estatutos',
     label: 'Estatutos sociales',
     descripcion: 'Estatutos vigentes o acta/documento de constitución.',
-  },
-  {
-    tipo: 'declaracion_renta',
-    label: 'Última declaración de renta',
-    descripcion: 'Declaración de renta del último período gravable.',
   },
   {
     tipo: 'contrato',
@@ -72,8 +62,11 @@ export const TIPOS_DOCUMENTO_EMPRESA: TipoDocumentoEmpresa[] = [
 export const DOCUMENTO_EMPRESA_TIPO_LABEL: Record<TipoDocumentoEmpresa, string> = {
   ...(Object.fromEntries(
     CATALOGO_DOCUMENTOS_EMPRESA.map((d) => [d.tipo, d.label]),
-  ) as Record<Exclude<TipoDocumentoEmpresa, 'otro'>, string>),
+  ) as Record<CatalogoDocumentoEmpresa['tipo'], string>),
   otro: 'Otro documento',
+  // Retirados del catálogo (ya no se piden); se conservan por los archivos ya subidos.
+  estados_financieros_anteriores: 'Estados financieros año anterior',
+  declaracion_renta: 'Última declaración de renta',
 }
 
 export type DocumentoEmpresa = {

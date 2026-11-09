@@ -35,7 +35,10 @@ const PREGUNTAS = [
   },
 ]
 
-export function EmpresaEvaluacion() {
+export function EmpresaEvaluacion({ embedded = false }: { embedded?: boolean }) {
+  const pad = embedded ? '' : 'p-8'
+  const Titulo = embedded ? 'h2' : 'h1'
+  const tituloCls = embedded ? 'text-lg font-semibold text-gray-900' : 'text-2xl font-bold text-gray-900'
   const { id } = useParams<{ id: string }>()
   const queryClient = useQueryClient()
 
@@ -80,9 +83,9 @@ export function EmpresaEvaluacion() {
 
   if (empresa?.estadoEncargo === 'aceptado') {
     return (
-      <div className="p-8">
-        <h1 className="text-2xl font-bold text-gray-900 mb-6">Evaluación de aceptación</h1>
-        <div className="flex flex-col items-center justify-center rounded-xl border border-emerald-200 bg-emerald-50 py-16 text-center">
+      <div className={pad}>
+        <Titulo className={`${tituloCls} mb-4`}>Evaluación de aceptación</Titulo>
+        <div className="flex flex-col items-center justify-center rounded-xl border border-emerald-200 bg-emerald-50 py-10 text-center">
           <CheckCircle size={40} className="text-emerald-500 mb-3" />
           <p className="text-lg font-semibold text-emerald-800">Encargo aceptado</p>
           <p className="text-sm text-emerald-600 mt-1 max-w-sm">
@@ -95,9 +98,9 @@ export function EmpresaEvaluacion() {
 
   if (empresa?.estadoEncargo === 'rechazado') {
     return (
-      <div className="p-8">
-        <h1 className="text-2xl font-bold text-gray-900 mb-6">Evaluación de aceptación</h1>
-        <div className="flex flex-col items-center justify-center rounded-xl border border-red-200 bg-red-50 py-16 text-center">
+      <div className={pad}>
+        <Titulo className={`${tituloCls} mb-4`}>Evaluación de aceptación</Titulo>
+        <div className="flex flex-col items-center justify-center rounded-xl border border-red-200 bg-red-50 py-10 text-center">
           <XCircle size={40} className="text-red-400 mb-3" />
           <p className="text-lg font-semibold text-red-800">Encargo rechazado</p>
           <p className="text-sm text-red-600 mt-1 max-w-sm">
@@ -109,9 +112,9 @@ export function EmpresaEvaluacion() {
   }
 
   return (
-    <div className="p-8 space-y-6">
+    <div className={`${pad} space-y-6`}>
       <div>
-        <h1 className="text-2xl font-bold text-gray-900">Evaluación de aceptación</h1>
+        <Titulo className={tituloCls}>Evaluación de aceptación</Titulo>
         <p className="text-sm text-gray-500 mt-1">
           Evalúa la independencia del equipo auditor frente a <strong>{empresa?.nombre}</strong>.
         </p>

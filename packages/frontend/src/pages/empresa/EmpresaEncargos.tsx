@@ -156,7 +156,7 @@ export function EmpresaEncargos() {
           <AlertTriangle size={16} className="text-amber-500 shrink-0 mt-0.5" />
           <p className="text-sm text-amber-700">
             Completa la evaluación de aceptación antes de crear encargos.{' '}
-            <button onClick={() => navigate(`/empresas/${id}/evaluacion`)} className="underline">
+            <button onClick={() => navigate(`/empresas/${id}/informacion`)} className="underline">
               Ir a evaluación
             </button>
           </p>

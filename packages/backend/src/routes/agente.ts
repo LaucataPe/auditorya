@@ -602,7 +602,7 @@ app.get('/auditorias/:id/agente/arranque', async (c) => {
   const data: ArranqueAgente = {
     completado: !!row.auditoria.arranqueCompletadoAt,
     empresa: { nombre: e.nombre, sector: e.sector, ciiu: e.ciiu, actividadEconomica: e.actividadEconomica, marcoContable: e.marcoContable, ciudad: e.ciudad },
-    documentos: { rut: tipos.has('rut'), camaraComercio: tipos.has('camara_comercio'), estadosAnteriores: tipos.has('estados_financieros_anteriores') },
+    documentos: { rut: tipos.has('rut'), camaraComercio: tipos.has('camara_comercio') },
     entendimiento: ent ? { cambiosSignificativos: ent.cambiosSignificativos, sinCambios: ent.sinCambios, confirmado: ent.confirmado } : null,
     memoria: Object.fromEntries(memoria.map((m) => [m.clave, m.valor])),
     balanceCargado: !!bal, comparativoCargado: !!comp, corrida,

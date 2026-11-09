@@ -1,7 +1,6 @@
 import { NavLink, useNavigate } from 'react-router-dom'
 import {
   ArrowLeft,
-  CheckSquare,
   ClipboardList,
   FileText,
   Info,
@@ -25,7 +24,6 @@ type Empresa = {
 const navItems = (id: string) => [
   { label: 'Dashboard', icon: LayoutDashboard, to: `/empresas/${id}/dashboard` },
   { label: 'Encargos', icon: ClipboardList, to: `/empresas/${id}/encargos` },
-  { label: 'Evaluación', icon: CheckSquare, to: `/empresas/${id}/evaluacion` },
   { label: 'Tributario', icon: Landmark, to: `/empresas/${id}/tributario` },
   { label: 'Documentos', icon: FileText, to: `/empresas/${id}/documentos` },
   { label: 'Información', icon: Info, to: `/empresas/${id}/informacion` },

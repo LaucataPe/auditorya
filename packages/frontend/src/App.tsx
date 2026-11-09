@@ -30,7 +30,6 @@ const EmpresaEncargos = lazy(() => import('./pages/empresa/EmpresaEncargos').the
 const EmpresaArranque = lazy(() => import('./pages/empresa/EmpresaArranque').then((m) => ({ default: m.EmpresaArranque })))
 const EmpresaAuditoria = lazy(() => import('./pages/empresa/EmpresaAuditoria').then((m) => ({ default: m.EmpresaAuditoria })))
 const EmpresaPapel = lazy(() => import('./pages/empresa/EmpresaPapel').then((m) => ({ default: m.EmpresaPapel })))
-const EmpresaEvaluacion = lazy(() => import('./pages/empresa/EmpresaEvaluacion').then((m) => ({ default: m.EmpresaEvaluacion })))
 const EmpresaDocumentos = lazy(() => import('./pages/empresa/EmpresaDocumentos').then((m) => ({ default: m.EmpresaDocumentos })))
 const EmpresaInformacion = lazy(() => import('./pages/empresa/EmpresaInformacion').then((m) => ({ default: m.EmpresaInformacion })))
 const EmpresaTributario = lazy(() => import('./pages/empresa/EmpresaTributario').then((m) => ({ default: m.EmpresaTributario })))
@@ -126,7 +125,7 @@ export default function App() {
         <Route path="encargos/:auditoriaId" element={<L c={EmpresaAuditoria} />} />
         <Route path="encargos/:auditoriaId/arranque" element={<L c={EmpresaArranque} />} />
         <Route path="encargos/:auditoriaId/papeles/:papelId" element={<L c={EmpresaPapel} />} />
-        <Route path="evaluacion" element={<L c={EmpresaEvaluacion} />} />
+        <Route path="evaluacion" element={<Navigate to="../informacion" replace />} />
         <Route path="documentos" element={<L c={EmpresaDocumentos} />} />
         <Route path="informacion" element={<L c={EmpresaInformacion} />} />
         <Route path="tributario" element={<L c={EmpresaTributario} />} />

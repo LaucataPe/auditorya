@@ -125,7 +125,7 @@ export function EmpresaDashboard() {
               Completa la evaluación de independencia para poder crear encargos de auditoría.
             </p>
           </div>
-          <Button size="sm" variant="secondary" onClick={() => navigate(`/empresas/${id}/evaluacion`)}>
+          <Button size="sm" variant="secondary" onClick={() => navigate(`/empresas/${id}/informacion`)}>
             Ir a evaluación
           </Button>
         </div>

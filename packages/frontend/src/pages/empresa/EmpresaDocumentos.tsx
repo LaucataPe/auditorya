@@ -101,7 +101,7 @@ export function EmpresaDocumentos() {
         <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-3">
           Documentos requeridos
         </h2>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {CATALOGO_DOCUMENTOS_EMPRESA.map((item) => (
             <DocumentoCard
               key={item.tipo}

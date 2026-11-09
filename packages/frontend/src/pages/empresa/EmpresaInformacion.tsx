@@ -12,6 +12,7 @@ import { Modal } from '../../components/ui/Modal'
 import { Textarea } from '../../components/ui/Textarea'
 import { ClasificacionFields } from '../../components/empresa/ClasificacionFields'
 import { cn } from '../../lib/cn'
+import { EmpresaEvaluacion } from './EmpresaEvaluacion'
 
 type Empresa = {
   id: string
@@ -196,6 +197,11 @@ export function EmpresaInformacion() {
             })}
           </dl>
         </section>
+      </div>
+
+      {/* Evaluación de aceptación: se hace una vez al aceptar el encargo */}
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
+        <EmpresaEvaluacion embedded />
       </div>
 
       {editOpen && (
