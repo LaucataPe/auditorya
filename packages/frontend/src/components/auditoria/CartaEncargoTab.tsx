@@ -92,7 +92,7 @@ export function CartaEncargoTab({
             Formaliza los términos del encargo (NIA 210) con la administración antes de iniciar la
             planeación. Genera el borrador estándar y ajústalo.
           </p>
-          <Button size="sm" className="mt-5 gap-2" loading={generarMutation.isPending} onClick={() => generarMutation.mutate()}>
+          <Button size="sm" className="mt-5 gap-2" data-tour="carta-generar" loading={generarMutation.isPending} onClick={() => generarMutation.mutate()}>
             <FilePlus2 size={14} /> Generar carta de encargo
           </Button>
           {generarMutation.isError && (

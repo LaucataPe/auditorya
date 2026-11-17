@@ -34,6 +34,7 @@ export const MENSAJES_WHATSAPP = {
   conocer: 'Hola, quiero conocer la plataforma AuditorYa.',
   fundador: 'Hola, quiero participar como firma fundadora de AuditorYa.',
   pregunta: 'Hola, tengo una pregunta sobre AuditorYa.',
+  academia: 'Hola, vengo del curso de AuditorYa Academia y quiero conocer la plataforma para mi firma.',
 }
 
 /** Enlace wa.me con el mensaje prellenado, o null si no hay número configurado. */
@@ -44,6 +45,26 @@ export function enlaceWhatsApp(mensaje: string): string | null {
 // ─── CTA y experimento del hero ──────────────────────────────────────────────
 
 export const ANCLA_CONTACTO = '#contacto'
+
+/**
+ * Destino de un CTA de contacto: WhatsApp, si no un correo, y si no la sección de contacto de la
+ * landing. Nunca devuelve un enlace muerto.
+ */
+export function destinoContacto(mensaje: string, asunto: string): string {
+  return (
+    enlaceWhatsApp(mensaje) ??
+    (SITIO.correoContacto
+      ? `mailto:${SITIO.correoContacto}?subject=${encodeURIComponent(asunto)}&body=${encodeURIComponent(mensaje)}`
+      : `/${ANCLA_CONTACTO}`)
+  )
+}
+
+/** Curso gratuito (lead magnet): botón junto al CTA del menú, enlace en el hero y en el pie. */
+export const ACADEMIA = {
+  ruta: '/academia',
+  nav: 'Curso gratis',
+  boton: 'Haz el curso gratis',
+}
 
 export const CTA = {
   principal: 'Quiero conocer la plataforma',

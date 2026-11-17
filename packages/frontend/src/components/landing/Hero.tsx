@@ -1,5 +1,5 @@
 import { Sparkles } from 'lucide-react'
-import { ANCLA_CONTACTO, MENSAJES_WHATSAPP, enlaceWhatsApp, CAPTURA_HERO, CTA, HERO } from './contenido'
+import { ANCLA_CONTACTO, MENSAJES_WHATSAPP, enlaceWhatsApp, CAPTURA_HERO, CTA, HERO, ACADEMIA } from './contenido'
 import { CtaLink } from './CtaLink'
 import { ProductScreenshot } from './ProductScreenshot'
 import { AppMockup } from './AppMockup'
@@ -30,9 +30,14 @@ export function Hero({ titular, cta }: { titular: readonly [string, string]; cta
           </h1>
           <p className="mx-auto mt-6 max-w-[660px] text-lg leading-relaxed text-marca-suave">{HERO.subtitulo}</p>
           <div className="mt-8 flex flex-col items-center gap-2.5">
-            <CtaLink href={ctaHref} ubicacion="hero" className="w-full sm:w-auto">
-              {cta} <span aria-hidden="true">→</span>
-            </CtaLink>
+            <div className="flex w-full flex-col justify-center gap-3 sm:w-auto sm:flex-row">
+              <CtaLink href={ctaHref} ubicacion="hero" className="w-full sm:w-auto">
+                {cta} <span aria-hidden="true">→</span>
+              </CtaLink>
+              <CtaLink href={ACADEMIA.ruta} variante="secundario" ubicacion="hero" evento="academia_click" className="w-full bg-white sm:w-auto">
+                {ACADEMIA.boton} <span aria-hidden="true">→</span>
+              </CtaLink>
+            </div>
             <p className="text-sm text-marca-suave">{HERO.notaCta}</p>
           </div>
           <p className="mt-5 text-sm text-marca-suave">

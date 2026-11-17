@@ -26,7 +26,7 @@ export function CtaLink({
   href: string
   variante?: Variante
   ubicacion: string
-  evento?: 'cta_click' | 'demo_click'
+  evento?: 'cta_click' | 'demo_click' | 'academia_click'
   className?: string
   children: ReactNode
 }) {

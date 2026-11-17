@@ -20,7 +20,23 @@ function manejarNoOk(res: Response, body: { error?: { message?: string } } | nul
   throw new Error(body?.error?.message ?? `Error de servidor (${res.status})`)
 }
 
+/**
+ * Servidor simulado en el navegador (AuditorYa Academia, curso público sin cuenta). Mientras está
+ * activo, las peticiones no salen a la red: las responde el handler con datos en memoria.
+ */
+export type HandlerApiDemo = (metodo: string, path: string, cuerpo: unknown) => Promise<unknown>
+let handlerDemo: HandlerApiDemo | null = null
+
+export function activarApiDemo(handler: HandlerApiDemo | null) {
+  handlerDemo = handler
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  // La sesión (/auth) siempre va a la red: el curso no debe sacar de su sesión a quien sí tiene cuenta.
+  if (handlerDemo && !path.startsWith('/auth')) {
+    const cuerpo = typeof init?.body === 'string' ? JSON.parse(init.body) : undefined
+    return (await handlerDemo(init?.method ?? 'GET', path, cuerpo)) as T
+  }
   const res = await fetch(`${BASE_URL}${path}`, {
     ...init,
     credentials: 'include',
@@ -39,6 +55,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 /** Petición multipart (subida de archivos). No fija Content-Type: lo pone el navegador. */
 async function upload<T>(path: string, formData: FormData): Promise<T> {
+  if (handlerDemo) return (await handlerDemo('POST', path, formData)) as T
   const res = await fetch(`${BASE_URL}${path}`, {
     method: 'POST',
     credentials: 'include',

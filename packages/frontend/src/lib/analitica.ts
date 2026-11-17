@@ -1,5 +1,5 @@
 /**
- * Eventos de analítica de la landing, sin proveedor atado.
+ * Eventos de analítica de la landing y de la Academia, sin proveedor atado.
  *
  * Cada evento se publica de dos formas:
  *  - `window.dataLayer.push({ event, ...props })` si existe un dataLayer (Google Tag Manager o similar).
@@ -12,6 +12,13 @@
 export type EventoAnalitica =
   | 'cta_click' // clic en un CTA (props: ubicacion, texto)
   | 'demo_click' // clic en "Explora el flujo de un encargo" (props: ubicacion)
+  | 'academia_click' // clic hacia el curso gratuito desde la landing (props: ubicacion)
+  // AuditorYa Academia (curso público). Embudo: lección → checkpoint → CTA.
+  | 'academia_registro' // dejó su correo para entrar al curso (props: rol)
+  | 'academia_leccion' // avance en una lección (props: leccion, paso: 'leida' | 'practica' | 'ejercicio')
+  | 'academia_checkpoint' // checkpoint resuelto (props: modulo, aciertos, total, aprobado)
+  | 'academia_cta' // clic en un CTA comercial del curso (props: ubicacion)
+  | 'academia_funcion_bloqueada' // intentó una función de la versión completa (props: ruta)
 
 export const EVENTO_ANALITICA_DOM = 'auditorya:analitica'
 

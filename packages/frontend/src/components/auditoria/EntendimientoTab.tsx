@@ -173,7 +173,7 @@ export function EntendimientoTab({
                 onClick={() => guardar.mutate(false)}>
                 Guardar borrador
               </Button>
-              <Button size="sm" className="gap-1.5" loading={guardar.isPending && guardar.variables === true}
+              <Button size="sm" className="gap-1.5" data-tour="ent-confirmar" loading={guardar.isPending && guardar.variables === true}
                 onClick={() => guardar.mutate(true)}>
                 <CheckCircle size={14} /> Confirmar entendimiento
               </Button>

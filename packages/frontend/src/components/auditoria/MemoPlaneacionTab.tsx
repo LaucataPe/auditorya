@@ -99,6 +99,7 @@ export function MemoPlaneacionTab({
           <Button
             size="sm"
             className="mt-5 gap-2"
+            data-tour="memo-generar"
             loading={generarMutation.isPending}
             onClick={() => generarMutation.mutate()}
           >

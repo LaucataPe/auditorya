@@ -251,7 +251,7 @@ export function CierreTab({ auditoriaId }: { auditoriaId: string }) {
   )
 }
 
-function HojaAjustes({ auditoriaId, cerrado }: { auditoriaId: string; cerrado: boolean }) {
+export function HojaAjustes({ auditoriaId, cerrado }: { auditoriaId: string; cerrado: boolean }) {
   const queryClient = useQueryClient()
   const [form, setForm] = useState<{ descripcion: string; cuentaCodigo: string; monto: string; tipo: TipoAjuste; efecto: EfectoAjuste }>({
     descripcion: '', cuentaCodigo: '', monto: '', tipo: 'factual', efecto: 'resultado',
@@ -303,7 +303,7 @@ function HojaAjustes({ auditoriaId, cerrado }: { auditoriaId: string; cerrado: b
 
       {/* Opinión sugerida */}
       {ev && (
-        <div className={cn('rounded-lg border px-4 py-3 mb-4', OPINION_STYLE[ev.opinionSugerida])}>
+        <div data-tour="aj-opinion" className={cn('rounded-lg border px-4 py-3 mb-4', OPINION_STYLE[ev.opinionSugerida])}>
           <div className="flex items-center justify-between gap-2">
             <p className="text-sm font-semibold">Opinión sugerida: {OPINION_LABEL[ev.opinionSugerida]}</p>
             <span className="text-xs">
@@ -317,7 +317,7 @@ function HojaAjustes({ auditoriaId, cerrado }: { auditoriaId: string; cerrado: b
 
       {/* Lista de ajustes */}
       {ajustes.length > 0 && (
-        <div className="rounded-lg border border-gray-100 overflow-hidden mb-3">
+        <div data-tour="aj-tabla" className="rounded-lg border border-gray-100 overflow-hidden mb-3">
           <table className="w-full text-xs">
             <thead>
               <tr className="bg-gray-50/60 text-[11px] text-gray-500">
@@ -363,7 +363,7 @@ function HojaAjustes({ auditoriaId, cerrado }: { auditoriaId: string; cerrado: b
 
       {/* Alta de ajuste */}
       {!cerrado && (
-        <div className="space-y-2">
+        <div className="space-y-2" data-tour="aj-form">
           <div className="flex gap-2 flex-wrap">
             <input
               className="flex-1 min-w-[200px] rounded-lg border border-gray-200 px-3 py-1.5 text-sm focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400"

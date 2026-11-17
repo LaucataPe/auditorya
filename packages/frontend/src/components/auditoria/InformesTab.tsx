@@ -118,6 +118,7 @@ export function InformesTab({
             return (
               <div
                 key={t}
+                data-tour={`inf-${t}`}
                 onClick={() => setAbierto(t)}
                 className="bg-white rounded-xl border border-gray-200 shadow-sm px-5 py-4 cursor-pointer hover:border-indigo-200 hover:shadow-md transition-all flex items-center justify-between"
               >
@@ -360,7 +361,7 @@ function InformeEditor({
                 <SugerenciaOpinion auditoriaId={auditoriaId} opinionActual={opinion} onAplicar={setOpinion} />
               </div>
             )}
-            <Button className="gap-1.5" loading={generar.isPending} onClick={() => generar.mutate()}>
+            <Button className="gap-1.5" data-tour="inf-generar" loading={generar.isPending} onClick={() => generar.mutate()}>
               <FilePlus2 size={14} /> Generar borrador
             </Button>
             {generar.isError && (
@@ -418,7 +419,7 @@ function InformeEditor({
             {/* Fija al pie del modal: el documento completo puede ser largo. */}
             <div className="sticky bottom-0 bg-white border-t border-gray-100 pt-4 flex flex-wrap items-center gap-2">
               {!aprobado && (
-                <Button size="sm" loading={guardar.isPending} onClick={() => guardar.mutate()}>
+                <Button size="sm" data-tour="inf-guardar" loading={guardar.isPending} onClick={() => guardar.mutate()}>
                   Guardar
                 </Button>
               )}

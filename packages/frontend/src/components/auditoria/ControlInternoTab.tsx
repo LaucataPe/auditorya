@@ -106,7 +106,7 @@ function ComponenteCard({
     observaciones !== (control?.observaciones ?? '')
 
   return (
-    <div className="bg-white rounded-xl border border-gray-200 shadow-sm px-5 py-4">
+    <div className="bg-white rounded-xl border border-gray-200 shadow-sm px-5 py-4" data-tour={`coso-${componente.id}`}>
       <div className="flex items-start justify-between gap-3 mb-3">
         <div>
           <p className="font-semibold text-gray-900">{componente.nombre}</p>

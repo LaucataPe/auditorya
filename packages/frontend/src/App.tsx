@@ -19,6 +19,11 @@ const DashboardPage = lazy(() => import('./pages/DashboardPage').then((m) => ({ 
 const MiTrabajoPage = lazy(() => import('./pages/MiTrabajoPage').then((m) => ({ default: m.MiTrabajoPage })))
 const FirmaPage = lazy(() => import('./pages/FirmaPage').then((m) => ({ default: m.FirmaPage })))
 const EmpresasPage = lazy(() => import('./pages/EmpresasPage').then((m) => ({ default: m.EmpresasPage })))
+const AcademiaPage = lazy(() => import('./pages/AcademiaPage').then((m) => ({ default: m.AcademiaPage })))
+const AcademiaLeccionPage = lazy(() => import('./pages/AcademiaLeccionPage').then((m) => ({ default: m.AcademiaLeccionPage })))
+const AcademiaCheckpointPage = lazy(() => import('./pages/AcademiaCheckpointPage').then((m) => ({ default: m.AcademiaCheckpointPage })))
+const AcademiaPracticaPage = lazy(() => import('./pages/AcademiaPracticaPage').then((m) => ({ default: m.AcademiaPracticaPage })))
+const AcademiaLayout = lazy(() => import('./components/academia/AcademiaLayout').then((m) => ({ default: m.AcademiaLayout })))
 const SuperadminLayout = lazy(() => import('./components/superadmin/SuperadminLayout').then((m) => ({ default: m.SuperadminLayout })))
 const SuperadminLogin = lazy(() => import('./pages/superadmin/SuperadminLogin').then((m) => ({ default: m.SuperadminLogin })))
 const SuperadminFirmas = lazy(() => import('./pages/superadmin/SuperadminFirmas').then((m) => ({ default: m.SuperadminFirmas })))
@@ -87,8 +92,8 @@ export default function App() {
   }, [checkSession])
 
   // Espera el check inicial antes de renderizar rutas para evitar flash. La landing es
-  // pública y no depende de la sesión: se pinta de inmediato aunque el backend tarde.
-  if (!sessionChecked && pathname !== '/') {
+  // pública y no depende de la sesión: se pinta de inmediato aunque el backend tarde (igual la Academia).
+  if (!sessionChecked && pathname !== '/' && !pathname.startsWith('/academia')) {
     return <Cargando />
   }
 
@@ -100,6 +105,13 @@ export default function App() {
       {/* Public */}
       <Route path="/" element={<LandingPage />} />
       <Route path="/login" element={<L c={LoginPage} completa />} />
+      {/* AuditorYa Academia: curso público (sin cuenta), con servidor simulado en el navegador. */}
+      <Route path="/academia" element={<L c={AcademiaLayout} completa />}>
+        <Route index element={<L c={AcademiaPage} />} />
+        <Route path=":leccionId" element={<L c={AcademiaLeccionPage} />} />
+        <Route path=":leccionId/practica" element={<L c={AcademiaPracticaPage} />} />
+        <Route path="fase/:moduloId/checkpoint" element={<L c={AcademiaCheckpointPage} />} />
+      </Route>
       <Route
         path="/onboarding"
         element={

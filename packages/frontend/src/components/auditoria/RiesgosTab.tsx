@@ -140,6 +140,7 @@ export function RiesgosTab({
             size="sm"
             variant="secondary"
             className="gap-1.5"
+            data-tour="riesgos-desde-balance"
             onClick={() => setBalanceOpen(true)}
           >
             <TableProperties size={14} /> Desde el balance
@@ -152,7 +153,7 @@ export function RiesgosTab({
           >
             <Sparkles size={14} /> Sugerir riesgos (IA)
           </Button>
-          <Button size="sm" className="gap-1.5" onClick={() => setModalOpen(true)}>
+          <Button size="sm" className="gap-1.5" data-tour="riesgos-agregar" onClick={() => setModalOpen(true)}>
             <Plus size={14} /> Agregar
           </Button>
         </div>
@@ -282,6 +283,7 @@ export function RiesgosTab({
                     variant="secondary"
                     className="gap-1.5"
                     disabled={!materialidadAprobada}
+                    data-tour="r-responder"
                     onClick={() => setResponder(r)}
                   >
                     <ArrowRightCircle size={13} /> Responder
@@ -464,7 +466,7 @@ function ResponderRiesgoModal({
 
         {/* Programa de auditoría — pruebas estándar del área */}
         {pruebas.length > 0 && (
-          <div className="border-t border-gray-100 pt-4">
+          <div className="border-t border-gray-100 pt-4" data-tour="r-programa">
             <p className="text-xs text-gray-500 mb-2">
               Programa de {areaLabel(riesgo.area)} — selecciona las pruebas que aplican. Se crea un
               papel por prueba (con su guía) y se genera la lista de documentos a solicitar al cliente. Las tareas se
@@ -515,6 +517,7 @@ function ResponderRiesgoModal({
               className="gap-1.5 mt-2"
               loading={crearPruebas.isPending}
               disabled={selPruebas.size === 0}
+              data-tour="r-crear-pruebas"
               onClick={() => crearPruebas.mutate()}
             >
               <FileText size={13} /> Crear papeles de las pruebas {selPruebas.size > 0 ? `(${selPruebas.size})` : ''}

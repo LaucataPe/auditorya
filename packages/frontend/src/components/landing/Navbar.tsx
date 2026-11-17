@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { Menu, X } from 'lucide-react'
 import { Isotipo } from '../ui/Logo'
 import { useAuthStore } from '../../store/auth.store'
-import { ANCLA_CONTACTO, MENSAJES_WHATSAPP, enlaceWhatsApp, CTA, NAV, SITIO } from './contenido'
+import { ACADEMIA, ANCLA_CONTACTO, MENSAJES_WHATSAPP, enlaceWhatsApp, CTA, NAV, SITIO } from './contenido'
 import { CtaLink } from './CtaLink'
 
 const FOCO = 'focus:outline-none focus-visible:ring-[3px] focus-visible:ring-marca-300'
@@ -36,12 +36,12 @@ export function Navbar() {
         <a href="#inicio" className={`flex items-center gap-2.5 rounded-md ${FOCO}`}>
           <Isotipo className="h-8 w-8" />
           <span className="text-lg font-bold tracking-tight text-marca-tinta">{SITIO.nombre}</span>
-          <span className="hidden border-l border-marca-linea pl-2.5 text-xs font-medium text-marca-suave xl:inline">
+          <span className="hidden border-l border-marca-linea pl-2.5 text-xs font-medium text-marca-suave 2xl:inline">
             {SITIO.lema}
           </span>
         </a>
 
-        <ul className="hidden items-center gap-6 text-sm text-marca-suave lg:flex">
+        <ul className="hidden items-center gap-5 whitespace-nowrap text-sm text-marca-suave lg:flex">
           {NAV.map((item) => (
             <li key={item.href}>
               <a href={item.href} className={`rounded hover:text-marca-tinta ${FOCO}`}>
@@ -58,7 +58,16 @@ export function Navbar() {
           >
             {acceso.label}
           </Link>
-          <CtaLink href={ctaHref} ubicacion="navbar" className="hidden min-h-[40px] px-4 py-2 text-sm sm:inline-flex">
+          <CtaLink
+            href={ACADEMIA.ruta}
+            variante="secundario"
+            ubicacion="navbar"
+            evento="academia_click"
+            className="hidden min-h-[40px] whitespace-nowrap px-4 py-2 text-sm md:inline-flex"
+          >
+            {ACADEMIA.nav}
+          </CtaLink>
+          <CtaLink href={ctaHref} ubicacion="navbar" className="hidden min-h-[40px] whitespace-nowrap px-4 py-2 text-sm sm:inline-flex">
             {CTA.principal}
           </CtaLink>
           <button
@@ -91,8 +100,11 @@ export function Navbar() {
               </Link>
             </li>
           </ul>
-          <div onClick={cerrar}>
-            <CtaLink href={ctaHref} ubicacion="menu_movil" className="mt-3 w-full">
+          <div onClick={cerrar} className="mt-3 flex flex-col gap-2">
+            <CtaLink href={ACADEMIA.ruta} variante="secundario" ubicacion="menu_movil" evento="academia_click" className="w-full">
+              {ACADEMIA.nav}
+            </CtaLink>
+            <CtaLink href={ctaHref} ubicacion="menu_movil" className="w-full">
               {CTA.principal}
             </CtaLink>
           </div>

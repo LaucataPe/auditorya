@@ -5,7 +5,7 @@
  * No reemplazan el juicio del auditor: producen un punto de partida que el
  * usuario revisa y ajusta antes de aprobar.
  */
-import type { TipoInforme, TipoOpinion } from '@auditorya/types'
+import type { TipoInforme, TipoOpinion } from './informe'
 
 const MARCO_LABEL: Record<string, string> = {
   NIIF: 'las Normas Internacionales de Información Financiera (NIIF)',

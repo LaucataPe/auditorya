@@ -151,7 +151,7 @@ export function PbcTab({
           )}
         </div>
       ) : (
-        <div className="space-y-2">
+        <div className="space-y-2" data-tour="pbc-lista">
           {visibles.map((s) => (
             <div key={s.id} className="flex items-start justify-between gap-2 rounded-xl border border-gray-200 bg-white px-4 py-3">
               <div className="min-w-0">

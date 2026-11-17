@@ -31,6 +31,7 @@ VITE_HERO_VARIANTE=       # 'a' | 'b' para fijar una variante a todos (al termin
 VITE_TERMINOS_URL=        # términos de uso → enlace "Términos" del footer
 VITE_CONTACTO_EMAIL=      # correo de contacto: footer y botón "Quiero participar como firma fundadora"
 VITE_WHATSAPP=            # WhatsApp de los CTA con indicativo (573001234567); abre wa.me con un mensaje prellenado
+VITE_N8N_ACADEMIA_URL=    # Academia: webhook de n8n (producción, /webhook/…) que recibe los registros de acceso al curso
 ```
 
 Son variables de build: se leen al compilar, así que cambiarlas exige un nuevo `pnpm build`.
@@ -44,6 +45,12 @@ Son variables de build: se leen al compilar, así que cambiarlas exige un nuevo 
 |---|---|---|
 | `cta_click` | clic en un CTA | `ubicacion` (navbar, menu_movil, hero, faq, cta_final), `texto` |
 | `demo_click` | clic en "Explora el flujo de un encargo" | `ubicacion` |
+| `academia_click` | clic hacia el curso gratuito (`/academia`) | `ubicacion` (navbar, menu_movil, hero) |
+| `academia_registro` | dejó correo y rol para entrar al curso (el registro se envía a n8n: `VITE_N8N_ACADEMIA_URL`) | `rol` (socio, auditor, estudiante, otro) |
+| `academia_leccion` | avance nuevo en una lección del curso | `leccion`, `paso` (leida, practica, ejercicio) |
+| `academia_checkpoint` | intento de checkpoint de una fase | `modulo`, `aciertos`, `total`, `aprobado` |
+| `academia_cta` | clic en un CTA comercial del curso | `ubicacion` (encabezado, inicio_curso, checkpoint_<fase>, aviso_funcion_bloqueada) |
+| `academia_funcion_bloqueada` | el curso intentó una acción de la versión completa | `ruta` |
 
 - **Google Tag Manager / GA4:** agregar el snippet de GTM en `index.html`; los eventos ya llegan
   al `dataLayer` con `event: <nombre>`. Crear en GTM los activadores por evento personalizado.

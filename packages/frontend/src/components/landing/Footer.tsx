@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom'
 import { Isotipo } from '../ui/Logo'
-import { SITIO } from './contenido'
+import { ACADEMIA, SITIO } from './contenido'
 
 const ENLACE = 'rounded hover:text-marca-tinta focus:outline-none focus-visible:ring-[3px] focus-visible:ring-marca-300'
 
@@ -36,6 +36,11 @@ export function Footer() {
                 </a>
               </li>
             )}
+            <li>
+              <Link to={ACADEMIA.ruta} className={ENLACE}>
+                {ACADEMIA.nav}
+              </Link>
+            </li>
             <li>
               <Link to="/login" className={ENLACE}>
                 Ingresar

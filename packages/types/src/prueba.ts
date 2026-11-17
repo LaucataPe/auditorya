@@ -130,6 +130,40 @@ export const PROGRAMA_AUDITORIA: Record<AreaRiesgo, PruebaEstandar[]> = {
       guia: ['Obtener los últimos y primeros documentos de entrada/salida del corte', 'Verificar que se registraron en el período correcto', 'Conciliar con la toma física'],
     },
   ],
+  costo_de_ventas: [
+    {
+      titulo: 'Conciliación del kárdex con el costo de ventas',
+      aserciones: ['integridad', 'exactitud'],
+      tipo: 'detalle',
+      procedimiento: 'Conciliar inventario inicial + compras − inventario final con el costo registrado, y las salidas valoradas del kárdex con la cuenta de costo de ventas.',
+      documentosRequeridos: ['Kardex valorizado del período (entradas, salidas y saldos)', 'Auxiliar de la cuenta de costo de ventas', 'Auxiliar de compras del período'],
+      guia: ['Obtener el kárdex valorizado y el auxiliar del costo de ventas', 'Recalcular el costo: inventario inicial + compras − inventario final', 'Comparar las salidas del kárdex contra el costo registrado', 'Investigar y cuantificar las diferencias'],
+    },
+    {
+      titulo: 'Analítica del margen bruto',
+      aserciones: ['integridad', 'exactitud'],
+      tipo: 'analitica',
+      procedimiento: 'Armar una expectativa del costo con el margen histórico y compararla con el costo registrado, mes a mes y frente al año anterior.',
+      documentosRequeridos: ['Estados de resultados mensuales del período', 'Ventas y costo por línea de producto'],
+      guia: ['Calcular el margen bruto mensual y el del año anterior', 'Armar la expectativa del costo con el margen histórico', 'Fijar el umbral de diferencia aceptable', 'Obtener evidencia de las variaciones que superen el umbral'],
+    },
+    {
+      titulo: 'Recálculo del costo promedio',
+      aserciones: ['exactitud', 'valuación'],
+      tipo: 'detalle',
+      procedimiento: 'Recalcular el costo promedio ponderado de una muestra de referencias y verificar el costo unitario de sus salidas.',
+      documentosRequeridos: ['Kardex por referencia de la muestra', 'Facturas de compra de las referencias seleccionadas'],
+      guia: ['Seleccionar una muestra de referencias de mayor movimiento', 'Verificar las entradas contra las facturas de compra', 'Recalcular el costo promedio y el valor de las salidas', 'Comparar con lo registrado y documentar las diferencias'],
+    },
+    {
+      titulo: 'Corte de despachos y facturación',
+      aserciones: ['corte'],
+      tipo: 'detalle',
+      procedimiento: 'Verificar que las ventas y su costo de los últimos y primeros días alrededor del cierre se registraron en el mismo período.',
+      documentosRequeridos: ['Remisiones y facturas de venta de los últimos y primeros días del período', 'Kardex de salidas alrededor del cierre'],
+      guia: ['Obtener las últimas y primeras remisiones y facturas del corte', 'Verificar que cada venta y su costo quedaron en el mismo período', 'Documentar las ventas sin costo o los costos sin venta'],
+    },
+  ],
   propiedad_planta_equipo: [
     {
       titulo: 'Inspección física de activos',
@@ -339,6 +373,5 @@ Object.assign(PROGRAMA_AUDITORIA, {
   obligaciones_financieras: PROGRAMA_AUDITORIA.otros_activos,
   diferidos: PROGRAMA_AUDITORIA.otros_activos,
   otros_pasivos: PROGRAMA_AUDITORIA.otros_activos,
-  costo_de_ventas: PROGRAMA_AUDITORIA.otros_activos,
   costos_de_produccion: PROGRAMA_AUDITORIA.otros_activos,
 })
