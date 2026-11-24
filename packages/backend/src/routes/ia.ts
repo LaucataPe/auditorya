@@ -31,10 +31,12 @@ import {
   iaDisponible, completarJSON, completarTexto, MODELO, SYSTEM_AUDITOR,
   type MensajeChat,
 } from '../lib/llm'
-import { lecturaCasillasDisponible, type FuenteLectura } from '../lib/lectura-dian'
+import { lecturaCasillasDisponible, n8nDisponible, type FuenteLectura } from '../lib/lectura-dian'
 import { leerDeclaracion } from '../lib/lectura-declaracion'
 import { storage } from '../lib/storage'
 import { sugerirRiesgos } from '../lib/ia'
+import { crearSeudonimizador, entradasEmpresa } from '../lib/seudonimizar'
+import { estadoIA, estadoIAFirma, errorIADesactivada } from '../lib/ia-control'
 import { registrarEvento } from '../lib/eventos'
 import { excedeLimite } from '../lib/rate-limit'
 import type { JwtPayload } from '../lib/jwt'
@@ -151,7 +153,7 @@ async function contextoEncargo(auditoriaId: string, firmaId: string) {
 
   const { empresa, auditoria } = row
   const lineas = [
-    `Empresa: ${empresa.nombre} (NIT ${empresa.nit}). Sector: ${empresa.sector}.`,
+    `Empresa: ${empresa.nombre}. Sector: ${empresa.sector}.`,
     empresa.actividadEconomica ? `Actividad económica: ${empresa.actividadEconomica}.` : '',
     `Marco contable: ${empresa.marcoContable}. Período auditado: ${auditoria.fechaInicio} a ${auditoria.fechaFin}.`,
     `Tipo de servicio: ${auditoria.tipoServicio === 'auditoria_interna' ? 'auditoría interna (IPPF)' : 'revisoría fiscal / auditoría externa (NIA)'}.`,
@@ -161,21 +163,27 @@ async function contextoEncargo(auditoriaId: string, firmaId: string) {
     ent?.eventosSignificativos ? `Eventos significativos del período: ${ent.eventosSignificativos}` : '',
   ].filter(Boolean)
 
-  return { row, texto: lineas.join('\n') }
+  // El nombre y el NIT nunca salen hacia el LLM: viajan como tokens (ver lib/seudonimizar.ts).
+  return { row, texto: lineas.join('\n'), seudonimos: crearSeudonimizador(entradasEmpresa(empresa)) }
 }
 
 
 // ─── Endpoints ───────────────────────────────────────────────────────────────
 
 // GET /ia/estado
-app.get('/ia/estado', (c) => {
+app.get('/ia/estado', async (c) => {
+  const { firmaId } = c.get('user')
+  // El socio puede apagar la IA de toda la firma; el frontend oculta entonces sus funciones.
+  const iaHabilitada = await estadoIAFirma(firmaId)
+  const disponible = iaDisponible() && iaHabilitada
   return c.json({
     data: {
-      disponible: iaDisponible(),
-      modelo: iaDisponible() ? MODELO : null,
+      disponible,
+      iaHabilitada,
+      modelo: disponible ? MODELO : null,
       // La lectura de formularios DIAN con casillas (300/350) puede correr por
       // el workflow de n8n sin OpenRouter, así que tiene su propia bandera.
-      lecturaDeclaracion: lecturaCasillasDisponible(),
+      lecturaDeclaracion: n8nDisponible() || disponible,
     },
   })
 })
@@ -197,8 +205,9 @@ app.post('/auditorias/:id/ia/sugerir-riesgos', async (c) => {
   const ctx = await contextoEncargo(id, user.firmaId)
   if (!ctx) return c.json({ error: { code: 'NOT_FOUND', message: 'Auditoría no encontrada' } }, 404)
 
-  // Sin API key: catálogo estático por sector (comportamiento previo).
-  if (!iaDisponible()) {
+  // Sin API key o sin autorización de IA: catálogo estático por sector.
+  const autorizacion = await estadoIA(user.firmaId, ctx.row.empresa.id)
+  if (!iaDisponible() || !autorizacion.permitida) {
     const catalogo = sugerirRiesgos(ctx.row.empresa.sector)
     return c.json({ data: { fuente: 'catalogo', riesgos: catalogo } })
   }
@@ -214,7 +223,7 @@ Devuelve SOLO un array JSON (sin texto adicional) de 5 a 10 riesgos, ordenados d
 {"area": una de [${AREAS.join(', ')}], "descripcion": "riesgo específico citando cifras o cuentas cuando existan datos", "riesgoInherente": "bajo"|"medio"|"alto", "respuestaPlaneada": "procedimiento de auditoría concreto"}`
 
   try {
-    const crudo = await completarJSON<unknown>({ system: SYSTEM_AUDITOR, prompt, inicioJson: '[' })
+    const crudo = await completarJSON<unknown>({ system: SYSTEM_AUDITOR, prompt, inicioJson: '[', seudonimos: ctx.seudonimos, registro: { firmaId: user.firmaId, auditoriaId: id, proposito: 'sugerir_riesgos' } })
     const parseado = RiesgoIASchema.safeParse(crudo)
     if (!parseado.success) throw new Error('Respuesta de IA con formato inesperado')
 
@@ -242,6 +251,8 @@ app.post('/auditorias/:id/ia/analisis-balance', async (c) => {
   const ctx = await contextoEncargo(id, user.firmaId)
   if (!ctx) return c.json({ error: { code: 'NOT_FOUND', message: 'Auditoría no encontrada' } }, 404)
   if (!iaDisponible()) return c.json({ error: ERROR_IA }, 503)
+  const autorizacion = await estadoIA(user.firmaId, ctx.row.empresa.id)
+  if (!autorizacion.permitida) return c.json({ error: errorIADesactivada(autorizacion) }, 403)
   if (excedeCuotaIA(user.sub)) return c.json({ error: ERROR_CUOTA_IA }, 429)
 
   const balance = await resumenBalance(id)
@@ -267,6 +278,8 @@ ${ctx.texto}
 ${balance}`,
       }],
       maxTokens: 2500,
+      seudonimos: ctx.seudonimos,
+      registro: { firmaId: user.firmaId, auditoriaId: id, proposito: 'analisis_balance' },
     })
   } catch (err) {
     console.error('[ia] analisis-balance falló:', (err as Error).message)
@@ -299,6 +312,8 @@ app.post(
     const ctx = await contextoEncargo(id, user.firmaId)
     if (!ctx) return c.json({ error: { code: 'NOT_FOUND', message: 'Auditoría no encontrada' } }, 404)
     if (!iaDisponible()) return c.json({ error: ERROR_IA }, 503)
+    const autorizacion = await estadoIA(user.firmaId, ctx.row.empresa.id)
+    if (!autorizacion.permitida) return c.json({ error: errorIADesactivada(autorizacion) }, 403)
     if (excedeCuotaIA(user.sub)) return c.json({ error: ERROR_CUOTA_IA }, 429)
 
     // Estado actual del encargo para respuestas situadas.
@@ -323,6 +338,8 @@ ${ctx.texto}
 ${estado}`,
         mensajes,
         maxTokens: 1500,
+        seudonimos: ctx.seudonimos,
+        registro: { firmaId: user.firmaId, auditoriaId: id, proposito: 'asistente' },
       })
     } catch (err) {
       console.error('[ia] asistente falló:', (err as Error).message)
@@ -361,6 +378,9 @@ app.post(
       .where(and(eq(papelesTrabajo.id, papelId), eq(empresas.firmaId, user.firmaId)))
     if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Papel de trabajo no encontrado' } }, 404)
 
+    const autorizacion = await estadoIA(user.firmaId, row.empresa.id)
+    if (!autorizacion.permitida) return c.json({ error: errorIADesactivada(autorizacion) }, 403)
+
     if (row.papel.estado === 'aprobado') {
       return c.json({ error: { code: 'PAPEL_APROBADO', message: 'El papel ya está aprobado' } }, 409)
     }
@@ -394,6 +414,8 @@ ${row.papel.hallazgos && campo === 'conclusion' ? `Hallazgos documentados: ${row
 ${indicaciones ? `Indicaciones del auditor: ${indicaciones}` : ''}`,
         }],
         maxTokens: 1200,
+        seudonimos: crearSeudonimizador(entradasEmpresa(row.empresa)),
+        registro: { firmaId: user.firmaId, auditoriaId: row.papel.auditoriaId, proposito: 'redactar_papel' },
       })
     } catch (err) {
       console.error('[ia] redactar falló:', (err as Error).message)
@@ -454,6 +476,8 @@ app.post(
       .innerJoin(empresas, eq(auditorias.empresaId, empresas.id))
       .where(and(eq(papelesTrabajo.id, papelId), eq(empresas.firmaId, user.firmaId)))
     if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Papel de trabajo no encontrado' } }, 404)
+    const autorizacion = await estadoIA(user.firmaId, row.empresa.id)
+    if (!autorizacion.permitida) return c.json({ error: errorIADesactivada(autorizacion) }, 403)
     if (row.papel.estado === 'aprobado') {
       return c.json({ error: { code: 'PAPEL_APROBADO', message: 'El papel ya está aprobado' } }, 409)
     }
@@ -492,6 +516,8 @@ Si un campo del borrador venía vacío, propón una redacción coherente con la 
         prompt,
         inicioJson: '{',
         maxTokens: 1500,
+        seudonimos: crearSeudonimizador(entradasEmpresa(row.empresa)),
+        registro: { firmaId: user.firmaId, auditoriaId: row.papel.auditoriaId, proposito: 'hallazgo_papel' },
       })
       sugerencia = HallazgoPapelIASchema.parse(crudo)
     } catch (err) {
@@ -552,6 +578,8 @@ app.post(
       .innerJoin(empresas, eq(obligacionesTributarias.empresaId, empresas.id))
       .where(and(eq(revisionesTributarias.id, revisionId), eq(empresas.firmaId, user.firmaId)))
     if (!row) return c.json({ error: { code: 'NOT_FOUND', message: 'Revisión no encontrada' } }, 404)
+    const autorizacion = await estadoIA(user.firmaId, row.empresa.id)
+    if (!autorizacion.permitida) return c.json({ error: errorIADesactivada(autorizacion) }, 403)
     if (row.revision.estado === 'revisada') {
       return c.json({ error: { code: 'REVISION_SELLADA', message: 'La revisión ya fue firmada' } }, 409)
     }
@@ -575,6 +603,8 @@ Devuelve un objeto JSON con exactamente estas claves:
         prompt,
         inicioJson: '{',
         maxTokens: 1200,
+        seudonimos: crearSeudonimizador(entradasEmpresa(row.empresa)),
+        registro: { firmaId: user.firmaId, proposito: 'hallazgo_tributario' },
       })
       sugerencia = HallazgoTributarioIASchema.parse(crudo)
     } catch (err) {
@@ -643,6 +673,12 @@ app.post('/tributario/revisiones/:id/ia/leer-borrador', async (c) => {
   const archivoLLM = { nombre: archivo.name, mime: archivo.type, base64: contenido.toString('base64') }
   const cfgCasillas = LECTURA_FORMULARIO[row.obligacion.tipo]
 
+  // Sin autorización de IA (firma o cliente) el PDF no sale hacia el LLM: solo el workflow propio de n8n.
+  const autorizacion = await estadoIA(user.firmaId, row.obligacion.empresaId)
+  if (!autorizacion.permitida && !(cfgCasillas && n8nDisponible())) {
+    return c.json({ error: errorIADesactivada(autorizacion) }, 403)
+  }
+
   // Los impuestos sin formulario de casillas se mapean con el LLM: ahí sí hace falta.
   if (!cfgCasillas && !iaDisponible()) return c.json({ error: ERROR_IA }, 503)
 
@@ -659,6 +695,8 @@ app.post('/tributario/revisiones/:id/ia/leer-borrador', async (c) => {
       empresaNombre: row.empresa.nombre,
       archivo: archivoLLM,
       forzarOcr: body['forzarOcr'] === '1',
+      llmPermitido: autorizacion.permitida,
+      registro: { firmaId: user.firmaId, proposito: 'leer_borrador' },
     }))
   } catch (err) {
     console.error('[ia] leer borrador falló:', (err as Error).message)

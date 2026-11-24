@@ -5,6 +5,8 @@ export type Firma = {
   ciudad: string
   /** El superadmin permite a la firma activar el agente en encargos nuevos. */
   agenteHabilitado: boolean
+  /** El socio decide si el contenido de los encargos puede salir hacia funciones de IA. */
+  iaHabilitada: boolean
   createdAt: string
 }
 

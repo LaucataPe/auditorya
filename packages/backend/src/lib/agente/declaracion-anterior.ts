@@ -17,6 +17,7 @@ import {
 } from '@auditorya/types'
 import { storage } from '../storage'
 import { iaDisponible } from '../llm'
+import { estadoIA } from '../ia-control'
 import { lecturaCasillasDisponible } from '../lectura-dian'
 import { leerDeclaracion } from '../lectura-declaracion'
 import { registrarEvento } from '../eventos'
@@ -129,7 +130,9 @@ export async function anteriorParaCorrida(
   const guardada = await lecturaEnCache(obligacion.empresaId, adjunto.archivoHash)
   if (guardada) return { anterior: { etiqueta, cifras: guardada.cifras }, nota: null }
 
-  const hayLector = obligacion.tipo === 'reteica' ? iaDisponible() : lecturaCasillasDisponible()
+  const ia = await estadoIA(user.firmaId, obligacion.empresaId)
+  const llmPermitido = ia.permitida
+  const hayLector = obligacion.tipo === 'reteica' ? iaDisponible() && llmPermitido : lecturaCasillasDisponible()
   if (!hayLector) return { anterior: null, nota: `No se pudo leer la declaración presentada de ${donde}: la lectura automática no está configurada.` }
   if (adjunto.archivoTamano > MAX_BYTES) return { anterior: null, nota: `La declaración presentada de ${donde} supera los 10 MB y no se leyó.` }
 
@@ -142,6 +145,8 @@ export async function anteriorParaCorrida(
       empresaNombre: 'la empresa',
       archivo: { nombre: adjunto.archivoNombre, mime: adjunto.archivoMime, base64: contenido.toString('base64') },
       documento: 'DECLARACIÓN PRESENTADA',
+      llmPermitido,
+      registro: { firmaId: user.firmaId, proposito: 'leer_declaracion_anterior' },
     })
     registrarEvento(user, {
       accion: 'ia.leer_declaracion_anterior',

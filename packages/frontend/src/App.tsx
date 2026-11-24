@@ -13,6 +13,7 @@ import { LandingPage } from './pages/LandingPage'
 
 const AppLayout = lazy(() => import('./components/layout/AppLayout').then((m) => ({ default: m.AppLayout })))
 const EmpresaLayout = lazy(() => import('./components/empresa/EmpresaLayout').then((m) => ({ default: m.EmpresaLayout })))
+const PoliticaDatosPage = lazy(() => import('./pages/PoliticaDatosPage').then((m) => ({ default: m.PoliticaDatosPage })))
 const LoginPage = lazy(() => import('./pages/LoginPage').then((m) => ({ default: m.LoginPage })))
 const OnboardingPage = lazy(() => import('./pages/OnboardingPage').then((m) => ({ default: m.OnboardingPage })))
 const DashboardPage = lazy(() => import('./pages/DashboardPage').then((m) => ({ default: m.DashboardPage })))
@@ -105,6 +106,7 @@ export default function App() {
       {/* Public */}
       <Route path="/" element={<LandingPage />} />
       <Route path="/login" element={<L c={LoginPage} completa />} />
+      <Route path="/politica-de-datos" element={<L c={PoliticaDatosPage} completa />} />
       {/* AuditorYa Academia: curso público (sin cuenta), con servidor simulado en el navegador. */}
       <Route path="/academia" element={<L c={AcademiaLayout} completa />}>
         <Route index element={<L c={AcademiaPage} />} />

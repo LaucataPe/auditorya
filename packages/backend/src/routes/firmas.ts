@@ -1,9 +1,9 @@
 import { Hono } from 'hono'
 import { zValidator } from '../lib/validacion'
 import { z } from 'zod'
-import { and, desc, eq, sql } from 'drizzle-orm'
+import { and, desc, eq, gte, sql } from 'drizzle-orm'
 import { db } from '../db/client'
-import { firmas, empresas, auditorias, informes, areasFirma, riesgos, papelesTrabajo, tareas, hallazgos, prefijosAreas } from '../db/schema'
+import { firmas, empresas, auditorias, informes, areasFirma, riesgos, papelesTrabajo, tareas, hallazgos, prefijosAreas, llmLlamadas } from '../db/schema'
 import { claveDeArea, AREAS_BASE, AREAS_BASE_CLAVES, FUENTES_DOCUMENTO, prefijoDeArea } from '@auditorya/types'
 import { authMiddleware } from '../middleware/auth'
 import type { JwtPayload } from '../lib/jwt'
@@ -66,6 +66,29 @@ app.get('/mia', async (c) => {
   return c.json({ data: firma })
 })
 
+// GET /firmas/mia/ia-uso — uso de IA de los últimos 30 días por propósito (solo socio).
+app.get('/mia/ia-uso', async (c) => {
+  const { firmaId, rol } = c.get('user')
+  if (rol !== 'socio') {
+    return c.json({ error: { code: 'FORBIDDEN', message: 'Solo el socio puede ver el uso de IA' } }, 403)
+  }
+  const desde = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+  const filas = await db
+    .select({
+      proposito: llmLlamadas.proposito,
+      llamadas: sql<number>`count(*)::int`,
+      fallidas: sql<number>`count(*) filter (where not ${llmLlamadas.exito})::int`,
+      tokensEntrada: sql<number>`coalesce(sum(${llmLlamadas.tokensEntrada}), 0)::int`,
+      tokensSalida: sql<number>`coalesce(sum(${llmLlamadas.tokensSalida}), 0)::int`,
+      costoUsd: sql<string>`coalesce(sum(${llmLlamadas.costoUsd}), 0)::text`,
+    })
+    .from(llmLlamadas)
+    .where(and(eq(llmLlamadas.firmaId, firmaId), gte(llmLlamadas.createdAt, desde)))
+    .groupBy(llmLlamadas.proposito)
+    .orderBy(desc(sql`count(*)`))
+  return c.json({ data: { desde: desde.toISOString(), porProposito: filas } })
+})
+
 // PUT /firmas/mia
 app.put(
   '/mia',
@@ -75,6 +98,8 @@ app.put(
       nombre: z.string().min(2).optional(),
       nit: z.string().min(5).optional(),
       ciudad: z.string().min(2).optional(),
+      // Interruptor de IA de toda la firma (ver lib/ia-control.ts).
+      iaHabilitada: z.boolean().optional(),
       // Identidad de marca de los documentos. null limpia el valor (vuelve al defecto).
       colorMarca: z.string().regex(/^#[0-9a-fA-F]{6}$/, 'Color inválido (formato #rrggbb)').nullable().optional(),
       fuenteTitulos: z.enum(FUENTES_DOCUMENTO).nullable().optional(),
@@ -108,6 +133,7 @@ app.put(
       // El logo no se vuelca al detalle (pesa); se deja constancia de qué campos cambiaron.
       detalle: {
         campos: Object.keys(body),
+        ...(body.iaHabilitada !== undefined ? { iaHabilitada: body.iaHabilitada } : {}),
         ...(body.colorMarca !== undefined ? { colorMarca: body.colorMarca } : {}),
         ...(body.fuenteTitulos !== undefined ? { fuenteTitulos: body.fuenteTitulos } : {}),
         ...(body.fuenteCuerpo !== undefined ? { fuenteCuerpo: body.fuenteCuerpo } : {}),

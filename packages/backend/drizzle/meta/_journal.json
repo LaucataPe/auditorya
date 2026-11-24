@@ -365,6 +365,20 @@
       "when": 1786800400000,
       "tag": "0051_obligacion_municipio",
       "breakpoints": true
+    },
+    {
+      "idx": 56,
+      "version": "7",
+      "when": 1786900000000,
+      "tag": "0053_control_ia",
+      "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "7",
+      "when": 1787000400000,
+      "tag": "0058_aceptaciones_politica",
+      "breakpoints": true
     }
   ]
 }

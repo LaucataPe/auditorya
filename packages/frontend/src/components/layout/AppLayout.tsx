@@ -1,6 +1,7 @@
 import { Outlet, Navigate } from 'react-router-dom'
 import { Sidebar } from './Sidebar'
 import { useAuthStore } from '../../store/auth.store'
+import { PoliticaGate } from '../politica/PoliticaGate'
 
 export function AppLayout() {
   const { isAuthenticated } = useAuthStore()
@@ -13,6 +14,7 @@ export function AppLayout() {
       <main className="flex-1 overflow-y-auto">
         <Outlet />
       </main>
+      <PoliticaGate />
     </div>
   )
 }

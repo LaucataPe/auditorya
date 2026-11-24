@@ -10,7 +10,7 @@ import {
   ACTIVIDADES_ICA, CIFRAS_CATALOGO, IMPUESTOS_CATALOGO, LECTURA_FORMULARIO,
   aplicarLecturaFormulario, type TipoImpuesto,
 } from '@auditorya/types'
-import { completarJSONArchivo, SYSTEM_AUDITOR, type ArchivoLLM } from './llm'
+import { completarJSONArchivo, SYSTEM_AUDITOR, type ArchivoLLM, type RegistroLLM } from './llm'
 import { transcribirCasillas, type FuenteLectura } from './lectura-dian'
 
 const LecturaBorradorSchema = z.object({
@@ -38,8 +38,13 @@ export async function leerDeclaracion(opts: {
   forzarOcr?: boolean
   /** Cómo se llama el documento en el prompt. */
   documento?: 'BORRADOR' | 'DECLARACIÓN PRESENTADA'
+  /** false → sin IA para este cliente: los formularios de casillas solo se leen con n8n y el resto no se lee. */
+  llmPermitido?: boolean
+  registro?: RegistroLLM
 }): Promise<LecturaDeclaracion> {
-  const { tipo, obligacionNombre, periodo, empresaNombre, archivo, forzarOcr = false, documento = 'BORRADOR' } = opts
+  const { tipo, obligacionNombre, periodo, archivo, forzarOcr = false, documento = 'BORRADOR', llmPermitido = true, registro } = opts
+  // La razón social no ayuda a transcribir casillas: no sale hacia el LLM.
+  const empresaNombre = 'la empresa'
   const cfgCasillas = LECTURA_FORMULARIO[tipo]
   let renglones: Record<string, number | null> = {}
   let advertencias: string[] = []
@@ -81,6 +86,8 @@ export async function leerDeclaracion(opts: {
       prompt,
       descuadres: (c) => aplicarLecturaFormulario(tipo, c)?.descuadres ?? 0,
       forzarOcr,
+      llmPermitido,
+      registro,
     })
     fuente = leido.fuente
     const aplicado = aplicarLecturaFormulario(tipo, leido.casillas)
@@ -111,12 +118,14 @@ export async function leerDeclaracion(opts: {
 
   Devuelve un objeto JSON: {"renglones": {"<id>": <numero|null>, ...}, "advertencias": ["...", ...]}`
 
+    if (!llmPermitido) throw new Error('la IA no está autorizada para este cliente')
     const crudo = await completarJSONArchivo<unknown>({
       system: SYSTEM_AUDITOR,
       prompt,
       archivo,
       inicioJson: '{',
       maxTokens: 3000,
+      registro,
     })
     const lectura = LecturaBorradorSchema.parse(crudo)
     const idsValidos = new Set(digitables.map((r) => r.id))

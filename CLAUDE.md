@@ -18,7 +18,8 @@ Software de auditoría financiera externa SaaS para firmas auditoras colombianas
 - BullMQ + Redis (jobs en background para IA)
 - JWT + cookies httpOnly
 
-**IA** — LLM vía OpenRouter (`OPENROUTER_MODEL`, p. ej. `anthropic/claude-sonnet-4.5`) en `lib/llm.ts`.
+**IA** — LLM vía OpenRouter (`OPENROUTER_MODEL`, por defecto un modelo Gemini de Google) en `lib/llm.ts`. La política de datos
+(`packages/types/src/politica-datos.ts`) declara que solo se usa Gemini: si cambia el proveedor, subir su versión.
 OpenRouter es compatible con la API de OpenAI (Chat Completions); se llama directo con `fetch`, sin SDK.
 Diseño "real con fallback": si no hay `OPENROUTER_API_KEY`, `GET /ia/estado` devuelve `disponible: false`,
 el frontend oculta las funciones de IA y la sugerencia de riesgos cae al catálogo estático por sector
@@ -36,7 +37,8 @@ evento de auditoría llevan `fuente` (`'n8n' | 'llm'`). `GET /ia/estado` expone 
 aparte de `disponible`: los formularios 300/350 se leen sin OpenRouter.
 
 **Archivos** — `lib/storage.ts` con drivers `local` (disco, `STORAGE_DIR`) y `s3` (compatible S3:
-Cloudflare R2 / AWS S3, vía `@aws-sdk/client-s3` con endpoint configurable; producción usa R2).
+Cloudflare R2 / AWS S3, vía `@aws-sdk/client-s3` con endpoint configurable). Producción usa el driver
+`local`: los archivos viven en el disco del servidor, en almacenamiento persistente que sobrevive a los deploys.
 Migración disco → bucket: `scripts/migrar-storage-s3.ts`.
 Descargas SIEMPRE por URL firmada HMAC de 15 minutos (`/archivos?key=&exp=&sig=`), nunca públicas.
 
@@ -74,7 +76,7 @@ DATABASE_URL=postgresql://user:pass@localhost:5432/auditorya
 REDIS_URL=redis://localhost:6379
 JWT_SECRET=...
 OPENROUTER_API_KEY=...
-OPENROUTER_MODEL=anthropic/claude-sonnet-4.5    # cualquier slug de OpenRouter
+OPENROUTER_MODEL=google/gemini-2.5-flash    # slug de OpenRouter; solo Gemini según la política de datos
 OPENROUTER_BASE_URL=https://openrouter.ai/api/v1  # opcional (default)
 OPENROUTER_SITE_URL=https://auditorya.app         # opcional (atribución)
 S3_BUCKET=auditorya-evidencia

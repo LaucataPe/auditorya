@@ -5,6 +5,7 @@ import { cors } from 'hono/cors'
 import { logger } from 'hono/logger'
 
 import authRoutes from './routes/auth'
+import politicaRoutes from './routes/politica'
 import firmasRoutes from './routes/firmas'
 import usuariosRoutes from './routes/usuarios'
 import rolesRoutes from './routes/roles'
@@ -68,6 +69,7 @@ app.onError((err, c) => {
 app.get('/health', (c) => c.json({ status: 'ok' }))
 
 app.route('/auth', authRoutes)
+app.route('/politica', politicaRoutes)
 app.route('/firmas', firmasRoutes)
 app.route('/firmas', usuariosRoutes)
 app.route('/firmas', rolesRoutes)

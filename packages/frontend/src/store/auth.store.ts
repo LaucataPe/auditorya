@@ -20,6 +20,7 @@ export type Firma = {
   fuenteTitulos: string | null
   fuenteCuerpo: string | null
   agenteHabilitado: boolean
+  iaHabilitada: boolean
   createdAt: string
 }
 
@@ -28,6 +29,8 @@ type AuthResponse = { usuario: Usuario; firma: Firma }
 export type RegisterData = {
   firma: { nombre: string; nit: string; ciudad: string }
   usuario: { nombre: string; email: string; password: string }
+  /** Casilla de la política de tratamiento de datos (Ley 1581): el backend rechaza el registro sin ella. */
+  aceptaPolitica: true
 }
 
 type AuthState = {

@@ -122,12 +122,18 @@ app.put(
       entornoRegulatorio: z.string().optional(),
       sistemaContable: z.string().optional(),
       marcoContable: z.enum(['NIIF', 'NIIF_PYMES', 'PCGA']).optional(),
+      // El cliente autoriza (o no) que su información se use con funciones de IA.
+      iaPermitida: z.boolean().optional(),
     }),
   ),
   async (c) => {
-    const { firmaId } = c.get('user')
+    const { firmaId, rol } = c.get('user')
     const id = c.req.param('id')
     const body = c.req.valid('json')
+
+    if (body.iaPermitida !== undefined && rol !== 'socio') {
+      return c.json({ error: { code: 'FORBIDDEN', message: 'Solo el socio puede cambiar la autorización de IA del cliente' } }, 403)
+    }
 
     const [empresa] = await db
       .select()
@@ -148,7 +154,7 @@ app.put(
       }
     }
 
-    const updates: Record<string, string | null> = {}
+    const updates: Record<string, string | boolean | null> = {}
     if (body.nombre) updates.nombre = body.nombre
     if (body.nit) updates.nit = body.nit
     if (body.marcoContable) updates.marcoContable = body.marcoContable
@@ -160,6 +166,7 @@ app.put(
     if (body.personasClave !== undefined) updates.personasClave = body.personasClave || null
     if (body.entornoRegulatorio !== undefined) updates.entornoRegulatorio = body.entornoRegulatorio || null
     if (body.sistemaContable !== undefined) updates.sistemaContable = body.sistemaContable || null
+    if (body.iaPermitida !== undefined) updates.iaPermitida = body.iaPermitida
 
     // El sector (select controlado) manda; si no viene, se deriva del CIIU.
     if (body.ciiu !== undefined) updates.ciiu = body.ciiu || null
@@ -184,7 +191,11 @@ app.put(
       entidad: 'empresa',
       entidadId: id,
       empresaId: id,
-      detalle: { campos: Object.keys(updates) },
+      detalle: {
+        campos: Object.keys(updates),
+        // Quién autorizó o retiró la IA de un cliente debe quedar en la pista de auditoría.
+        ...(body.iaPermitida !== undefined ? { iaPermitida: body.iaPermitida } : {}),
+      },
     })
 
     return c.json({ data: actualizada })

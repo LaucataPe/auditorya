@@ -12,6 +12,7 @@ import { Modal } from '../../components/ui/Modal'
 import { Textarea } from '../../components/ui/Textarea'
 import { ClasificacionFields } from '../../components/empresa/ClasificacionFields'
 import { cn } from '../../lib/cn'
+import { toast } from '../../store/toast.store'
 import { EmpresaEvaluacion } from './EmpresaEvaluacion'
 
 type Empresa = {
@@ -29,6 +30,7 @@ type Empresa = {
   sistemaContable: string | null
   marcoContable: string
   estadoEncargo: string
+  iaPermitida: boolean
   createdAt: string
 }
 
@@ -90,6 +92,15 @@ export function EmpresaInformacion() {
       queryClient.invalidateQueries({ queryKey: ['empresa', id] })
       setArchivoOpen(false)
     },
+  })
+
+  const iaMutation = useMutation({
+    mutationFn: (iaPermitida: boolean) => api.put(`/empresas/${id}`, { iaPermitida }),
+    onSuccess: (_d, iaPermitida) => {
+      queryClient.invalidateQueries({ queryKey: ['empresa', id] })
+      toast.success(iaPermitida ? 'IA autorizada para este cliente' : 'IA desactivada para este cliente')
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : 'No se pudo cambiar la autorización de IA'),
   })
 
   const canEdit = user?.rol === 'socio' || user?.rol === 'gerente'
@@ -197,6 +208,35 @@ export function EmpresaInformacion() {
             })}
           </dl>
         </section>
+      </div>
+
+      {/* Autorización de IA del cliente: la decide el socio y queda en la pista de auditoría */}
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 flex items-start justify-between gap-6">
+        <div>
+          <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-400">Uso de IA con la información de este cliente</h2>
+          <p className="text-sm text-gray-600 mt-1.5 max-w-2xl">
+            {empresa.iaPermitida
+              ? 'Las funciones de IA (sugerir riesgos, análisis del balance, asistente, redacción de hallazgos y lectura de declaraciones) pueden usar la información de este cliente. El nombre y el NIT se reemplazan por códigos antes de enviarse.'
+              : 'Este cliente no autoriza la IA: ninguna función enviará su información a un modelo. Los riesgos se sugieren desde el catálogo por sector.'}
+          </p>
+        </div>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={empresa.iaPermitida}
+          aria-label="Autorizar IA para este cliente"
+          disabled={user?.rol !== 'socio' || iaMutation.isPending}
+          title={user?.rol !== 'socio' ? 'Solo el socio puede cambiarlo' : undefined}
+          onClick={() => iaMutation.mutate(!empresa.iaPermitida)}
+          className={cn(
+            'shrink-0 text-xs font-medium px-2.5 py-1 rounded-full border transition-colors disabled:cursor-not-allowed disabled:opacity-60',
+            empresa.iaPermitida
+              ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
+              : 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-gray-100',
+          )}
+        >
+          {empresa.iaPermitida ? 'IA autorizada' : 'IA desactivada'}
+        </button>
       </div>
 
       {/* Evaluación de aceptación: se hace una vez al aceptar el encargo */}

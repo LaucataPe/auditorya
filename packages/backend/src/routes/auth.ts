@@ -9,6 +9,7 @@ import { signToken } from '../lib/jwt'
 import { authMiddleware } from '../middleware/auth'
 import { excedeLimite, limpiarLimite } from '../lib/rate-limit'
 import { seedRolesFirma } from '../lib/roles'
+import { registrarAceptacion } from '../lib/politica'
 
 const app = new Hono()
 
@@ -35,6 +36,8 @@ app.post(
         email: z.string().email(),
         password: z.string().min(8),
       }),
+      // Autorización expresa (Ley 1581): sin la casilla marcada no hay registro.
+      aceptaPolitica: z.literal(true, { errorMap: () => ({ message: 'Debes aceptar la política de tratamiento de datos' }) }),
     }),
   ),
   async (c) => {
@@ -61,6 +64,8 @@ app.post(
       .insert(usuarios)
       .values({ ...usuarioData, passwordHash, firmaId: firma.id, rol: 'socio', rolId: rolesPorNivel.socio })
       .returning()
+
+    await registrarAceptacion(c, { usuarioId: usuario.id, firmaId: firma.id })
 
     const token = signToken({ sub: usuario.id, firmaId: firma.id, rol: 'socio' })
     c.header('Set-Cookie', `token=${token}; ${COOKIE_OPTS}`)

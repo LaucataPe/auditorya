@@ -18,5 +18,7 @@ export type Empresa = {
   sistemaContable: string | null
   marcoContable: MarcoContable
   estadoEncargo: EstadoEncargo
+  /** false → el cliente no autoriza usar su información con funciones de IA. */
+  iaPermitida: boolean
   createdAt: string
 }

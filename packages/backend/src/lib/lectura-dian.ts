@@ -17,7 +17,7 @@
  * El caller recibe qué fuente respondió para dejarlo en la pista de auditoría.
  */
 import { z } from 'zod'
-import { completarJSONArchivo, iaDisponible, type ArchivoLLM } from './llm'
+import { completarJSONArchivo, iaDisponible, type ArchivoLLM, type RegistroLLM } from './llm'
 
 export type FuenteLectura = 'n8n' | 'llm'
 
@@ -118,9 +118,10 @@ async function leerConLlm(
   prompt: string,
   descuadres?: (c: Casillas) => number,
   soloOcr = false,
+  registro?: RegistroLLM,
 ): Promise<Casillas> {
   const intentar = async (engine?: 'pdf-text' | 'mistral-ocr') => {
-    const crudo = await completarJSONArchivo<unknown>({ system, prompt, archivo, inicioJson: '{', maxTokens: 3000, engine })
+    const crudo = await completarJSONArchivo<unknown>({ system, prompt, archivo, inicioJson: '{', maxTokens: 3000, engine, registro })
     return parsearCasillas(crudo)
   }
 
@@ -167,14 +168,22 @@ export async function transcribirCasillas(opts: {
   descuadres?: (c: Casillas) => number
   /** Reintento pedido por la persona: salta n8n y lee solo con OCR. */
   forzarOcr?: boolean
+  /** false → el cliente o la firma no autorizan IA: solo vale el workflow propio de n8n. */
+  llmPermitido?: boolean
+  registro?: RegistroLLM
 }): Promise<{ casillas: Casillas; fuente: FuenteLectura }> {
+  const llmPermitido = opts.llmPermitido ?? true
   if (n8nDisponible() && !opts.forzarOcr) {
     try {
       return { casillas: await leerConN8n(opts.archivo, opts.tipo), fuente: 'n8n' }
     } catch (err) {
-      if (!iaDisponible()) throw err
+      if (!iaDisponible() || !llmPermitido) throw err
       console.warn('[lectura-dian] el workflow n8n falló; cayendo al LLM:', (err as Error).message)
     }
   }
-  return { casillas: await leerConLlm(opts.archivo, opts.system, opts.prompt, opts.descuadres, opts.forzarOcr), fuente: 'llm' }
+  if (!llmPermitido) throw new Error('la IA no está autorizada para este cliente y no hay workflow de n8n disponible')
+  return {
+    casillas: await leerConLlm(opts.archivo, opts.system, opts.prompt, opts.descuadres, opts.forzarOcr, opts.registro),
+    fuente: 'llm',
+  }
 }

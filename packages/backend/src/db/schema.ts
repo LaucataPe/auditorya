@@ -12,6 +12,8 @@ export const firmas = pgTable('firmas', {
   fuenteCuerpo: text('fuente_cuerpo'), // catálogo FUENTES_DOCUMENTO; null → defecto (Georgia)
   // Modo agéntico: si la firma puede activar el acompañamiento del agente en encargos nuevos.
   agenteHabilitado: boolean('agente_habilitado').default(false).notNull(),
+  // Interruptor de IA de la firma (el socio decide si el contenido sale hacia el LLM). Ver lib/llm.ts.
+  iaHabilitada: boolean('ia_habilitada').default(true).notNull(),
   createdAt: timestamp('created_at').defaultNow().notNull(),
 })
 
@@ -118,6 +120,8 @@ export const empresas = pgTable('empresas', {
   personasClave: text('personas_clave'),
   entornoRegulatorio: text('entorno_regulatorio'),
   sistemaContable: text('sistema_contable'),
+  // false → este cliente no autoriza enviar su información a funciones de IA.
+  iaPermitida: boolean('ia_permitida').default(true).notNull(),
   marcoContable: text('marco_contable', { enum: ['NIIF', 'NIIF_PYMES', 'PCGA'] }).notNull(),
   estadoEncargo: text('estado_encargo', { enum: ['pendiente', 'aceptado', 'rechazado'] })
     .default('pendiente')
@@ -1077,6 +1081,32 @@ export const llmLlamadas = pgTable(
   },
   (t) => ({
     firmaIdx: index('llm_llamadas_firma_idx').on(t.firmaId, t.createdAt),
+  }),
+)
+
+// Aceptaciones de la política de tratamiento de datos. Solo se inserta (nunca se edita ni se borra):
+// es la prueba de la autorización exigida por la Ley 1581. Guarda versión y hash del texto aceptado.
+export const aceptacionesPolitica = pgTable(
+  'aceptaciones_politica',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    firmaId: uuid('firma_id')
+      .notNull()
+      .references(() => firmas.id),
+    usuarioId: uuid('usuario_id')
+      .notNull()
+      .references(() => usuarios.id),
+    documento: text('documento').notNull(), // 'politica_datos'
+    version: text('version').notNull(),
+    hashTexto: text('hash_texto').notNull(), // sha256 del texto completo mostrado
+    textoAceptacion: text('texto_aceptacion').notNull(), // la casilla tal como se le mostró
+    ip: text('ip'),
+    userAgent: text('user_agent'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (t) => ({
+    usuarioDocVersionUnq: uniqueIndex('aceptaciones_politica_usuario_doc_version_unq').on(t.usuarioId, t.documento, t.version),
+    firmaIdx: index('aceptaciones_politica_firma_idx').on(t.firmaId, t.createdAt),
   }),
 )
 

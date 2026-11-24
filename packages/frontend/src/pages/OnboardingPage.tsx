@@ -8,6 +8,7 @@ import { Input } from '../components/ui/Input'
 import { Select } from '../components/ui/Select'
 import { Logo } from '../components/ui/Logo'
 import { cn } from '../lib/cn'
+import { POLITICA_DATOS } from '@auditorya/types'
 
 const STEPS = [
   { id: 1, label: 'Tu firma', description: 'Datos de la firma auditora', icon: Building2 },
@@ -28,6 +29,7 @@ export function OnboardingPage() {
   const [usuarioData, setUsuarioData] = useState<UsuarioData>({ nombre: '', email: '', password: '', confirmPassword: '' })
   const [empresaData, setEmpresaData] = useState<EmpresaData>({ nombre: '', nit: '', sector: '', marcoContable: 'NIIF' })
   const [skipEmpresa, setSkipEmpresa] = useState(false)
+  const [aceptaPolitica, setAceptaPolitica] = useState(false)
 
   const { register, completeOnboarding } = useAuthStore()
   const navigate = useNavigate()
@@ -49,6 +51,7 @@ export function OnboardingPage() {
       if (!empresaData.nit.trim()) return 'El NIT de la empresa es requerido'
       if (!empresaData.sector.trim()) return 'El sector es requerido'
     }
+    if (step === 3 && !aceptaPolitica) return 'Debes aceptar la política de tratamiento de datos para crear tu cuenta'
     return null
   }
 
@@ -65,6 +68,7 @@ export function OnboardingPage() {
       await register({
         firma: { nombre: firmaData.nombre, nit: firmaData.nit, ciudad: firmaData.ciudad },
         usuario: { nombre: usuarioData.nombre, email: usuarioData.email, password: usuarioData.password },
+        aceptaPolitica: true,
       })
 
       if (!skipEmpresa && empresaData.nombre) {
@@ -144,6 +148,23 @@ export function OnboardingPage() {
               skip={skipEmpresa}
               onToggleSkip={() => setSkipEmpresa(!skipEmpresa)}
             />
+          )}
+
+          {step === 3 && (
+            <label className="mt-5 flex cursor-pointer items-start gap-2.5 rounded-lg border border-gray-200 bg-gray-50 p-3 text-sm text-gray-700">
+              <input
+                type="checkbox"
+                checked={aceptaPolitica}
+                onChange={(e) => setAceptaPolitica(e.target.checked)}
+                className="mt-0.5 h-4 w-4 rounded border-gray-300 text-indigo-600"
+              />
+              <span>
+                {POLITICA_DATOS.textoAceptacion}{' '}
+                <a href="/politica-de-datos" target="_blank" rel="noreferrer" className="font-medium text-indigo-600 hover:underline">
+                  Leer la política
+                </a>
+              </span>
+            </label>
           )}
 
           {error && (

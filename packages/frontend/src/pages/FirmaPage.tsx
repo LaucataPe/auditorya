@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Building2, ImagePlus, MapPin, Pencil, Plus, RotateCcw, Trash2, UserCheck, X } from 'lucide-react'
-import { FUENTES_DOCUMENTO, FUENTE_TITULOS_DEFECTO, FUENTE_CUERPO_DEFECTO, prefijoDeArea, type FuenteDocumento } from '@auditorya/types'
+import { POLITICA_DATOS, FUENTES_DOCUMENTO, FUENTE_TITULOS_DEFECTO, FUENTE_CUERPO_DEFECTO, prefijoDeArea, type FuenteDocumento } from '@auditorya/types'
 import { api } from '../lib/api'
 import { useAuthStore } from '../store/auth.store'
 import { toast } from '../store/toast.store'
@@ -175,12 +175,182 @@ function InfoTab() {
 function ConfiguracionTab() {
   return (
     <div className="space-y-6">
+      <PoliticaCard />
+      <IaCard />
       <CiclosCard />
     </div>
   )
 }
 
 /* ── Ciclos/áreas de auditoría de la firma ───────────────────────────────── */
+
+type AceptacionPolitica = { id: string; usuario: string; email: string; version: string; hashTexto: string; ip: string | null; createdAt: string }
+
+/** Prueba de la autorización (Ley 1581): quién aceptó qué versión de la política y cuándo. Solo socio. */
+function PoliticaCard() {
+  const { user } = useAuthStore()
+  const esSocio = user?.rol === 'socio'
+  const { data: aceptaciones = [] } = useQuery<AceptacionPolitica[]>({
+    queryKey: ['politica-aceptaciones'],
+    queryFn: () => api.get<AceptacionPolitica[]>('/politica/aceptaciones'),
+    enabled: esSocio,
+  })
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
+      <div className="flex items-start justify-between gap-6">
+        <div>
+          <p className="text-sm font-medium text-gray-700">Política de tratamiento de datos</p>
+          <p className="text-xs text-gray-500 mt-1 max-w-2xl">
+            Cada persona de la firma acepta la política al registrarse o en su primer ingreso. Aquí queda la prueba:
+            versión, fecha y hora de cada aceptación.
+          </p>
+        </div>
+        <a href="/politica-de-datos" target="_blank" rel="noreferrer" className="shrink-0 text-xs font-medium text-indigo-600 hover:underline">
+          Leer la política (v{POLITICA_DATOS.version})
+        </a>
+      </div>
+      {esSocio && (
+        <div className="mt-4">
+          {aceptaciones.length === 0 ? (
+            <p className="text-sm text-gray-400 italic">Aún no hay aceptaciones registradas.</p>
+          ) : (
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-xs text-gray-400">
+                  <th className="font-medium py-1">Persona</th>
+                  <th className="font-medium py-1">Versión</th>
+                  <th className="font-medium py-1 text-right">Fecha y hora</th>
+                </tr>
+              </thead>
+              <tbody>
+                {aceptaciones.map((a) => (
+                  <tr key={a.id} className="border-t border-gray-100 text-gray-700">
+                    <td className="py-1.5">{a.usuario} <span className="text-xs text-gray-400">{a.email}</span></td>
+                    <td className="py-1.5">{a.version}</td>
+                    <td className="py-1.5 text-right tabular-nums">{new Date(a.createdAt).toLocaleString('es-CO')}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+type UsoIA = {
+  desde: string
+  porProposito: { proposito: string; llamadas: number; fallidas: number; tokensEntrada: number; tokensSalida: number; costoUsd: string }[]
+}
+
+const PROPOSITO_IA: Record<string, string> = {
+  sugerir_riesgos: 'Sugerir riesgos',
+  analisis_balance: 'Análisis del balance',
+  asistente: 'Asistente NIA',
+  redactar_papel: 'Redactar papel de trabajo',
+  hallazgo_papel: 'Hallazgo de papel',
+  hallazgo_tributario: 'Hallazgo tributario',
+  leer_borrador: 'Lectura de borrador DIAN',
+  leer_declaracion_anterior: 'Lectura de declaración anterior',
+}
+
+/** Interruptor de IA de toda la firma + uso de los últimos 30 días. */
+function IaCard() {
+  const { firma, user } = useAuthStore()
+  const esSocio = user?.rol === 'socio'
+  const habilitada = firma?.iaHabilitada ?? true
+
+  const { data: uso } = useQuery<UsoIA>({
+    queryKey: ['firma-ia-uso'],
+    queryFn: () => api.get<UsoIA>('/firmas/mia/ia-uso'),
+    enabled: esSocio,
+  })
+
+  const cambiar = useMutation({
+    mutationFn: (iaHabilitada: boolean) => api.put('/firmas/mia', { iaHabilitada }),
+    onSuccess: (_d, iaHabilitada) => {
+      toast.success(iaHabilitada ? 'IA activada para la firma' : 'IA desactivada para la firma')
+      useAuthStore.getState().checkSession()
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : 'No se pudo cambiar la configuración de IA'),
+  })
+
+  const total = (uso?.porProposito ?? []).reduce((a, f) => a + Number(f.costoUsd), 0)
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
+      <div className="flex items-start justify-between gap-6">
+        <div>
+          <p className="text-sm font-medium text-gray-700">Inteligencia artificial</p>
+          <p className="text-xs text-gray-500 mt-1 max-w-2xl">
+            Las funciones de IA envían a un modelo externo el contexto del encargo (sector, actividad, cifras del
+            balance, textos que escribes). El nombre y el NIT del cliente, correos, celulares y documentos con
+            etiqueta se reemplazan por códigos antes de salir, y el proveedor no puede retener los datos. Los
+            nombres de personas escritos en texto libre no se detectan: evita incluirlos. Cada cliente puede
+            además no autorizar la IA desde su información.
+          </p>
+        </div>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={habilitada}
+          aria-label="Activar IA para la firma"
+          disabled={!esSocio || cambiar.isPending}
+          title={!esSocio ? 'Solo el socio puede cambiarlo' : undefined}
+          onClick={() => cambiar.mutate(!habilitada)}
+          className={cn(
+            'shrink-0 text-xs font-medium px-2.5 py-1 rounded-full border transition-colors disabled:cursor-not-allowed disabled:opacity-60',
+            habilitada
+              ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
+              : 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-gray-100',
+          )}
+        >
+          {habilitada ? 'IA activada' : 'IA desactivada'}
+        </button>
+      </div>
+
+      {esSocio && (
+        <div className="mt-5">
+          <p className="text-xs font-medium text-gray-400 uppercase tracking-wide mb-2">Uso de los últimos 30 días</p>
+          {!uso || uso.porProposito.length === 0 ? (
+            <p className="text-sm text-gray-400 italic">Sin llamadas registradas.</p>
+          ) : (
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-xs text-gray-400">
+                  <th className="font-medium py-1">Función</th>
+                  <th className="font-medium py-1 text-right">Llamadas</th>
+                  <th className="font-medium py-1 text-right">Fallidas</th>
+                  <th className="font-medium py-1 text-right">Tokens (ent./sal.)</th>
+                  <th className="font-medium py-1 text-right">Costo USD</th>
+                </tr>
+              </thead>
+              <tbody>
+                {uso.porProposito.map((f) => (
+                  <tr key={f.proposito} className="border-t border-gray-100 text-gray-700">
+                    <td className="py-1.5">{PROPOSITO_IA[f.proposito] ?? f.proposito}</td>
+                    <td className="py-1.5 text-right tabular-nums">{f.llamadas}</td>
+                    <td className="py-1.5 text-right tabular-nums">{f.fallidas}</td>
+                    <td className="py-1.5 text-right tabular-nums">
+                      {f.tokensEntrada.toLocaleString('es-CO')} / {f.tokensSalida.toLocaleString('es-CO')}
+                    </td>
+                    <td className="py-1.5 text-right tabular-nums">{Number(f.costoUsd).toFixed(4)}</td>
+                  </tr>
+                ))}
+                <tr className="border-t border-gray-200 font-medium text-gray-900">
+                  <td className="py-1.5" colSpan={4}>Total</td>
+                  <td className="py-1.5 text-right tabular-nums">{total.toFixed(4)}</td>
+                </tr>
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
 
 function CiclosCard() {
   const { user } = useAuthStore()

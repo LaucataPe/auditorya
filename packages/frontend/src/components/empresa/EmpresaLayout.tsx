@@ -4,6 +4,7 @@ import { useAuthStore } from '../../store/auth.store'
 import { EmpresaSidebar } from './EmpresaSidebar'
 import { EmpresaSidebarEncargo } from './EmpresaSidebarEncargo'
 import { api } from '../../lib/api'
+import { PoliticaGate } from '../politica/PoliticaGate'
 
 type Empresa = {
   id: string
@@ -44,7 +45,7 @@ export function EmpresaLayout() {
 
   if (isError || !empresa) return <Navigate to="/empresas" replace />
 
-  if (enArranque) return <Outlet />
+  if (enArranque) return (<><Outlet /><PoliticaGate /></>)
 
   return (
     <div className="flex h-screen overflow-hidden bg-gray-50">
@@ -54,6 +55,7 @@ export function EmpresaLayout() {
       <main className="flex-1 overflow-y-auto">
         <Outlet />
       </main>
+      <PoliticaGate />
     </div>
   )
 }

@@ -19,8 +19,8 @@ export const SITIO = {
     'Organiza tus encargos de auditoría bajo NIA, conecta riesgos, pruebas, evidencias y conclusiones, y apóyate en la IA sin reemplazar tu criterio profesional.',
   /** URL pública de la landing (canónica y og:url). Sin definir, no se emite. */
   url: import.meta.env.VITE_SITE_URL as string | undefined,
-  /** Política de tratamiento de datos (Ley 1581). Sin definir, no se enlaza. */
-  politicaDatosUrl: import.meta.env.VITE_POLITICA_DATOS_URL as string | undefined,
+  /** Política de tratamiento de datos (Ley 1581). Sin definir, apunta a la página pública de la app. */
+  politicaDatosUrl: (import.meta.env.VITE_POLITICA_DATOS_URL as string | undefined) || '/politica-de-datos',
   /** Términos de uso. Sin definir, no se enlaza. */
   terminosUrl: import.meta.env.VITE_TERMINOS_URL as string | undefined,
   /** Correo de contacto del footer. Sin definir, no se muestra. */
