@@ -89,6 +89,9 @@ app.get('/mia/ia-uso', async (c) => {
   return c.json({ data: { desde: desde.toISOString(), porProposito: filas } })
 })
 
+/** '' → null (limpia el campo); undefined se respeta para no tocar lo que no vino. */
+const vacioANull = (v: string | null | undefined) => (v === undefined ? undefined : v || null)
+
 // PUT /firmas/mia
 app.put(
   '/mia',
@@ -98,6 +101,14 @@ app.put(
       nombre: z.string().min(2).optional(),
       nit: z.string().min(5).optional(),
       ciudad: z.string().min(2).optional(),
+      // Domicilio y contacto (membrete y formatos de calidad). '' o null limpian el valor.
+      direccion: z.string().trim().max(200).nullable().optional().transform(vacioANull),
+      telefono: z.string().trim().max(50).nullable().optional().transform(vacioANull),
+      email: z
+        .union([z.string().trim().email('Correo inválido').max(200), z.literal(''), z.null()])
+        .optional()
+        .transform(vacioANull),
+      inscripcionJcc: z.string().trim().max(50).nullable().optional().transform(vacioANull),
       // Interruptor de IA de toda la firma (ver lib/ia-control.ts).
       iaHabilitada: z.boolean().optional(),
       // Identidad de marca de los documentos. null limpia el valor (vuelve al defecto).

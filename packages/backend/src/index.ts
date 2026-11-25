@@ -9,6 +9,7 @@ import politicaRoutes from './routes/politica'
 import firmasRoutes from './routes/firmas'
 import usuariosRoutes from './routes/usuarios'
 import rolesRoutes from './routes/roles'
+import calidadRoutes from './routes/calidad'
 import empresasRoutes from './routes/empresas'
 import auditoriasRoutes from './routes/auditorias'
 import ejecucionRoutes from './routes/ejecucion'
@@ -73,6 +74,7 @@ app.route('/politica', politicaRoutes)
 app.route('/firmas', firmasRoutes)
 app.route('/firmas', usuariosRoutes)
 app.route('/firmas', rolesRoutes)
+app.route('/firmas', calidadRoutes)
 app.route('/empresas', empresasRoutes)
 // auditoriasRoutes define rutas absolutas (/empresas/:id/auditorias y /auditorias/...)
 app.route('/', auditoriasRoutes)

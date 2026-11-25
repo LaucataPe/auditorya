@@ -367,6 +367,13 @@
       "breakpoints": true
     },
     {
+      "idx": 55,
+      "version": "7",
+      "when": 1786800500000,
+      "tag": "0052_gestion_calidad",
+      "breakpoints": true
+    },
+    {
       "idx": 56,
       "version": "7",
       "when": 1786900000000,
@@ -374,10 +381,45 @@
       "breakpoints": true
     },
     {
+      "idx": 57,
+      "version": "7",
+      "when": 1786900100000,
+      "tag": "0054_formatos_calidad",
+      "breakpoints": true
+    },
+    {
+      "idx": 58,
+      "version": "7",
+      "when": 1786900200000,
+      "tag": "0055_formato_propio",
+      "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1786900300000,
+      "tag": "0056_manual_calidad",
+      "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1787000300000,
+      "tag": "0057_cambios_relevantes_calidad",
+      "breakpoints": true
+    },
+    {
       "idx": 61,
       "version": "7",
       "when": 1787000400000,
       "tag": "0058_aceptaciones_politica",
+      "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "7",
+      "when": 1787100300000,
+      "tag": "0059_documentos_firma_calidad",
       "breakpoints": true
     }
   ]

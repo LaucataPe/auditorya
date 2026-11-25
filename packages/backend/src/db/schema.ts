@@ -14,6 +14,14 @@ export const firmas = pgTable('firmas', {
   agenteHabilitado: boolean('agente_habilitado').default(false).notNull(),
   // Interruptor de IA de la firma (el socio decide si el contenido sale hacia el LLM). Ver lib/llm.ts.
   iaHabilitada: boolean('ia_habilitada').default(true).notNull(),
+  // Responsable último del sistema de gestión de calidad (NIGC 1 ¶20). FK a usuarios
+  // definida en SQL (migración 0052) para evitar la referencia circular en Drizzle.
+  responsableCalidadId: uuid('responsable_calidad_id'),
+  // Domicilio y contacto que salen en el membrete y en los formatos de calidad (migración 0054).
+  direccion: text('direccion'),
+  telefono: text('telefono'),
+  email: text('email'),
+  inscripcionJcc: text('inscripcion_jcc'), // número de inscripción de la sociedad ante la JCC
   createdAt: timestamp('created_at').defaultNow().notNull(),
 })
 
@@ -1167,5 +1175,229 @@ export const memoriaEmpresaAgente = pgTable(
   },
   (t) => ({
     empresaClaveUnq: uniqueIndex('memoria_empresa_agente_empresa_clave_unq').on(t.empresaId, t.clave),
+  }),
+)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Sistema de gestión de calidad de la firma (NIGC 1). Objetivo → riesgo → respuesta,
+// precargados desde CATALOGO_CALIDAD (`base_clave` = clave del catálogo; null = propio
+// de la firma). Nada se borra: `activo=false` y el motivo queda en la pista de auditoría.
+// ─────────────────────────────────────────────────────────────────────────────
+export const calidadObjetivos = pgTable(
+  'calidad_objetivos',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    firmaId: uuid('firma_id')
+      .notNull()
+      .references(() => firmas.id),
+    componente: text('componente').notNull(), // ComponenteCalidad
+    texto: text('texto').notNull(),
+    baseClave: text('base_clave'),
+    activo: boolean('activo').default(true).notNull(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (t) => ({
+    firmaBaseUnq: uniqueIndex('calidad_objetivos_firma_base_unq').on(t.firmaId, t.baseClave),
+  }),
+)
+
+export const calidadRiesgos = pgTable(
+  'calidad_riesgos',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    firmaId: uuid('firma_id')
+      .notNull()
+      .references(() => firmas.id),
+    objetivoId: uuid('objetivo_id')
+      .notNull()
+      .references(() => calidadObjetivos.id),
+    descripcion: text('descripcion').notNull(),
+    baseClave: text('base_clave'),
+    activo: boolean('activo').default(true).notNull(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (t) => ({
+    firmaBaseUnq: uniqueIndex('calidad_riesgos_firma_base_unq').on(t.firmaId, t.baseClave),
+  }),
+)
+
+export const calidadRespuestas = pgTable(
+  'calidad_respuestas',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    firmaId: uuid('firma_id')
+      .notNull()
+      .references(() => firmas.id),
+    riesgoId: uuid('riesgo_id')
+      .notNull()
+      .references(() => calidadRiesgos.id),
+    descripcion: text('descripcion').notNull(),
+    vinculo: text('vinculo'), // VinculoCalidad: función de AuditorYa que la cumple
+    baseClave: text('base_clave'),
+    activo: boolean('activo').default(true).notNull(),
+    // Evidencia de la respuesta (política firmada, acta de capacitación…). Una por respuesta.
+    evidenciaKey: text('evidencia_key'),
+    evidenciaNombre: text('evidencia_nombre'),
+    evidenciaMime: text('evidencia_mime'),
+    evidenciaAt: timestamp('evidencia_at'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (t) => ({
+    firmaBaseUnq: uniqueIndex('calidad_respuestas_firma_base_unq').on(t.firmaId, t.baseClave),
+  }),
+)
+
+// Evaluación anual del sistema (¶53-54), con corte a `fecha_corte`. Una por firma y año.
+export const calidadEvaluaciones = pgTable(
+  'calidad_evaluaciones',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    firmaId: uuid('firma_id')
+      .notNull()
+      .references(() => firmas.id),
+    anio: integer('anio').notNull(),
+    fechaCorte: date('fecha_corte').notNull(),
+    // { [componente]: { porId, porNombre, at, nota } }
+    componentesRevisados: jsonb('componentes_revisados')
+      .$type<Record<string, { porId: string; porNombre: string; at: string; nota: string | null }>>()
+      .default({})
+      .notNull(),
+    resultado: text('resultado', { enum: ['razonable', 'razonable_salvo', 'no_razonable'] }),
+    conclusion: text('conclusion'),
+    deficiencias: text('deficiencias'),
+    concluidoPor: uuid('concluido_por').references(() => usuarios.id),
+    concluidoAt: timestamp('concluido_at'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (t) => ({
+    firmaAnioUnq: uniqueIndex('calidad_evaluaciones_firma_anio_unq').on(t.firmaId, t.anio),
+  }),
+)
+
+// Documentos del sistema de calidad creados desde FORMATOS_CALIDAD (formatos prellenados).
+// Cada versión es una fila; firmada no se edita: un cambio crea la versión siguiente.
+// Una sola versión en borrador por formato (índice parcial en SQL, migración 0054).
+export const calidadDocumentos = pgTable(
+  'calidad_documentos',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    firmaId: uuid('firma_id')
+      .notNull()
+      .references(() => firmas.id),
+    formato: text('formato').notNull(), // clave de FORMATOS_CALIDAD
+    version: integer('version').notNull(),
+    estado: text('estado', { enum: ['borrador', 'firmado'] })
+      .default('borrador')
+      .notNull(),
+    contenido: jsonb('contenido').$type<Record<string, string>>().notNull(),
+    firmadoPor: uuid('firmado_por').references(() => usuarios.id),
+    firmadoAt: timestamp('firmado_at'),
+    vigenteHasta: date('vigente_hasta'),
+    // Formato propio de la firma subido como archivo (en vez de llenar la plantilla). Migración 0055.
+    archivoKey: text('archivo_key'),
+    archivoNombre: text('archivo_nombre'),
+    archivoMime: text('archivo_mime'),
+    // Cubierto por un documento que la firma ya tenía (migración 0058): el archivo de arriba es una
+    // copia de la referencia al de calidad_documentos_firma, y `referencia` dice dónde está (capítulo, páginas).
+    documentoFirmaId: uuid('documento_firma_id').references(() => calidadDocumentosFirma.id),
+    referencia: text('referencia'),
+    creadoPor: uuid('creado_por')
+      .notNull()
+      .references(() => usuarios.id),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (t) => ({
+    firmaFormatoVersionUnq: uniqueIndex('calidad_documentos_firma_formato_version_unq').on(
+      t.firmaId,
+      t.formato,
+      t.version,
+    ),
+  }),
+)
+
+// Manual del sistema de calidad: cada versión guarda la foto completa del sistema al
+// generarse (ManualCalidadSnapshot). Inmutable; solo con los 8 componentes cumplidos.
+export const calidadManuales = pgTable(
+  'calidad_manuales',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    firmaId: uuid('firma_id')
+      .notNull()
+      .references(() => firmas.id),
+    version: integer('version').notNull(),
+    anio: integer('anio').notNull(), // año de la evaluación con la que se generó
+    contenido: jsonb('contenido').$type<Record<string, unknown>>().notNull(),
+    hash: text('hash').notNull(), // sha256 del contenido: huella que se imprime en el manual
+    generadoPor: uuid('generado_por')
+      .notNull()
+      .references(() => usuarios.id),
+    // Versión hecha fuera de AuditorYa (manual anterior de la firma), migración 0058: sin foto,
+    // con su archivo y la fecha en que se aprobó. `generadoPor` es quien la registró.
+    externo: boolean('externo').default(false).notNull(),
+    fechaAprobacion: date('fecha_aprobacion'),
+    archivoKey: text('archivo_key'),
+    archivoNombre: text('archivo_nombre'),
+    archivoMime: text('archivo_mime'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (t) => ({
+    firmaVersionUnq: uniqueIndex('calidad_manuales_firma_version_unq').on(t.firmaId, t.version),
+  }),
+)
+
+// Documentos de calidad que la firma ya tenía (su manual, sus políticas). Se suben una vez y
+// cubren uno o varios formatos durante un año desde su aprobación (migración 0058).
+export const calidadDocumentosFirma = pgTable(
+  'calidad_documentos_firma',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    firmaId: uuid('firma_id')
+      .notNull()
+      .references(() => firmas.id),
+    nombre: text('nombre').notNull(),
+    fechaAprobacion: date('fecha_aprobacion').notNull(),
+    aprobadoPor: text('aprobado_por'), // texto libre: puede ser alguien que ya no está en la firma
+    archivoKey: text('archivo_key').notNull(),
+    archivoNombre: text('archivo_nombre').notNull(),
+    archivoMime: text('archivo_mime').notNull(),
+    hash: text('hash').notNull(),
+    creadoPor: uuid('creado_por')
+      .notNull()
+      .references(() => usuarios.id),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (t) => ({
+    firmaIdx: index('calidad_documentos_firma_firma_idx').on(t.firmaId),
+  }),
+)
+
+// Cambios relevantes del sistema de calidad (NIGC 1 ¶27): salida de un socio, cliente nuevo de un
+// sector regulado, norma nueva… Se registran con los componentes afectados y la decisión tomada.
+export const calidadCambiosRelevantes = pgTable(
+  'calidad_cambios_relevantes',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    firmaId: uuid('firma_id')
+      .notNull()
+      .references(() => firmas.id),
+    fecha: date('fecha').notNull(), // cuándo ocurrió el cambio
+    tipo: text('tipo').notNull(), // TipoCambioRelevante
+    descripcion: text('descripcion').notNull(),
+    componentes: jsonb('componentes').$type<string[]>().notNull().default([]),
+    decision: text('decision').$type<'ajustado' | 'sin_ajustes'>(), // null = sin evaluar
+    justificacion: text('justificacion'),
+    evaluadoPor: uuid('evaluado_por').references(() => usuarios.id),
+    evaluadoAt: timestamp('evaluado_at'),
+    creadoPor: uuid('creado_por')
+      .notNull()
+      .references(() => usuarios.id),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (t) => ({
+    firmaFechaIdx: index('calidad_cambios_relevantes_firma_fecha_idx').on(t.firmaId, t.fecha),
   }),
 )
