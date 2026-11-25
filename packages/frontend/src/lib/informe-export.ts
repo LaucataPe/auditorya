@@ -23,6 +23,8 @@ export type FirmaMembrete = {
   nombre: string
   nit: string
   ciudad: string
+  /** Dirección del domicilio; null → el membrete muestra solo la ciudad. */
+  direccion?: string | null
   /** Color de acento de la firma ('#rrggbb') o null → COLOR_MARCA_DEFECTO. */
   colorMarca?: string | null
   /** Logo en data URI (png/jpeg/webp) o null → membrete solo con texto. */
@@ -31,6 +33,11 @@ export type FirmaMembrete = {
   fuenteTitulos?: string | null
   /** Fuente del cuerpo (catálogo FUENTES_DOCUMENTO) o null → FUENTE_CUERPO_DEFECTO. */
   fuenteCuerpo?: string | null
+}
+
+/** Línea de datos bajo el nombre de la firma: NIT, dirección (si hay) y ciudad. */
+export function datosMembrete(firma: FirmaMembrete): string {
+  return [`NIT ${firma.nit}`, firma.direccion, firma.ciudad].filter(Boolean).join(' · ')
 }
 
 /** Acento efectivo del documento: el de la firma si es un hex válido, o el de la app. */
@@ -217,7 +224,7 @@ function membreteHtml(firma?: FirmaMembrete | null): string {
     ${logo}
     <div>
       <p class="firma-nombre">${escapeHtml(firma.nombre)}</p>
-      <p class="firma-datos">NIT ${escapeHtml(firma.nit)} · ${escapeHtml(firma.ciudad)}</p>
+      <p class="firma-datos">${escapeHtml(datosMembrete(firma))}</p>
     </div>
   </div>`
     : '<div></div>'
@@ -475,7 +482,7 @@ export async function descargarDocx(filename: string, opts: ExportOpts) {
       new Paragraph({
         children: [
           new TextRun({
-            text: `NIT ${opts.firma.nit} · ${opts.firma.ciudad}`.toUpperCase(),
+            text: datosMembrete(opts.firma).toUpperCase(),
             size: 17, font: FUENTE_TITULOS, color: GRIS_DOCX,
           }),
         ],

@@ -15,6 +15,10 @@ export type Firma = {
   nombre: string
   nit: string
   ciudad: string
+  direccion: string | null
+  telefono: string | null
+  email: string | null
+  inscripcionJcc: string | null
   colorMarca: string | null
   logo: string | null
   fuenteTitulos: string | null

@@ -10,9 +10,9 @@ import { Button } from '../components/ui/Button'
 import { Input } from '../components/ui/Input'
 import { Select } from '../components/ui/Select'
 import { Modal } from '../components/ui/Modal'
-import { CalidadTab } from '../components/firma/CalidadTab'
 import { RolesTab } from '../components/firma/RolesTab'
 import { cn } from '../lib/cn'
+import { datosMembrete } from '../lib/informe-export'
 
 type Miembro = {
   id: string
@@ -30,7 +30,7 @@ type RolFirma = {
   nivel: string
 }
 
-const tabs = ['Información', 'Equipo', 'Roles', 'Control de calidad', 'Configuración'] as const
+const tabs = ['Información', 'Equipo', 'Roles', 'Configuración'] as const
 type Tab = (typeof tabs)[number]
 
 const ROL_LABEL: Record<string, string> = {
@@ -55,7 +55,7 @@ export function FirmaPage() {
     <div className="p-8 space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Mi Firma</h1>
-        <p className="text-gray-500 mt-1 text-sm">Gestiona la información, equipo y calidad de la firma.</p>
+        <p className="text-gray-500 mt-1 text-sm">Gestiona la información, el equipo y la configuración de la firma.</p>
       </div>
 
       {/* Firm identity card */}
@@ -92,10 +92,19 @@ export function FirmaPage() {
       {activeTab === 'Información' && <InfoTab />}
       {activeTab === 'Equipo' && <EquipoTab />}
       {activeTab === 'Roles' && <RolesTab />}
-      {activeTab === 'Control de calidad' && <CalidadTab />}
       {activeTab === 'Configuración' && <ConfiguracionTab />}
     </div>
   )
+}
+
+type DatosFirmaForm = {
+  nombre: string
+  nit: string
+  ciudad: string
+  direccion: string
+  telefono: string
+  email: string
+  inscripcionJcc: string
 }
 
 function InfoTab() {
@@ -104,8 +113,7 @@ function InfoTab() {
   const queryClient = useQueryClient()
 
   const editMutation = useMutation({
-    mutationFn: (body: { nombre: string; nit: string; ciudad: string }) =>
-      api.put('/firmas/mia', body),
+    mutationFn: (body: DatosFirmaForm) => api.put('/firmas/mia', body),
     onSuccess: () => {
       // Refresca la sesión para que el store refleje los nuevos datos
       queryClient.invalidateQueries({ queryKey: ['firma'] })
@@ -145,6 +153,22 @@ function InfoTab() {
               <MapPin size={14} className="text-gray-400" />
               {firma?.ciudad ?? '—'}
             </div>
+          </div>
+          <div className="space-y-1">
+            <p className="text-xs font-medium text-gray-400 uppercase tracking-wide">Dirección</p>
+            <p className="text-gray-700">{firma?.direccion ?? '—'}</p>
+          </div>
+          <div className="space-y-1">
+            <p className="text-xs font-medium text-gray-400 uppercase tracking-wide">Teléfono</p>
+            <p className="text-gray-700">{firma?.telefono ?? '—'}</p>
+          </div>
+          <div className="space-y-1">
+            <p className="text-xs font-medium text-gray-400 uppercase tracking-wide">Correo de la firma</p>
+            <p className="text-gray-700">{firma?.email ?? '—'}</p>
+          </div>
+          <div className="space-y-1">
+            <p className="text-xs font-medium text-gray-400 uppercase tracking-wide">Inscripción ante la JCC</p>
+            <p className="text-gray-700">{firma?.inscripcionJcc ?? '—'}</p>
           </div>
           <div className="space-y-1">
             <p className="text-xs font-medium text-gray-400 uppercase tracking-wide">Miembro desde</p>
@@ -727,7 +751,7 @@ function MarcaCard() {
                     {firma?.nombre ?? 'Mi firma'}
                   </p>
                   <p className="text-[10px] uppercase tracking-wider text-gray-500 truncate" style={{ fontFamily: fuente }}>
-                    NIT {firma?.nit ?? '—'} · {firma?.ciudad ?? '—'}
+                    {firma ? datosMembrete(firma) : 'NIT — · —'}
                   </p>
                 </div>
               </div>
@@ -750,13 +774,21 @@ function MarcaCard() {
 function EditarFirmaModal({
   firma, onClose, onSubmit, loading, error,
 }: {
-  firma: { nombre: string; nit: string; ciudad: string }
+  firma: { nombre: string; nit: string; ciudad: string } & Partial<Record<'direccion' | 'telefono' | 'email' | 'inscripcionJcc', string | null>>
   onClose: () => void
-  onSubmit: (data: { nombre: string; nit: string; ciudad: string }) => void
+  onSubmit: (data: DatosFirmaForm) => void
   loading: boolean
   error: string | null
 }) {
-  const [form, setForm] = useState({ nombre: firma.nombre, nit: firma.nit, ciudad: firma.ciudad })
+  const [form, setForm] = useState<DatosFirmaForm>({
+    nombre: firma.nombre,
+    nit: firma.nit,
+    ciudad: firma.ciudad,
+    direccion: firma.direccion ?? '',
+    telefono: firma.telefono ?? '',
+    email: firma.email ?? '',
+    inscripcionJcc: firma.inscripcionJcc ?? '',
+  })
   const [errors, setErrors] = useState<Record<string, string>>({})
 
   function validate() {
@@ -810,6 +842,39 @@ function EditarFirmaModal({
           />
           {errors.ciudad && <p className="text-xs text-red-600">{errors.ciudad}</p>}
         </div>
+        <Input
+          id="f-direccion"
+          label="Dirección"
+          placeholder="Calle 100 # 10-20, oficina 501"
+          value={form.direccion}
+          onChange={(e) => setForm({ ...form, direccion: e.target.value })}
+        />
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Input
+            id="f-telefono"
+            label="Teléfono"
+            value={form.telefono}
+            onChange={(e) => setForm({ ...form, telefono: e.target.value })}
+          />
+          <Input
+            id="f-email"
+            type="email"
+            label="Correo de la firma"
+            placeholder="calidad@firma.co"
+            value={form.email}
+            onChange={(e) => setForm({ ...form, email: e.target.value })}
+          />
+        </div>
+        <Input
+          id="f-inscripcion"
+          label="Número de inscripción ante la JCC"
+          value={form.inscripcionJcc}
+          onChange={(e) => setForm({ ...form, inscripcionJcc: e.target.value })}
+        />
+        <p className="text-xs text-gray-500">
+          La dirección sale en el membrete de todos los documentos y en los formatos de calidad; el correo se usa
+          como canal de quejas y denuncias.
+        </p>
 
         {error && (
           <p className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{error}</p>

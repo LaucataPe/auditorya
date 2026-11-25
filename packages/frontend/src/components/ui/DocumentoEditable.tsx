@@ -4,7 +4,7 @@ import { esHtmlInforme, textoPlanoAHtml } from '@auditorya/types'
 import { RichTextEditor } from './RichTextEditor'
 import { cn } from '../../lib/cn'
 import {
-  estiloDocumento, fechaEmision, subtitulo, textoVacio,
+  datosMembrete, estiloDocumento, fechaEmision, subtitulo, textoVacio,
   type FirmaMembrete, type SeccionRender, type TablaRender,
 } from '../../lib/informe-export'
 
@@ -69,7 +69,7 @@ export function DocumentoEditable({
                 <div style={{ fontFamily: titulos }}>
                   <p className="text-[13.5pt] font-bold tracking-[.2px]">{firma.nombre}</p>
                   <p className="mt-[3px] text-[8.5pt] uppercase tracking-[.8px] text-gray-500">
-                    NIT {firma.nit} · {firma.ciudad}
+                    {datosMembrete(firma)}
                   </p>
                 </div>
               </div>
