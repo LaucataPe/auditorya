@@ -19,6 +19,7 @@ const OnboardingPage = lazy(() => import('./pages/OnboardingPage').then((m) => (
 const DashboardPage = lazy(() => import('./pages/DashboardPage').then((m) => ({ default: m.DashboardPage })))
 const MiTrabajoPage = lazy(() => import('./pages/MiTrabajoPage').then((m) => ({ default: m.MiTrabajoPage })))
 const FirmaPage = lazy(() => import('./pages/FirmaPage').then((m) => ({ default: m.FirmaPage })))
+const CalidadPage = lazy(() => import('./pages/CalidadPage').then((m) => ({ default: m.CalidadPage })))
 const EmpresasPage = lazy(() => import('./pages/EmpresasPage').then((m) => ({ default: m.EmpresasPage })))
 const AcademiaPage = lazy(() => import('./pages/AcademiaPage').then((m) => ({ default: m.AcademiaPage })))
 const AcademiaLeccionPage = lazy(() => import('./pages/AcademiaLeccionPage').then((m) => ({ default: m.AcademiaLeccionPage })))
@@ -128,6 +129,7 @@ export default function App() {
         <Route path="/dashboard" element={<L c={DashboardPage} />} />
         <Route path="/mi-trabajo" element={<L c={MiTrabajoPage} />} />
         <Route path="/firma" element={<L c={FirmaPage} />} />
+        <Route path="/calidad" element={<L c={CalidadPage} />} />
         <Route path="/empresas" element={<L c={EmpresasPage} />} />
       </Route>
 

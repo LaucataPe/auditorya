@@ -1,14 +1,16 @@
 import { NavLink, useNavigate } from 'react-router-dom'
-import { Building2, LayoutDashboard, ListTodo, LogOut, Users } from 'lucide-react'
+import { Building2, LayoutDashboard, ListTodo, LogOut, ShieldCheck, Users } from 'lucide-react'
 import { cn } from '../../lib/cn'
 import { Isotipo } from '../ui/Logo'
 import { useAuthStore } from '../../store/auth.store'
 import { NotificacionesBell } from '../notificaciones/NotificacionesBell'
+import { useCalidadPendientes } from '../../hooks/useCalidad'
 
 const nav = [
   { label: 'Inicio', icon: LayoutDashboard, to: '/dashboard' },
   { label: 'Mi trabajo', icon: ListTodo, to: '/mi-trabajo' },
   { label: 'Clientes', icon: Users, to: '/empresas' },
+  { label: 'Calidad', icon: ShieldCheck, to: '/calidad' },
   { label: 'Mi firma', icon: Building2, to: '/firma' },
 ]
 
@@ -32,6 +34,8 @@ function iniciales(nombre?: string) {
 export function Sidebar() {
   const { user, firma, logout } = useAuthStore()
   const navigate = useNavigate()
+  // Componentes del sistema de calidad sin cumplir: se muestran junto a "Calidad".
+  const calidadPendientes = useCalidadPendientes()
 
   async function handleLogout() {
     await logout()
@@ -69,6 +73,14 @@ export function Sidebar() {
           >
             <Icon size={16} strokeWidth={1.8} />
             {label}
+            {to === '/calidad' && !!calidadPendientes && (
+              <span
+                className="ml-auto rounded-full bg-indigo-500/90 px-1.5 py-0.5 text-[10px] font-semibold text-white"
+                title={`${calidadPendientes} componente(s) del sistema de calidad sin cumplir`}
+              >
+                {calidadPendientes}
+              </span>
+            )}
           </NavLink>
         ))}
       </nav>
