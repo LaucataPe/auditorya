@@ -8,22 +8,39 @@ type Props = {
   title: string
   children: ReactNode
   size?: 'sm' | 'md' | 'lg' | 'xl'
+  /**
+   * 'superior' para diálogos que se abren encima de otro modal (p. ej. la confirmación
+   * global): queda por delante aunque esté montado antes en el DOM, y Esc cierra solo este.
+   */
+  capa?: 'normal' | 'superior'
 }
 
 const sizes = { sm: 'max-w-md', md: 'max-w-lg', lg: 'max-w-2xl', xl: 'max-w-6xl' }
 
-export function Modal({ open, onClose, title, children, size = 'md' }: Props) {
+export function Modal({ open, onClose, title, children, size = 'md', capa = 'normal' }: Props) {
   useEffect(() => {
     if (!open) return
-    const handler = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
-    document.addEventListener('keydown', handler)
-    return () => document.removeEventListener('keydown', handler)
-  }, [open, onClose])
+    const superior = capa === 'superior'
+    const handler = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      // En fase de captura y sin propagar: el modal de abajo no recibe el Esc.
+      if (superior) e.stopPropagation()
+      onClose()
+    }
+    document.addEventListener('keydown', handler, superior)
+    return () => document.removeEventListener('keydown', handler, superior)
+  }, [open, onClose, capa])
 
   if (!open) return null
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div
+      className={cn(
+        'fixed inset-0 flex items-center justify-center p-4',
+        // Por encima de los popovers de CampoFecha (z-[60]) y por debajo de los toasts (z-[100]).
+        capa === 'superior' ? 'z-[70]' : 'z-50',
+      )}
+    >
       {/* Backdrop */}
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
 

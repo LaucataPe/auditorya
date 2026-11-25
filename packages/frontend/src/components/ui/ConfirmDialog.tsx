@@ -26,6 +26,7 @@ export function ConfirmDialog() {
       onClose={() => responder(actual.id, false)}
       title={actual.titulo}
       size="sm"
+      capa="superior"
     >
       {actual.descripcion && (
         <div className="whitespace-pre-line text-sm leading-relaxed text-gray-600">
