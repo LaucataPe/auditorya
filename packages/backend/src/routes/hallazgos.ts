@@ -8,6 +8,7 @@ import { authMiddleware } from '../middleware/auth'
 import { encargoCerrado, ERROR_ENCARGO_CERRADO } from '../lib/encargo'
 import { registrarEvento } from '../lib/eventos'
 import type { JwtPayload } from '../lib/jwt'
+import { compararIndices } from '@auditorya/types'
 
 const app = new Hono<{ Variables: { user: JwtPayload } }>()
 
@@ -76,6 +77,14 @@ app.get('/auditorias/:id/hallazgos', async (c) => {
     .leftJoin(papelesTrabajo, eq(hallazgos.papelTrabajoId, papelesTrabajo.id))
     .where(eq(hallazgos.auditoriaId, id))
     .orderBy(desc(hallazgos.createdAt))
+  // Orden de archivo (NIA 230): índice del papel A → Z; los que no nacieron en un
+  // papel quedan al final. El sort es estable, así que los empates conservan el orden reciente.
+  lista.sort((a, b) => {
+    if (!a.papelIndice && !b.papelIndice) return 0
+    if (!a.papelIndice) return 1
+    if (!b.papelIndice) return -1
+    return compararIndices(a.papelIndice, b.papelIndice)
+  })
   return c.json({ data: lista })
 })
 

@@ -2,9 +2,9 @@ import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   SECCIONES_INFORME, TIPO_INFORME_LABEL, TIPO_OPINION_LABEL, OPINION_LABEL,
-  ESTADO_HALLAZGO_LABEL, compararIndices,
+  compararIndices,
   type TipoInforme, type TipoOpinion, type EvaluacionOpinion, type OpinionSugerida,
-  type HallazgoConPapel,
+  type HallazgoConPapel, type EstadoHallazgo,
 } from '@auditorya/types'
 import { FileText, CheckCircle, Printer, FileDown, ShieldCheck, Mail, FilePlus2, RefreshCw, Eye } from 'lucide-react'
 import { BloqueoMaterialidad } from './BloqueoMaterialidad'
@@ -15,7 +15,7 @@ import { DocumentoEditable } from '../ui/DocumentoEditable'
 import { api } from '../../lib/api'
 import { useAuthStore } from '../../store/auth.store'
 import { cn } from '../../lib/cn'
-import { construirHtmlInforme, imprimirInforme, descargarDocx } from '../../lib/informe-export'
+import { construirHtmlInforme, imprimirInforme, descargarDocx, type TonoGrupo } from '../../lib/informe-export'
 import { useAreas } from '../../hooks/useAreas'
 
 type EstadoInforme = 'borrador' | 'aprobado'
@@ -180,8 +180,9 @@ function CartaRecomendaciones({
     queryFn: () => api.get<HallazgoConPapel[]>(`/auditorias/${auditoriaId}/hallazgos`),
   })
 
-  // La carta comunica lo que aún requiere acción del contador (no lo ya corregido).
-  const pendientes = hallazgos.filter((h) => h.estado !== 'corregido')
+  // La carta lleva todos los hallazgos: lo pendiente y también lo ya corregido, para que el
+  // contador vea el avance. Se agrupan por estado dentro de cada área.
+  const pendientes = hallazgos
 
   function secciones() {
     // Dentro de cada área los hallazgos van en orden de archivo (índice del papel,
@@ -196,22 +197,41 @@ function CartaRecomendaciones({
           return compararIndices(a.papelIndice, b.papelIndice)
         })
 
-    // Las áreas se listan alfabéticamente por su nombre visible (no por el orden
-    // en que se capturaron los hallazgos), para que la carta sea fácil de recorrer.
-    const areas = Array.from(new Set(pendientes.map((h) => h.area)))
-      .sort((a, b) => areaLabel(a).localeCompare(areaLabel(b), 'es'))
-    return areas.map((area) => ({
-      label: areaLabel(area),
-      contenido: porArea(area)
-        .map((h) => {
-          const rec = h.recomendacion ? `\n   Recomendación: ${h.recomendacion}` : ''
-          const est = ` [${ESTADO_HALLAZGO_LABEL[h.estado]}]`
-          // Referencia al papel de trabajo que soporta el hallazgo.
-          const ref = h.papelIndice ? `[Ref. ${h.papelIndice}] ` : ''
-          return `• ${ref}${h.descripcion}${est}${rec}`
-        })
-        .join('\n\n'),
-    }))
+    // Las áreas siguen el orden de archivo: por el menor índice de papel que tengan
+    // (A, B, C…). Las áreas sin hallazgos con papel van al final, por nombre.
+    const primerIndice = (area: string) => porArea(area).find((h) => h.papelIndice)?.papelIndice ?? null
+    const areas = Array.from(new Set(pendientes.map((h) => h.area))).sort((a, b) => {
+      const ia = primerIndice(a)
+      const ib = primerIndice(b)
+      if (ia && ib) return compararIndices(ia, ib)
+      if (ia) return -1
+      if (ib) return 1
+      return areaLabel(a).localeCompare(areaLabel(b), 'es')
+    })
+    // Subtítulos por estado dentro de cada área. Un hallazgo "no corregido" sigue
+    // pendiente, así que va con los abiertos.
+    const GRUPOS: { label: string; tono: TonoGrupo; estados: EstadoHallazgo[] }[] = [
+      { label: 'Abierto', tono: 'rojo', estados: ['abierto', 'no_corregido'] },
+      { label: 'Comunicado', tono: 'amarillo', estados: ['comunicado'] },
+      { label: 'Corregido', tono: 'verde', estados: ['corregido'] },
+    ]
+    const viñeta = (h: HallazgoConPapel) => {
+      const rec = h.recomendacion ? `\n   Recomendación: ${h.recomendacion}` : ''
+      // Referencia al papel de trabajo que soporta el hallazgo.
+      const ref = h.papelIndice ? `[Ref. ${h.papelIndice}] ` : ''
+      return `• ${ref}${h.descripcion}${rec}`
+    }
+    return areas.map((area) => {
+      const delArea = porArea(area)
+      return {
+        label: areaLabel(area),
+        grupos: GRUPOS.map((g) => ({
+          label: g.label,
+          tono: g.tono,
+          contenido: delArea.filter((h) => g.estados.includes(h.estado)).map(viñeta).join('\n\n'),
+        })).filter((g) => g.contenido),
+      }
+    })
   }
 
   function exportOpts() {
@@ -246,7 +266,7 @@ function CartaRecomendaciones({
             <p className="font-semibold text-gray-900">Carta de recomendaciones</p>
             <p className="text-xs text-gray-500 mt-0.5">
               {pendientes.length === 0
-                ? 'Sin hallazgos pendientes de comunicar'
+                ? 'Sin hallazgos para comunicar'
                 : `${pendientes.length} hallazgo${pendientes.length !== 1 ? 's' : ''} para el contador (NIA 260)`}
             </p>
           </div>
@@ -270,7 +290,7 @@ function CartaRecomendaciones({
             {...exportOpts()}
             secciones={exportOpts().secciones.map((s, i) => ({ ...s, key: String(i) }))}
             disabled
-            aviso="Vista previa de solo lectura: la carta se arma con los hallazgos pendientes; corrige el texto en cada hallazgo."
+            aviso="Vista previa de solo lectura: la carta se arma con todos los hallazgos, agrupados por estado; corrige el texto en cada hallazgo."
           />
         </Modal>
       )}

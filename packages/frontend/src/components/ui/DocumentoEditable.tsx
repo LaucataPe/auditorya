@@ -4,8 +4,8 @@ import { esHtmlInforme, textoPlanoAHtml } from '@auditorya/types'
 import { RichTextEditor } from './RichTextEditor'
 import { cn } from '../../lib/cn'
 import {
-  datosMembrete, estiloDocumento, fechaEmision, subtitulo, textoVacio,
-  type FirmaMembrete, type SeccionRender, type TablaRender,
+  COLOR_TONO, datosMembrete, estiloDocumento, fechaEmision, subtitulo, textoVacio,
+  type FirmaMembrete, type GrupoRender, type SeccionRender, type TablaRender,
 } from '../../lib/informe-export'
 
 /** Sección del documento; las `editable` se modifican haciendo clic sobre la hoja. */
@@ -85,7 +85,7 @@ export function DocumentoEditable({
           </header>
 
           {secciones.map((s) => {
-            const vacia = textoVacio(s.contenido) && !s.tabla?.filas.length
+            const vacia = textoVacio(s.contenido) && !s.tabla?.filas.length && !s.grupos?.some((g) => !textoVacio(g.contenido))
             if (vacia && !editable(s)) return null
             const enEdicion = activa === s.key && editable(s)
 
@@ -151,7 +151,7 @@ export function DocumentoEditable({
                         Sección vacía: no se incluirá en el documento. Haz clic para escribirla.
                       </p>
                     ) : (
-                      <ContenidoSeccion contenido={s.contenido} tabla={s.tabla} titulos={titulos} acento={acento} />
+                      <ContenidoSeccion contenido={s.contenido} tabla={s.tabla} grupos={s.grupos} titulos={titulos} acento={acento} />
                     )}
                   </div>
                 )}
@@ -192,10 +192,11 @@ function TextoAutoajustable({ id, valor, onChange }: { id: string; valor: string
 
 /** Cuerpo de una sección en lectura: HTML del editor, texto plano legado y/o tabla. */
 function ContenidoSeccion({
-  contenido, tabla, titulos, acento,
+  contenido, tabla, grupos, titulos, acento,
 }: {
   contenido?: string
   tabla?: TablaRender
+  grupos?: GrupoRender[]
   titulos: string
   acento: string
 }) {
@@ -208,6 +209,14 @@ function ContenidoSeccion({
           ? <div dangerouslySetInnerHTML={{ __html: contenido! }} />
           : <p className="whitespace-pre-line">{contenido}</p>
       )}
+      {grupos?.filter((g) => !textoVacio(g.contenido)).map((g) => (
+        <div key={g.label}>
+          <h3 className="mb-1.5 mt-3 text-[10.5pt] font-bold" style={{ fontFamily: titulos, color: COLOR_TONO[g.tono] }}>
+            {g.label}
+          </h3>
+          <p className="whitespace-pre-line">{g.contenido}</p>
+        </div>
+      ))}
       {!!tabla?.filas.length && (
         <table className="my-1 w-full border-collapse text-[10.5pt]">
           <thead>

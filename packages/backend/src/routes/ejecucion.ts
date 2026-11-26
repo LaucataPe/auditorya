@@ -1235,7 +1235,9 @@ app.get('/riesgos/:riesgoId/respuestas', async (c) => {
   const numTareas: Record<string, number> = {}
   for (const t of tareasRows) if (t.papelTrabajoId) numTareas[t.papelTrabajoId] = (numTareas[t.papelTrabajoId] ?? 0) + 1
 
-  const papeles = ps.map((p) => ({ ...p, numTareas: numTareas[p.id] ?? 0 }))
+  const papeles = ps
+    .map((p) => ({ ...p, numTareas: numTareas[p.id] ?? 0 }))
+    .sort((a, b) => compararIndices(a.indice, b.indice))
   return c.json({ data: { papeles } })
 })
 

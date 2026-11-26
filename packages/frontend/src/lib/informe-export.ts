@@ -86,6 +86,16 @@ export function estiloDocumento(firma?: FirmaMembrete | null) {
 export type ColumnaTabla = { label: string; derecha?: boolean }
 export type TablaRender = { columnas: ColumnaTabla[]; filas: string[][] }
 
+/** Color del subtítulo de un grupo: rojo = pendiente, amarillo = advertencia, verde = resuelto. */
+export type TonoGrupo = 'rojo' | 'amarillo' | 'verde'
+export const COLOR_TONO: Record<TonoGrupo, string> = {
+  rojo: '#dc2626',
+  amarillo: '#d97706',
+  verde: '#16a34a',
+}
+/** Subtítulo coloreado con su texto (plano, saltos de línea respetados). */
+export type GrupoRender = { label: string; tono: TonoGrupo; contenido: string }
+
 /**
  * Sección del documento: un texto (plano o HTML del editor), una tabla, o ambos.
  * PDF y Word renderizan las dos formas con la misma jerarquía visual.
@@ -94,6 +104,8 @@ export type SeccionRender = {
   label: string
   contenido?: string
   tabla?: TablaRender
+  /** Subtítulos con color dentro de la sección (p. ej. hallazgos Abierto / Comunicado / Corregido). */
+  grupos?: GrupoRender[]
   /** Identificador estable de la sección (no se imprime): la vista previa lo usa para editarla. */
   key?: string
 }
@@ -121,7 +133,7 @@ export function textoVacio(contenido?: string): boolean {
 
 /** true si la sección no tiene ni texto ni filas: no se imprime. */
 function seccionVacia(sec: SeccionRender): boolean {
-  return textoVacio(sec.contenido) && !sec.tabla?.filas.length
+  return textoVacio(sec.contenido) && !sec.tabla?.filas.length && !sec.grupos?.some((g) => !textoVacio(g.contenido))
 }
 
 /** Subtítulo del documento: omite el período si no viene informado. */
@@ -189,6 +201,10 @@ const estilosDocumento = (ACENTO: string, TITULOS: string, CUERPO: string) => `
     font-family: ${TITULOS};
     font-size: 9.5pt; font-weight: 700; text-transform: uppercase; letter-spacing: 1px;
     color: ${ACENTO}; border-bottom: 1px solid ${BORDE}; padding-bottom: 4px; margin: 0 0 8px;
+  }
+  section h3 {
+    font-family: ${TITULOS};
+    font-size: 10.5pt; font-weight: 700; margin: 12px 0 6px;
   }
   section p { margin: 0 0 8px; text-align: justify; white-space: normal; }
   section p:last-child { margin-bottom: 0; }
@@ -287,7 +303,11 @@ export function construirHtmlInforme(opts: ExportOpts): string {
         : esHtmlInforme(s.contenido!)
           ? s.contenido!
           : `<p>${escapeHtml(s.contenido!).replace(/\n/g, '<br/>')}</p>`
-      return `<section><h2>${escapeHtml(s.label)}</h2>${texto}${tablaHtml(s.tabla)}</section>`
+      const grupos = (s.grupos ?? [])
+        .filter((g) => !textoVacio(g.contenido))
+        .map((g) => `<h3 style="color:${COLOR_TONO[g.tono]}">${escapeHtml(g.label)}</h3><p>${escapeHtml(g.contenido).replace(/\n/g, '<br/>')}</p>`)
+        .join('')
+      return `<section><h2>${escapeHtml(s.label)}</h2>${texto}${grupos}${tablaHtml(s.tabla)}</section>`
     })
     .join('\n')
 
@@ -646,6 +666,25 @@ export async function descargarDocx(filename: string, opts: ExportOpts) {
             }),
           )
         }
+      }
+    }
+    for (const g of sec.grupos ?? []) {
+      if (textoVacio(g.contenido)) continue
+      bloques.push(
+        new Paragraph({
+          heading: HeadingLevel.HEADING_3,
+          spacing: { before: 200, after: 80 },
+          children: [new TextRun({ text: g.label, bold: true, size: 22, font: FUENTE_TITULOS, color: COLOR_TONO[g.tono].slice(1) })],
+        }),
+      )
+      for (const linea of g.contenido.split('\n')) {
+        bloques.push(
+          new Paragraph({
+            alignment: AlignmentType.JUSTIFIED,
+            spacing: { after: 80 },
+            children: [new TextRun({ text: linea })],
+          }),
+        )
       }
     }
     if (sec.tabla?.filas.length) {
